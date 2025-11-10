@@ -276,11 +276,11 @@ class OthmanBot(commands.Bot):
             article.title[:97] + "..." if len(article.title) > 100 else article.title
         )
 
-        # DESIGN: Post full article content as message, with embed for image
-        # Instead of linking to external site, display full content in Discord
-        # Format: Image embed + full text content in message
+        # DESIGN: Post bilingual AI summaries with image embed
+        # Arabic summary first (primary), then English
+        # Much cleaner than truncated raw text
 
-        # Create embed for image only (no description)
+        # Create embed with image
         embed: discord.Embed = discord.Embed(
             color=discord.Color.blue(),
             timestamp=article.published_date,
@@ -297,16 +297,19 @@ class OthmanBot(commands.Bot):
             icon_url=self.user.avatar.url if self.user.avatar else None,
         )
 
-        # DESIGN: Format full content as message text
-        # Discord limit: 2000 chars, our content is already limited to 1800
-        message_content: str = f"**{article.title}**\n\n{article.full_content}"
+        # DESIGN: Format bilingual summaries
+        # Arabic first, then English
+        # Each summary is 3-4 sentences from AI
+        message_content: str = f"**{article.title}**\n\n"
+        message_content += f"🇸🇾 **ملخص بالعربية:**\n{article.arabic_summary}\n\n"
+        message_content += f"🇺🇸 **English Summary:**\n{article.english_summary}"
 
         # Ensure we don't exceed Discord's 2000 char limit
         if len(message_content) > 1990:
             message_content = message_content[:1990] + "..."
 
         try:
-            # DESIGN: Create forum thread with full content + image embed
+            # DESIGN: Create forum thread with bilingual summaries + image embed
             # Forum channels don't support sending messages directly - must create thread
             thread: discord.Thread = await channel.create_thread(
                 name=thread_name,

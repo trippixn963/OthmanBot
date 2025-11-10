@@ -40,6 +40,8 @@ class NewsArticle:
     url: str
     summary: str
     full_content: str  # Full article text extracted from page
+    arabic_summary: str  # AI-generated Arabic summary
+    english_summary: str  # AI-generated English summary
     image_url: Optional[str]
     published_date: datetime
     source: str
@@ -223,11 +225,20 @@ class NewsScraper:
                 original_title: str = entry.get("title", "Untitled")
                 ai_title: str = self._generate_ai_title(original_title, full_content)
 
+                # DESIGN: Generate bilingual summaries (Arabic + English)
+                # AI creates concise 3-4 sentence summaries in both languages
+                # Much better than truncated raw text
+                arabic_summary: str
+                english_summary: str
+                arabic_summary, english_summary = self._generate_bilingual_summary(full_content)
+
                 article: NewsArticle = NewsArticle(
                     title=ai_title,
                     url=entry.get("link", ""),
                     summary=summary,
                     full_content=full_content,
+                    arabic_summary=arabic_summary,
+                    english_summary=english_summary,
                     image_url=image_url,
                     published_date=published_date,
                     source=source_info["name"],
@@ -378,13 +389,10 @@ class NewsScraper:
                         paragraphs = article.find_all("p")
                         content_text = "\n\n".join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
 
-                # Clean and limit content
+                # Clean content (no truncation - AI will summarize)
                 if content_text:
                     # Remove extra whitespace
                     content_text = "\n\n".join(line.strip() for line in content_text.split("\n") if line.strip())
-                    # Discord limit: 2000 chars per message, save space for formatting
-                    if len(content_text) > 1800:
-                        content_text = content_text[:1800] + "\n\n... [Content truncated]"
                     return content_text
                 else:
                     return "Could not extract article text"
@@ -450,6 +458,71 @@ class NewsScraper:
         except Exception as e:
             logger.warning(f"Failed to generate AI title: {str(e)[:100]}")
             return original_title
+
+    def _generate_bilingual_summary(self, content: str) -> tuple[str, str]:
+        """
+        Generate bilingual summaries (Arabic and English) using OpenAI GPT-3.5-turbo.
+
+        Args:
+            content: Full article content
+
+        Returns:
+            Tuple of (arabic_summary, english_summary)
+
+        DESIGN: Create concise summaries in both languages for Syrian audience
+        Arabic summary comes first (primary language)
+        English summary second (for international readers)
+        Each summary is 3-4 sentences, capturing key points
+        """
+        if not self.openai_client:
+            logger.warning("OpenAI client not initialized - using truncated content")
+            truncated: str = content[:300] + "..." if len(content) > 300 else content
+            return (truncated, truncated)
+
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a bilingual news summarizer for Syrian news. Create concise summaries in both Arabic and English. Each summary should be 3-4 sentences capturing the key points of the article."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Summarize this news article in both Arabic and English. Format your response EXACTLY as:\n\nARABIC:\n[3-4 sentence Arabic summary]\n\nENGLISH:\n[3-4 sentence English summary]\n\nArticle content:\n{content[:2000]}"
+                    }
+                ],
+                max_tokens=400,
+                temperature=0.7,
+            )
+
+            result: str = response.choices[0].message.content.strip()
+
+            # DESIGN: Parse AI response to extract Arabic and English summaries
+            # Expected format: "ARABIC:\n[text]\n\nENGLISH:\n[text]"
+            arabic_summary: str = ""
+            english_summary: str = ""
+
+            if "ARABIC:" in result and "ENGLISH:" in result:
+                parts: list[str] = result.split("ENGLISH:")
+                arabic_part: str = parts[0].replace("ARABIC:", "").strip()
+                english_part: str = parts[1].strip()
+
+                arabic_summary = arabic_part
+                english_summary = english_part
+
+                logger.info(f"Generated bilingual summaries (AR: {len(arabic_summary)} chars, EN: {len(english_summary)} chars)")
+            else:
+                logger.warning("AI summary format invalid - using truncated content")
+                truncated: str = content[:300] + "..." if len(content) > 300 else content
+                return (truncated, truncated)
+
+            return (arabic_summary, english_summary)
+
+        except Exception as e:
+            logger.warning(f"Failed to generate bilingual summary: {str(e)[:100]}")
+            truncated: str = content[:300] + "..." if len(content) > 300 else content
+            return (truncated, truncated)
 
     async def test_sources(self) -> Dict[str, Any]:
         """
