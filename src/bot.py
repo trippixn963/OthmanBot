@@ -61,6 +61,19 @@ class OthmanBot(commands.Bot):
             return int(channel_id_str)
         return None
 
+    @property
+    def general_channel_id(self) -> Optional[int]:
+        """
+        Get general channel ID from environment.
+
+        Returns:
+            Channel ID as int or None if not configured
+        """
+        channel_id_str: Optional[str] = os.getenv("GENERAL_CHANNEL_ID")
+        if channel_id_str and channel_id_str.isdigit():
+            return int(channel_id_str)
+        return None
+
     async def setup_hook(self) -> None:
         """
         Setup hook called when bot is starting.
@@ -434,6 +447,18 @@ class OthmanBot(commands.Bot):
             tag_info: str = f" (Tag: {applied_tags[0].name})" if applied_tags else " (No tag)"
             media_info: str = f"Image: {'Yes' if image_file else 'No'}, Video: {'Yes' if video_file else 'No'}"
             logger.info(f"📰 Posted forum thread: {article.title} ({media_info}){tag_info}")
+
+            # DESIGN: Mark URL as posted to prevent duplicates
+            # Critical: Add to cache immediately after successful post
+            # Without this, bot will repost same article every hour!
+            if self.news_scraper:
+                self.news_scraper.mark_url_as_posted(article.url)
+                logger.info(f"✅ Marked URL as posted: {article.url[:50]}")
+
+            # DESIGN: Send announcement embed to general channel with link to forum post
+            # This notifies users in main chat about new news posts
+            if self.general_channel_id:
+                await self._send_general_announcement(thread, article, applied_tags)
         except discord.HTTPException as e:
             logger.error(f"Failed to create forum post for '{article.title}': {e}")
         finally:
@@ -450,6 +475,59 @@ class OthmanBot(commands.Bot):
                     os.remove(temp_video_path)
                 except Exception as e:
                     logger.warning(f"Failed to delete temp video {temp_video_path}: {e}")
+
+    async def _send_general_announcement(
+        self, thread: discord.Thread, article: NewsArticle, applied_tags: list[discord.ForumTag]
+    ) -> None:
+        """
+        Send news announcement embed to general chat channel.
+
+        Args:
+            thread: Forum thread that was created
+            article: NewsArticle that was posted
+            applied_tags: Tags applied to the forum thread
+
+        DESIGN: Send beautiful embed to general chat with link to forum post
+        This notifies users about new news without cluttering the forum
+        """
+        general_channel = self.get_channel(self.general_channel_id)
+        if not general_channel or not isinstance(general_channel, discord.TextChannel):
+            logger.warning(f"General channel {self.general_channel_id} not found or not a text channel")
+            return
+
+        try:
+            # Create embed
+            embed: discord.Embed = discord.Embed(
+                title=f"{article.source_emoji} {article.title}",
+                description=article.english_summary[:250] + "..." if len(article.english_summary) > 250 else article.english_summary,
+                color=discord.Color.blue(),
+                url=thread.jump_url,  # Link to forum thread
+            )
+
+            # Add category tag as footer if available
+            if applied_tags:
+                embed.set_footer(text=f"Category: {applied_tags[0].name} • Click title to read full article")
+            else:
+                embed.set_footer(text="Click title to read full article")
+
+            # Add thumbnail if article has image
+            if article.image_url:
+                embed.set_thumbnail(url=article.image_url)
+
+            # Add source field
+            embed.add_field(name="Source", value=f"{article.source_emoji} {article.source}", inline=True)
+
+            # Add published date if available
+            if article.published_date:
+                published_str: str = article.published_date.strftime("%b %d, %Y")
+                embed.add_field(name="Published", value=published_str, inline=True)
+
+            # Send embed
+            await general_channel.send(embed=embed)
+            logger.info(f"📣 Sent announcement to general chat for: {article.title[:50]}")
+
+        except discord.HTTPException as e:
+            logger.error(f"Failed to send general announcement for '{article.title}': {e}")
 
     async def close(self) -> None:
         """
