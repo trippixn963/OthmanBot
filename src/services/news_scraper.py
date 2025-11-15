@@ -43,36 +43,24 @@ class NewsArticle:
     arabic_summary: str  # AI-generated Arabic summary
     english_summary: str  # AI-generated English summary
     image_url: Optional[str]
-    published_date: datetime
-    source: str
-    source_emoji: str
+    video_url: Optional[str] = None  # Video URL extracted from article
+    published_date: datetime = None
+    source: str = ""
+    source_emoji: str = ""
+    category_tag_id: Optional[int] = None  # Discord forum tag ID
 
 
 class NewsScraper:
     """Scrapes Syrian news from multiple sources."""
 
-    # DESIGN: Multiple RSS sources for redundancy and diverse coverage
-    # Enab Baladi is primary (Syria-focused independent journalism)
-    # Al Jazeera provides major network coverage
-    # Syrian Observer offers English alternative
+    # DESIGN: Single RSS source - Enab Baladi only
+    # Syria-focused independent journalism with media-rich articles
     NEWS_SOURCES: dict[str, dict[str, str]] = {
         "enab_baladi": {
             "name": "Enab Baladi",
             "emoji": "🍇",
             "rss_url": "https://www.enabbaladi.net/feed/",
             "language": "Arabic/English",
-        },
-        "aljazeera": {
-            "name": "Al Jazeera Arabic",
-            "emoji": "📡",
-            "rss_url": "https://www.aljazeera.net/xml/rss/all.xml",
-            "language": "Arabic",
-        },
-        "syrian_observer": {
-            "name": "Syrian Observer",
-            "emoji": "📰",
-            "rss_url": "https://syrianobserver.com/feed/",
-            "language": "English",
         },
     }
 
@@ -213,11 +201,25 @@ class NewsScraper:
                 summary = BeautifulSoup(summary, "html.parser").get_text()
                 summary = summary[:500] + "..." if len(summary) > 500 else summary
 
-                # DESIGN: Extract full article content from the URL
-                # Fetch the actual article page and extract text
-                full_content: str = await self._extract_full_content(
+                # DESIGN: Extract full article content, image, AND video from the URL
+                # Fetch the actual article page and extract text + media
+                full_content: str
+                scraped_image: Optional[str]
+                scraped_video: Optional[str]
+                full_content, scraped_image, scraped_video = await self._extract_full_content(
                     entry.get("link", ""), source_key
                 )
+
+                # DESIGN: Prefer scraped image from article page over RSS feed image
+                # Article page images are usually better quality and more relevant
+                if not image_url and scraped_image:
+                    image_url = scraped_image
+
+                # DESIGN: Skip articles without media (image or video)
+                # NEVER post articles without media - user requirement
+                if not image_url and not scraped_video:
+                    logger.info(f"Skipping article without media: {entry.get('title', 'Untitled')[:50]}")
+                    continue
 
                 # DESIGN: Generate AI-powered 3-5 word English title
                 # Replaces original title (may be Arabic or too long) with clean English title
@@ -232,6 +234,11 @@ class NewsScraper:
                 english_summary: str
                 arabic_summary, english_summary = self._generate_bilingual_summary(full_content)
 
+                # DESIGN: Categorize article for Discord forum tag
+                # AI analyzes content and selects most appropriate category
+                # Returns Discord tag ID for automatic tag assignment
+                category_tag_id: Optional[int] = self._categorize_article(ai_title, full_content)
+
                 article: NewsArticle = NewsArticle(
                     title=ai_title,
                     url=entry.get("link", ""),
@@ -240,9 +247,11 @@ class NewsScraper:
                     arabic_summary=arabic_summary,
                     english_summary=english_summary,
                     image_url=image_url,
+                    video_url=scraped_video,  # Include extracted video URL
                     published_date=published_date,
                     source=source_info["name"],
                     source_emoji=source_info["emoji"],
+                    category_tag_id=category_tag_id,
                 )
 
                 articles.append(article)
@@ -331,30 +340,94 @@ class NewsScraper:
 
         return None
 
-    async def _extract_full_content(self, url: str, source_key: str) -> str:
+    async def _extract_full_content(self, url: str, source_key: str) -> tuple[str, Optional[str], Optional[str]]:
         """
-        Extract full article text content from article URL.
+        Extract full article text content, image, AND video from article URL.
 
         Args:
             url: Article URL to fetch
             source_key: Source identifier (enab_baladi, aljazeera, syrian_observer)
 
         Returns:
-            Full article text content or fallback message
+            Tuple of (full article text content, image URL or None, video URL or None)
 
         DESIGN: Each news source has different HTML structure
-        Use specific selectors for each source to extract article content
+        Use specific selectors for each source to extract article content, images, and videos
+        Looks for video tags, iframe embeds (YouTube, Twitter, etc.), and direct video files
         """
         if not url or not self.session:
-            return "Content unavailable"
+            return ("Content unavailable", None, None)
 
         try:
             async with self.session.get(url, timeout=10) as response:
                 if response.status != 200:
-                    return "Could not fetch article content"
+                    return ("Could not fetch article content", None, None)
 
                 html: str = await response.text()
                 soup: BeautifulSoup = BeautifulSoup(html, "html.parser")
+
+                # DESIGN: Extract first article image
+                # Look for images in article/content divs, prefer larger images
+                image_url: Optional[str] = None
+
+                # Try to find image in article content areas first
+                article_div = (
+                    soup.find("div", class_="entry-content")
+                    or soup.find("article")
+                    or soup.find("div", class_=lambda x: x and "content" in x.lower())
+                )
+
+                if article_div:
+                    # Find first img tag with a valid src
+                    img_tags = article_div.find_all("img")
+                    for img in img_tags:
+                        src = img.get("src") or img.get("data-src")
+                        if src and any(ext in src.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"]):
+                            # Make URL absolute if it's relative
+                            if src.startswith("//"):
+                                image_url = "https:" + src
+                            elif src.startswith("/"):
+                                from urllib.parse import urlparse
+                                parsed = urlparse(url)
+                                image_url = f"{parsed.scheme}://{parsed.netloc}{src}"
+                            else:
+                                image_url = src
+                            break
+
+                # DESIGN: Extract video from article
+                # Look for video tags, iframes (YouTube, Twitter, etc.), and direct video files
+                video_url: Optional[str] = None
+
+                if article_div:
+                    # 1. Check for direct <video> tags with mp4/webm sources
+                    video_tag = article_div.find("video")
+                    if video_tag:
+                        # Try <source> tag first
+                        source_tag = video_tag.find("source")
+                        if source_tag and source_tag.get("src"):
+                            src = source_tag.get("src")
+                            if any(ext in src.lower() for ext in [".mp4", ".webm", ".mov"]):
+                                video_url = self._make_url_absolute(src, url)
+                        # Try video src attribute
+                        elif video_tag.get("src"):
+                            src = video_tag.get("src")
+                            if any(ext in src.lower() for ext in [".mp4", ".webm", ".mov"]):
+                                video_url = self._make_url_absolute(src, url)
+
+                    # 2. Check for iframe embeds (YouTube, Twitter, etc.)
+                    if not video_url:
+                        iframe = article_div.find("iframe")
+                        if iframe and iframe.get("src"):
+                            iframe_src = iframe.get("src")
+                            # Look for YouTube, Twitter, Vimeo embeds
+                            if any(domain in iframe_src for domain in ["youtube.com", "youtu.be", "twitter.com", "x.com", "vimeo.com"]):
+                                video_url = iframe_src if iframe_src.startswith("http") else f"https:{iframe_src}"
+
+                    # 3. Check for data-video-url or similar attributes
+                    if not video_url:
+                        video_elements = article_div.find_all(attrs={"data-video-url": True})
+                        if video_elements:
+                            video_url = self._make_url_absolute(video_elements[0].get("data-video-url"), url)
 
                 # DESIGN: Source-specific content extraction
                 # Each site structures their articles differently
@@ -393,16 +466,107 @@ class NewsScraper:
                 if content_text:
                     # Remove extra whitespace
                     content_text = "\n\n".join(line.strip() for line in content_text.split("\n") if line.strip())
-                    return content_text
+                    logger.info(f"Extracted from {url} - Image: {image_url[:50] if image_url else 'None'}, Video: {video_url[:50] if video_url else 'None'}")
+                    return (content_text, image_url, video_url)
                 else:
-                    return "Could not extract article text"
+                    return ("Could not extract article text", image_url, video_url)
 
         except asyncio.TimeoutError:
             logger.warning(f"Timeout fetching article content from {url}")
-            return "Article fetch timed out"
+            return ("Article fetch timed out", None, None)
         except Exception as e:
             logger.warning(f"Failed to extract content from {url}: {str(e)[:100]}")
-            return "Content extraction failed"
+            return ("Content extraction failed", None, None)
+
+    def _make_url_absolute(self, url_str: str, base_url: str) -> str:
+        """
+        Convert relative URL to absolute URL.
+
+        Args:
+            url_str: URL string (may be relative or absolute)
+            base_url: Base URL to resolve relative URLs against
+
+        Returns:
+            Absolute URL string
+
+        DESIGN: Handle all URL formats (relative, protocol-relative, absolute)
+        """
+        if url_str.startswith("//"):
+            return f"https:{url_str}"
+        elif url_str.startswith("/"):
+            from urllib.parse import urlparse
+            parsed = urlparse(base_url)
+            return f"{parsed.scheme}://{parsed.netloc}{url_str}"
+        elif url_str.startswith("http"):
+            return url_str
+        else:
+            # Relative path
+            from urllib.parse import urljoin
+            return urljoin(base_url, url_str)
+
+    # DESIGN: Discord forum tag IDs for automatic categorization
+    # Maps category names to Discord forum tag IDs
+    CATEGORY_TAGS: dict[str, int] = {
+        "military": 1382114547996954664,
+        "breaking_news": 1382114954165092565,
+        "politics": 1382115092077871174,
+        "economy": 1382115132317892619,
+        "health": 1382115182184235088,
+        "international": 1382115248814690354,
+        "social": 1382115306842882118,
+    }
+
+    def _categorize_article(self, title: str, content: str) -> Optional[int]:
+        """
+        Categorize article and return appropriate Discord forum tag ID.
+
+        Args:
+            title: Article title
+            content: Article content
+
+        Returns:
+            Discord forum tag ID or None if no category matches
+
+        DESIGN: Use AI to intelligently categorize articles
+        AI analyzes title and content to determine most appropriate category
+        Returns Discord tag ID for automatic tag application
+        """
+        if not self.openai_client:
+            logger.warning("OpenAI client not initialized - skipping categorization")
+            return None
+
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a news categorizer for Syrian news articles. Analyze the article and choose the MOST appropriate category from this list:\n\n- military: Military operations, armed conflicts, security forces, weapons, battles\n- breaking_news: Urgent breaking news, major developments, significant events\n- politics: Political developments, government, diplomacy, elections, policies\n- economy: Economic news, trade, business, finance, currency, markets\n- health: Health care, medical news, diseases, hospitals, public health\n- international: International relations, foreign affairs, global events affecting Syria\n- social: Society, culture, humanitarian issues, refugees, daily life\n\nRespond with ONLY the category name (one word), nothing else."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Categorize this Syrian news article.\n\nTitle: {title}\n\nContent: {content[:800]}\n\nCategory:"
+                    }
+                ],
+                max_tokens=10,
+                temperature=0.3,  # Low temperature for consistent categorization
+            )
+
+            category: str = response.choices[0].message.content.strip().lower()
+
+            # DESIGN: Map AI category to Discord tag ID
+            # Validate category and return corresponding tag ID
+            if category in self.CATEGORY_TAGS:
+                tag_id: int = self.CATEGORY_TAGS[category]
+                logger.info(f"Article categorized as '{category}' (tag ID: {tag_id})")
+                return tag_id
+            else:
+                logger.warning(f"Invalid category '{category}' - no tag applied")
+                return None
+
+        except Exception as e:
+            logger.warning(f"Failed to categorize article: {str(e)[:100]}")
+            return None
 
     def _generate_ai_title(self, original_title: str, content: str) -> str:
         """

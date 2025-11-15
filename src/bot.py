@@ -153,12 +153,16 @@ class OthmanBot(commands.Bot):
             # Fetch latest articles
             logger.info("📰 Fetching latest news articles...")
             articles: list[NewsArticle] = await self.news_scraper.fetch_latest_news(
-                max_articles=3, hours_back=24
+                max_articles=1, hours_back=24
             )
 
             if not articles:
                 logger.warning("No new articles found to post")
                 return
+
+            # DESIGN: Post ONLY ONE article per hour
+            # Get the most recent article with media
+            article = articles[0]
 
             # Get news channel
             channel = self.get_channel(self.news_channel_id)
@@ -170,30 +174,23 @@ class OthmanBot(commands.Bot):
             # Forum channels create thread posts, text channels send regular messages
             if isinstance(channel, discord.ForumChannel):
                 # Post to forum channel
-                for article in articles:
-                    try:
-                        await self._post_article_to_forum(channel, article)
-                        # DESIGN: Small delay between posts to avoid rate limiting
-                        await asyncio.sleep(2)
-                    except Exception as e:
-                        logger.error(f"Failed to post article '{article.title}': {e}")
-                        continue
+                try:
+                    await self._post_article_to_forum(channel, article)
+                except Exception as e:
+                    logger.error(f"Failed to post article '{article.title}': {e}")
+                    return
             elif isinstance(channel, discord.TextChannel):
                 # Post to text channel
-                for article in articles:
-                    try:
-                        await self._post_article(channel, article)
-                        # DESIGN: Small delay between posts to avoid rate limiting
-                        # Discord allows 5 messages per 5 seconds per channel
-                        await asyncio.sleep(2)
-                    except Exception as e:
-                        logger.error(f"Failed to post article '{article.title}': {e}")
-                        continue
+                try:
+                    await self._post_article(channel, article)
+                except Exception as e:
+                    logger.error(f"Failed to post article '{article.title}': {e}")
+                    return
             else:
                 logger.error(f"Channel {self.news_channel_id} is not a text or forum channel")
                 return
 
-            logger.success(f"✅ Posted {len(articles)} news articles")
+            logger.success(f"✅ Posted 1 news article")
 
             # Update presence with new next post time
             await self.update_presence()
@@ -269,57 +266,190 @@ class OthmanBot(commands.Bot):
             article: NewsArticle object to post
 
         DESIGN: Forum channels require thread creation with initial message
-        Each article becomes a forum post (thread) with embed as first message
+        Each article becomes a forum post (thread) with uploaded image file
         """
-        # DESIGN: Forum posts require thread name limited to 100 characters
-        thread_name: str = (
-            article.title[:97] + "..." if len(article.title) > 100 else article.title
-        )
+        # DESIGN: Download image and video, upload to Discord, then delete locally
+        # User requirement: No media links, upload actual files
+        import aiohttp
+        import os
+        from pathlib import Path
 
-        # DESIGN: Post bilingual AI summaries with image embed
-        # Arabic summary first (primary), then English
-        # Much cleaner than truncated raw text
+        image_file: Optional[discord.File] = None
+        temp_image_path: Optional[str] = None
+        video_file: Optional[discord.File] = None
+        temp_video_path: Optional[str] = None
 
-        # Create embed with image
-        embed: discord.Embed = discord.Embed(
-            color=discord.Color.blue(),
-            timestamp=article.published_date,
-        )
+        # Create temp directory for media
+        temp_dir: Path = Path("data/temp_media")
+        temp_dir.mkdir(parents=True, exist_ok=True)
 
-        # DESIGN: Add image if available
-        # Images make posts more engaging and professional
+        # Download image
         if article.image_url:
-            embed.set_image(url=article.image_url)
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(article.image_url, timeout=10) as response:
+                        if response.status == 200:
+                            # Get file extension from URL or content type
+                            ext: str = ".jpg"
+                            if "." in article.image_url:
+                                url_ext = article.image_url.split(".")[-1].split("?")[0].lower()
+                                if url_ext in ["jpg", "jpeg", "png", "webp", "gif"]:
+                                    ext = f".{url_ext}"
 
-        # Add source in footer
-        embed.set_footer(
-            text=f"{article.source_emoji} {article.source}",
-            icon_url=self.user.avatar.url if self.user.avatar else None,
-        )
+                            # Save to temp file
+                            temp_image_path = str(temp_dir / f"temp_img_{hash(article.url)}{ext}")
+                            content: bytes = await response.read()
 
-        # DESIGN: Format bilingual summaries
-        # Arabic first, then English
-        # Each summary is 3-4 sentences from AI
-        message_content: str = f"**{article.title}**\n\n"
-        message_content += f"🇸🇾 **ملخص بالعربية:**\n{article.arabic_summary}\n\n"
-        message_content += f"🇺🇸 **English Summary:**\n{article.english_summary}"
+                            with open(temp_image_path, "wb") as f:
+                                f.write(content)
+
+                            # Create Discord file object
+                            image_file = discord.File(temp_image_path, filename=f"article{ext}")
+                            logger.info(f"Downloaded image for article: {article.title[:30]}")
+            except Exception as e:
+                logger.warning(f"Failed to download image for '{article.title}': {e}")
+
+        # DESIGN: Download video if it exists (direct video files only, not embeds)
+        # Only download actual video files (.mp4, .webm, .mov), skip YouTube/Twitter embeds
+        if article.video_url:
+            try:
+                # Check if it's a direct video file (not an embed)
+                is_direct_video = any(ext in article.video_url.lower() for ext in [".mp4", ".webm", ".mov"])
+
+                if is_direct_video:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(article.video_url, timeout=30) as response:
+                            if response.status == 200:
+                                # Get file extension
+                                ext: str = ".mp4"
+                                if "." in article.video_url:
+                                    url_ext = article.video_url.split(".")[-1].split("?")[0].lower()
+                                    if url_ext in ["mp4", "webm", "mov"]:
+                                        ext = f".{url_ext}"
+
+                                # DESIGN: Discord has file size limits (8MB for regular, 25MB for Nitro)
+                                # Check content length before downloading
+                                content_length = response.headers.get("Content-Length")
+                                if content_length and int(content_length) > 25 * 1024 * 1024:  # 25MB limit
+                                    logger.warning(f"Video too large ({int(content_length)/1024/1024:.1f}MB) for '{article.title}', skipping")
+                                else:
+                                    # Save to temp file
+                                    temp_video_path = str(temp_dir / f"temp_vid_{hash(article.url)}{ext}")
+                                    content: bytes = await response.read()
+
+                                    # Double check actual size
+                                    if len(content) > 25 * 1024 * 1024:
+                                        logger.warning(f"Video file size ({len(content)/1024/1024:.1f}MB) exceeds Discord limit for '{article.title}', skipping")
+                                    else:
+                                        with open(temp_video_path, "wb") as f:
+                                            f.write(content)
+
+                                        # Create Discord file object
+                                        video_file = discord.File(temp_video_path, filename=f"video{ext}")
+                                        logger.info(f"Downloaded video for article: {article.title[:30]} ({len(content)/1024/1024:.1f}MB)")
+                else:
+                    logger.info(f"Video is an embed (not downloadable): {article.video_url[:50]}")
+            except Exception as e:
+                logger.warning(f"Failed to download video for '{article.title}': {e}")
+
+        # DESIGN: Format bilingual summaries with beautiful styling
+        # Image will be uploaded as attachment instead of URL
+        # Use Discord markdown for professional formatting
+
+        # Get current date for thread title (MM-DD-YY format)
+        from datetime import datetime
+        post_date: str = datetime.now().strftime("%m-%d-%y")
+
+        # Build message with professional formatting
+        message_content: str = ""
+
+        # DESIGN: Key quote at the top for better engagement
+        # Extract first sentence as highlight to hook readers immediately
+        first_sentence: str = article.english_summary.split('.')[0].strip() + '.'
+        if len(first_sentence) > 20 and len(first_sentence) < 200:
+            message_content += f"> 💬 *\"{first_sentence}\"*\n\n"
+            message_content += "─────────────\n\n"
+
+        # DESIGN: Arabic summary section with emoji flag header
+        # Makes it clear which language is which
+        message_content += f"🇸🇾 **Arabic Summary**\n{article.arabic_summary}\n\n"
+        message_content += "─────────────\n\n"
+
+        # DESIGN: English translation section with emoji flag header
+        message_content += f"🇬🇧 **English Translation**\n{article.english_summary}\n\n"
+        message_content += "─────────────\n\n"
+
+        # DESIGN: Article metadata footer
+        # Wrap URL in angle brackets to suppress Discord auto-embed
+        # Discord creates embeds for naked URLs, <url> prevents this
+        published_date_str: str = article.published_date.strftime("%B %d, %Y") if article.published_date else "N/A"
+
+        # DESIGN: Combine source and read link on same line for cleaner footer
+        message_content += f"📰 **Source:** {article.source_emoji} {article.source} • 🔗 **[Read Full Article](<{article.url}>)**\n"
+        message_content += f"📅 **Published:** {published_date_str}\n\n"
+
+        # Footer disclaimer in small text
+        message_content += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
+        message_content += "The content is sourced from various news outlets and summarized using AI. "
+        message_content += "Bot developed by حَـــــنَّـــــا."
 
         # Ensure we don't exceed Discord's 2000 char limit
         if len(message_content) > 1990:
             message_content = message_content[:1990] + "..."
 
+        # Update thread name to include date
+        thread_name = f"📅 {post_date} | {article.title}"
+        if len(thread_name) > 100:
+            thread_name = f"📅 {post_date} | {article.title[:80]}..."
+
         try:
-            # DESIGN: Create forum thread with bilingual summaries + image embed
-            # Forum channels don't support sending messages directly - must create thread
+            # DESIGN: Create forum thread with uploaded media files (image and video) and category tag
+            # Media is attached as files, not URL links
+            # Apply category tag if one was determined by AI
+            files: list[discord.File] = []
+            if image_file:
+                files.append(image_file)
+            if video_file:
+                files.append(video_file)
+
+            # DESIGN: Build list of tags to apply to the forum thread
+            # If AI categorized the article, apply the corresponding Discord tag
+            # Tags help organize forum by topic (military, politics, etc.)
+            applied_tags: list[discord.ForumTag] = []
+            if article.category_tag_id:
+                # Find the tag object from channel's available tags
+                for tag in channel.available_tags:
+                    if tag.id == article.category_tag_id:
+                        applied_tags.append(tag)
+                        break
+
             thread: discord.Thread = await channel.create_thread(
                 name=thread_name,
                 content=message_content,
-                embed=embed,
+                files=files,
+                applied_tags=applied_tags,  # Apply category tag automatically
                 auto_archive_duration=1440,  # Archive after 24 hours
             )
-            logger.info(f"📰 Posted forum thread: {article.title}")
+
+            tag_info: str = f" (Tag: {applied_tags[0].name})" if applied_tags else " (No tag)"
+            media_info: str = f"Image: {'Yes' if image_file else 'No'}, Video: {'Yes' if video_file else 'No'}"
+            logger.info(f"📰 Posted forum thread: {article.title} ({media_info}){tag_info}")
         except discord.HTTPException as e:
             logger.error(f"Failed to create forum post for '{article.title}': {e}")
+        finally:
+            # DESIGN: Clean up temp media files after upload
+            # Delete local files to save disk space
+            if temp_image_path and os.path.exists(temp_image_path):
+                try:
+                    os.remove(temp_image_path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete temp image {temp_image_path}: {e}")
+
+            if temp_video_path and os.path.exists(temp_video_path):
+                try:
+                    os.remove(temp_video_path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete temp video {temp_video_path}: {e}")
 
     async def close(self) -> None:
         """

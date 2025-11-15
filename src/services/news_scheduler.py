@@ -76,18 +76,18 @@ class NewsScheduler:
         Returns:
             True if started successfully, False if already running
         """
+        # DESIGN: Post immediately if requested, even if scheduler is already running
+        # This allows testing the bot without restarting from scratch
+        if post_immediately:
+            logger.info("🚀 Posting news immediately (test mode)")
+            await self.post_callback()
+
         if self.is_running:
             logger.warning("Scheduler is already running")
             return False
 
         self.is_running = True
         self._save_state()
-
-        # DESIGN: Optional immediate post for testing or first run
-        # Useful when you want to see results immediately
-        if post_immediately:
-            logger.info("🚀 Posting news immediately (test mode)")
-            await self.post_callback()
 
         # DESIGN: Create background task for hourly posting
         # Task runs indefinitely until stopped
@@ -171,18 +171,28 @@ class NewsScheduler:
 
     def _calculate_next_post_time(self) -> datetime:
         """
-        Calculate the next hourly post time (top of next hour).
+        Calculate the next hourly post time (top of next hour in EDT).
 
         Returns:
             datetime object for next post time
         """
-        # DESIGN: Always post at :00 minutes of the hour
+        # DESIGN: Always post at :00 minutes of the hour (EDT timezone)
+        # Posts at exactly 1:00, 2:00, 3:00, etc. EDT
         # If current time is 3:45, next post is 4:00
         # If current time is 3:00, next post is 4:00 (not immediately)
         now: datetime = datetime.now()
-        next_hour: datetime = (now + timedelta(hours=1)).replace(
-            minute=0, second=0, microsecond=0
-        )
+
+        # Calculate next hour boundary
+        if now.minute == 0 and now.second == 0:
+            # If exactly on the hour, wait for next hour
+            next_hour: datetime = (now + timedelta(hours=1)).replace(
+                minute=0, second=0, microsecond=0
+            )
+        else:
+            # Otherwise, go to next hour
+            next_hour: datetime = (now + timedelta(hours=1)).replace(
+                minute=0, second=0, microsecond=0
+            )
         return next_hour
 
     def get_next_post_time(self) -> Optional[datetime]:
