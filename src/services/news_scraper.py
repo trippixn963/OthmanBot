@@ -20,11 +20,13 @@ Server: discord.gg/syria
 """
 
 import os
+import json
 import asyncio
 import feedparser
 import aiohttp
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from openai import OpenAI
@@ -67,11 +69,19 @@ class NewsScraper:
     def __init__(self) -> None:
         """Initialize the news scraper."""
         self.session: Optional[aiohttp.ClientSession] = None
+
         # DESIGN: Track fetched URLs to avoid duplicate posts
         # Stored as set for O(1) lookup performance
         # Limited to last 1000 URLs to prevent memory growth
+        # PERSISTED to JSON file to survive bot restarts
         self.fetched_urls: set[str] = set()
         self.max_cached_urls: int = 1000
+        self.posted_urls_file: Path = Path("data/posted_urls.json")
+        self.posted_urls_file.parent.mkdir(exist_ok=True)
+
+        # DESIGN: Load previously posted URLs on startup
+        # Prevents re-posting same articles after bot restart
+        self._load_posted_urls()
 
         # DESIGN: Initialize OpenAI client for title generation
         # Uses API key from environment variables
@@ -87,6 +97,47 @@ class NewsScraper:
         """Async context manager exit."""
         if self.session:
             await self.session.close()
+
+    def _load_posted_urls(self) -> None:
+        """
+        Load previously posted URLs from JSON file.
+
+        DESIGN: Read URLs from persistent storage on bot startup
+        Prevents duplicate posts after bot restarts
+        Gracefully handles missing or corrupt file
+        """
+        try:
+            if self.posted_urls_file.exists():
+                with open(self.posted_urls_file, "r", encoding="utf-8") as f:
+                    data: dict[str, list[str]] = json.load(f)
+                    url_list: list[str] = data.get("posted_urls", [])
+                    self.fetched_urls = set(url_list)
+                    logger.info(f"📥 Loaded {len(self.fetched_urls)} posted URLs from cache")
+            else:
+                logger.info("No posted URLs cache found - starting fresh")
+        except Exception as e:
+            logger.warning(f"Failed to load posted URLs: {e}")
+            self.fetched_urls = set()
+
+    def _save_posted_urls(self) -> None:
+        """
+        Save posted URLs to JSON file.
+
+        DESIGN: Persist URLs to disk after each post
+        Ensures duplicate prevention survives bot restarts
+        Only saves last 1000 URLs to prevent file bloat
+        """
+        try:
+            # DESIGN: Limit saved URLs to max_cached_urls
+            # Keep most recent URLs, discard oldest
+            urls_to_save: list[str] = list(self.fetched_urls)[-self.max_cached_urls:]
+
+            with open(self.posted_urls_file, "w", encoding="utf-8") as f:
+                json.dump({"posted_urls": urls_to_save}, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"💾 Saved {len(urls_to_save)} posted URLs to cache")
+        except Exception as e:
+            logger.warning(f"Failed to save posted URLs: {e}")
 
     async def fetch_latest_news(
         self, max_articles: int = 5, hours_back: int = 24
@@ -142,6 +193,12 @@ class NewsScraper:
             # Remove oldest URLs (convert to list, remove first half)
             urls_list: list[str] = list(self.fetched_urls)
             self.fetched_urls = set(urls_list[-self.max_cached_urls :])
+
+        # DESIGN: Save URLs to persistent storage immediately
+        # Ensures duplicate prevention survives bot restarts
+        # Called after every fetch to keep cache updated
+        if seen_urls:
+            self._save_posted_urls()
 
         logger.info(
             f"Fetched {len(unique_articles)} unique articles from {len(self.NEWS_SOURCES)} sources"
