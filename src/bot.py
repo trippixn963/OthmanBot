@@ -452,7 +452,7 @@ class OthmanBot(commands.Bot):
             # Critical: Add to cache immediately after successful post
             # Without this, bot will repost same article every hour!
             if self.news_scraper:
-                self.news_scraper.mark_url_as_posted(article.url)
+                self.news_scraper.fetched_urls.add(article.url)
                 logger.info(f"✅ Marked URL as posted: {article.url[:50]}")
 
             # DESIGN: Send announcement embed to general channel with link to forum post
