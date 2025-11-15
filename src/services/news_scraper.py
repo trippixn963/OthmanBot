@@ -561,8 +561,11 @@ class NewsScraper:
                 logger.info(f"Article categorized as '{category}' (tag ID: {tag_id})")
                 return tag_id
             else:
-                logger.warning(f"Invalid category '{category}' - no tag applied")
-                return None
+                # DESIGN: Fallback to 'social' tag for invalid categories
+                # Better to have some tag than no tag at all
+                # Social category covers culture, education, humanitarian, daily life
+                logger.warning(f"Invalid category '{category}' - using 'social' as fallback")
+                return self.CATEGORY_TAGS["social"]
 
         except Exception as e:
             logger.warning(f"Failed to categorize article: {str(e)[:100]}")
