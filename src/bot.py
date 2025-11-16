@@ -170,10 +170,10 @@ class OthmanBot(commands.Bot):
             return
 
         try:
-            # Fetch latest articles
+            # Fetch latest articles (or backfill from older ones)
             logger.info("📰 Fetching latest news articles...")
             articles: list[NewsArticle] = await self.news_scraper.fetch_latest_news(
-                max_articles=1, hours_back=24
+                max_articles=1  # hours_back defaults to 168 (7 days) for backfill
             )
 
             if not articles:
@@ -463,6 +463,7 @@ class OthmanBot(commands.Bot):
             # Without this, bot will repost same article every hour!
             if self.news_scraper:
                 self.news_scraper.fetched_urls.add(article.url)
+                self.news_scraper._save_posted_urls()  # Persist to disk
                 logger.info(f"✅ Marked URL as posted: {article.url[:50]}")
 
             # DESIGN: Send announcement embed to general channel with link to forum post

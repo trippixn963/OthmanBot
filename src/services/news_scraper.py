@@ -140,17 +140,23 @@ class NewsScraper:
             logger.warning(f"Failed to save posted URLs: {e}")
 
     async def fetch_latest_news(
-        self, max_articles: int = 5, hours_back: int = 24
+        self, max_articles: int = 5, hours_back: int = 168
     ) -> List[NewsArticle]:
         """
-        Fetch latest Syrian news from all sources.
+        Fetch latest Syrian news from all sources with backfill logic.
+
+        BACKFILL STRATEGY:
+        1. Always check for new (unposted) articles first
+        2. If no new articles, go backwards through older articles
+        3. Post one old article per hour until a new one appears
+        4. This ensures hourly posts even during slow news periods
 
         Args:
             max_articles: Maximum number of articles to return per source
-            hours_back: Only fetch articles from last N hours
+            hours_back: How far back to search (default: 7 days for backfill)
 
         Returns:
-            List of NewsArticle objects, sorted by date (newest first)
+            List of NewsArticle objects (newest unposted first, or oldest if all new posted)
         """
         all_articles: list[NewsArticle] = []
         cutoff_time: datetime = datetime.now() - timedelta(hours=hours_back)
@@ -160,7 +166,7 @@ class NewsScraper:
         for source_key, source_info in self.NEWS_SOURCES.items():
             try:
                 articles: list[NewsArticle] = await self._fetch_from_source(
-                    source_key, source_info, cutoff_time, max_articles
+                    source_key, source_info, cutoff_time, max_articles * 10  # Fetch more for backfill
                 )
                 all_articles.extend(articles)
                 logger.success(
@@ -172,38 +178,47 @@ class NewsScraper:
                 )
                 continue
 
-        # DESIGN: Sort by published date (newest first) for chronological posting
-        # Users see most recent news first
+        # DESIGN: Sort by published date (newest first) initially
+        # This allows us to check latest articles first
         all_articles.sort(key=lambda x: x.published_date, reverse=True)
 
-        # DESIGN: Filter out duplicates based on URL
-        # Prevents same article from appearing twice from different sources
-        unique_articles: list[NewsArticle] = []
+        # DESIGN: Separate new articles from old articles
+        # New = not in posted URLs cache
+        new_articles: list[NewsArticle] = []
+        old_articles: list[NewsArticle] = []
         seen_urls: set[str] = set()
 
         for article in all_articles:
-            if article.url not in seen_urls and article.url not in self.fetched_urls:
-                unique_articles.append(article)
-                seen_urls.add(article.url)
+            if article.url in seen_urls:
+                continue  # Skip duplicates within this fetch
 
-        # DESIGN: Update cache of fetched URLs
-        # Maintain maximum cache size to prevent memory growth
-        self.fetched_urls.update(seen_urls)
-        if len(self.fetched_urls) > self.max_cached_urls:
-            # Remove oldest URLs (convert to list, remove first half)
-            urls_list: list[str] = list(self.fetched_urls)
-            self.fetched_urls = set(urls_list[-self.max_cached_urls :])
+            seen_urls.add(article.url)
 
-        # DESIGN: Save URLs to persistent storage immediately
-        # Ensures duplicate prevention survives bot restarts
-        # Called after every fetch to keep cache updated
-        if seen_urls:
-            self._save_posted_urls()
+            if article.url not in self.fetched_urls:
+                new_articles.append(article)
+            else:
+                old_articles.append(article)
+
+        # DESIGN: Backfill logic - prefer new, fallback to old
+        # If we have new articles, use those (newest first)
+        # If no new articles, use old articles (oldest first, to go backwards chronologically)
+        if new_articles:
+            logger.info(f"✅ Found {len(new_articles)} NEW unposted articles")
+            selected_articles: list[NewsArticle] = new_articles[:max_articles]
+        elif old_articles:
+            # DESIGN: Reverse sort old articles to get OLDEST first
+            # This creates a backfill effect: post older articles in chronological order
+            old_articles.sort(key=lambda x: x.published_date)  # Oldest first
+            logger.info(f"⏪ No new articles - backfilling from {len(old_articles)} older articles")
+            selected_articles: list[NewsArticle] = old_articles[:max_articles]
+        else:
+            logger.warning("⚠️ No articles found (all filtered or none available)")
+            return []
 
         logger.info(
-            f"Fetched {len(unique_articles)} unique articles from {len(self.NEWS_SOURCES)} sources"
+            f"📰 Returning {len(selected_articles)} article(s) from {len(self.NEWS_SOURCES)} source(s)"
         )
-        return unique_articles[:max_articles]
+        return selected_articles
 
     async def _fetch_from_source(
         self,
