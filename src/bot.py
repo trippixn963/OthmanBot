@@ -517,13 +517,15 @@ class OthmanBot(commands.Bot):
         logger.info(f"✅ Found general channel: {general_channel.name}")
 
         try:
-            # DESIGN: Create minimal teaser embed that drives users to forum
-            # No description, no source field, no date - just clickable title and image
-            # This makes general chat a notification channel, not a news reader
+            # DESIGN: Create teaser embed with short preview and button to forum
+            # Short description (first 100 chars) to give a preview
+            # Button drives users to click through to forum thread
+            teaser: str = article.english_summary[:100] + "..." if len(article.english_summary) > 100 else article.english_summary
+
             embed: discord.Embed = discord.Embed(
                 title=f"{article.source_emoji} {article.title}",
+                description=teaser,
                 color=discord.Color.blue(),
-                url=thread.jump_url,  # Link to forum thread
             )
 
             # DESIGN: Add developer footer with avatar (matches TahaBot/AzabBot format)
@@ -549,8 +551,18 @@ class OthmanBot(commands.Bot):
             if article.image_url:
                 embed.set_thumbnail(url=article.image_url)
 
-            # Send embed
-            message: discord.Message = await general_channel.send(embed=embed)
+            # DESIGN: Create "Read Full Article" button that links to forum thread
+            # Button uses discord.ui.View and discord.ui.Button with URL
+            view = discord.ui.View()
+            button = discord.ui.Button(
+                label="📰 Read Full Article",
+                style=discord.ButtonStyle.link,
+                url=thread.jump_url
+            )
+            view.add_item(button)
+
+            # Send embed with button
+            message: discord.Message = await general_channel.send(embed=embed, view=view)
 
             # DESIGN: Track message ID for reaction management
             # Add to set so we can enforce eyes emoji only in on_reaction_add
