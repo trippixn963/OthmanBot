@@ -523,7 +523,7 @@ class OthmanBot(commands.Bot):
             teaser: str = article.english_summary[:100] + "..." if len(article.english_summary) > 100 else article.english_summary
 
             embed: discord.Embed = discord.Embed(
-                title=f"{article.source_emoji} {article.title}",
+                title=article.title,  # No emoji in title
                 description=teaser,
                 color=discord.Color.blue(),
             )
@@ -561,16 +561,12 @@ class OthmanBot(commands.Bot):
             )
             view.add_item(button)
 
-            # Send embed with button
+            # Send embed with button (no reactions)
             message: discord.Message = await general_channel.send(embed=embed, view=view)
 
-            # DESIGN: Track message ID for reaction management
-            # Add to set so we can enforce eyes emoji only in on_reaction_add
+            # DESIGN: Track message ID for reaction blocking
+            # Block ALL reactions on announcement embeds
             self.announcement_messages.add(message.id)
-
-            # DESIGN: Add eyes emoji reaction (👀) to announcement
-            # This is the only allowed reaction on news announcements
-            await message.add_reaction("👀")
 
             logger.info(f"📣 Sent announcement to general chat for: {article.title[:50]}")
 
@@ -583,29 +579,26 @@ class OthmanBot(commands.Bot):
         """
         Event handler for when a reaction is added to a message.
 
-        DESIGN: Enforce eyes emoji (👀) only on announcement embeds
-        Remove any other reactions from users to keep announcements clean
-        Bot reactions are allowed (for initial eyes emoji)
+        DESIGN: Block ALL reactions on announcement embeds
+        Remove any reactions from users to keep announcements clean
         """
-        # DESIGN: Ignore bot's own reactions
-        # Bot adds the eyes emoji initially, don't remove it
+        # DESIGN: Ignore bot's own reactions (for safety)
         if user.bot:
             return
 
         # DESIGN: Check if this is an announcement message
-        # Only enforce reaction rules on tracked announcement messages
+        # Only enforce reaction blocking on tracked announcement messages
         if reaction.message.id not in self.announcement_messages:
             return
 
-        # DESIGN: Remove any reaction that isn't eyes emoji
-        # Allow only 👀, remove everything else
-        if str(reaction.emoji) != "👀":
-            try:
-                await reaction.remove(user)
-                logger.info(
-                    f"🗑️ Removed invalid reaction {reaction.emoji} from {user.name} on announcement"
-                )
-            except discord.HTTPException as e:
+        # DESIGN: Remove ALL reactions on announcement embeds
+        # No reactions allowed on news notifications
+        try:
+            await reaction.remove(user)
+            logger.info(
+                f"🗑️ Removed reaction {reaction.emoji} from {user.name} on announcement (all reactions blocked)"
+            )
+        except discord.HTTPException as e:
                 logger.warning(f"Failed to remove reaction: {e}")
 
     async def close(self) -> None:
