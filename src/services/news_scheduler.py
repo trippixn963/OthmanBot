@@ -82,8 +82,11 @@ class NewsScheduler:
             logger.info("🚀 Posting news immediately (test mode)")
             await self.post_callback()
 
-        if self.is_running:
-            logger.warning("Scheduler is already running")
+        # DESIGN: Check if background task is already running (not just state flag)
+        # State file may say "running" but task could have crashed
+        # Always create new task if none exists or previous task is done
+        if self.task and not self.task.done():
+            logger.warning("Scheduler task is already running")
             return False
 
         self.is_running = True
