@@ -31,10 +31,12 @@ class OthmanBot(commands.Bot):
 
     def __init__(self) -> None:
         """Initialize the Othman bot with necessary intents and configuration."""
-        # DESIGN: Minimal intents for automated posting only
-        # No need for message content or member intents
+        # DESIGN: Minimal intents for automated posting and reaction management
+        # guilds: For channel access and posting
+        # reactions: For adding eyes emoji and cleaning up other reactions
         intents: discord.Intents = discord.Intents.default()
         intents.guilds = True
+        intents.reactions = True
 
         super().__init__(
             command_prefix="!",  # Required but unused
@@ -44,6 +46,11 @@ class OthmanBot(commands.Bot):
 
         # Load configuration from environment
         self.news_channel_id: Optional[int] = self._load_channel_id()
+
+        # DESIGN: Track announcement message IDs for reaction management
+        # Only eyes emoji (👀) allowed on announcement embeds
+        # Set stores message IDs for efficient lookup in on_reaction_add
+        self.announcement_messages: set[int] = set()
 
         # Initialize services
         self.news_scraper: Optional[NewsScraper] = None
@@ -436,13 +443,16 @@ class OthmanBot(commands.Bot):
                         applied_tags.append(tag)
                         break
 
-            thread: discord.Thread = await channel.create_thread(
+            # DESIGN: create_thread returns ThreadWithMessage, extract thread
+            # ThreadWithMessage contains both the thread and initial message
+            thread_with_msg = await channel.create_thread(
                 name=thread_name,
                 content=message_content,
                 files=files,
                 applied_tags=applied_tags,  # Apply category tag automatically
                 auto_archive_duration=1440,  # Archive after 24 hours
             )
+            thread: discord.Thread = thread_with_msg.thread
 
             tag_info: str = f" (Tag: {applied_tags[0].name})" if applied_tags else " (No tag)"
             media_info: str = f"Image: {'Yes' if image_file else 'No'}, Video: {'Yes' if video_file else 'No'}"
@@ -457,8 +467,11 @@ class OthmanBot(commands.Bot):
 
             # DESIGN: Send announcement embed to general channel with link to forum post
             # This notifies users in main chat about new news posts
+            logger.info(f"🔍 Checking general_channel_id: {self.general_channel_id}")
             if self.general_channel_id:
                 await self._send_general_announcement(thread, article, applied_tags)
+            else:
+                logger.warning("❌ General channel ID not configured - skipping announcement")
         except discord.HTTPException as e:
             logger.error(f"Failed to create forum post for '{article.title}': {e}")
         finally:
@@ -490,44 +503,98 @@ class OthmanBot(commands.Bot):
         DESIGN: Send beautiful embed to general chat with link to forum post
         This notifies users about new news without cluttering the forum
         """
+        logger.info(f"🔔 Attempting to send announcement to general channel (ID: {self.general_channel_id})")
+
         general_channel = self.get_channel(self.general_channel_id)
-        if not general_channel or not isinstance(general_channel, discord.TextChannel):
-            logger.warning(f"General channel {self.general_channel_id} not found or not a text channel")
+        if not general_channel:
+            logger.warning(f"❌ General channel {self.general_channel_id} not found")
             return
 
+        if not isinstance(general_channel, discord.TextChannel):
+            logger.warning(f"❌ Channel {self.general_channel_id} is not a text channel (type: {type(general_channel).__name__})")
+            return
+
+        logger.info(f"✅ Found general channel: {general_channel.name}")
+
         try:
-            # Create embed
+            # DESIGN: Create minimal teaser embed that drives users to forum
+            # No description, no source field, no date - just clickable title and image
+            # This makes general chat a notification channel, not a news reader
             embed: discord.Embed = discord.Embed(
                 title=f"{article.source_emoji} {article.title}",
-                description=article.english_summary[:250] + "..." if len(article.english_summary) > 250 else article.english_summary,
                 color=discord.Color.blue(),
                 url=thread.jump_url,  # Link to forum thread
             )
 
-            # Add category tag as footer if available
-            if applied_tags:
-                embed.set_footer(text=f"Category: {applied_tags[0].name} • Click title to read full article")
-            else:
-                embed.set_footer(text="Click title to read full article")
+            # DESIGN: Add developer footer with avatar (matches TahaBot/AzabBot format)
+            # Fetch developer user for avatar (use fetch_user for API call, not cache-only get_user)
+            developer_id_str: Optional[str] = os.getenv("DEVELOPER_ID")
+            developer_avatar_url: str = self.user.display_avatar.url  # Fallback to bot avatar
+
+            if developer_id_str and developer_id_str.isdigit():
+                try:
+                    developer = await self.fetch_user(int(developer_id_str))
+                    if developer:
+                        developer_avatar_url = developer.display_avatar.url
+                        logger.info(f"✅ Fetched developer avatar for footer: {developer.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch developer user {developer_id_str}: {e}")
+
+            embed.set_footer(
+                text="Developed By: حَـــــنَّـــــا",
+                icon_url=developer_avatar_url
+            )
 
             # Add thumbnail if article has image
             if article.image_url:
                 embed.set_thumbnail(url=article.image_url)
 
-            # Add source field
-            embed.add_field(name="Source", value=f"{article.source_emoji} {article.source}", inline=True)
-
-            # Add published date if available
-            if article.published_date:
-                published_str: str = article.published_date.strftime("%b %d, %Y")
-                embed.add_field(name="Published", value=published_str, inline=True)
-
             # Send embed
-            await general_channel.send(embed=embed)
+            message: discord.Message = await general_channel.send(embed=embed)
+
+            # DESIGN: Track message ID for reaction management
+            # Add to set so we can enforce eyes emoji only in on_reaction_add
+            self.announcement_messages.add(message.id)
+
+            # DESIGN: Add eyes emoji reaction (👀) to announcement
+            # This is the only allowed reaction on news announcements
+            await message.add_reaction("👀")
+
             logger.info(f"📣 Sent announcement to general chat for: {article.title[:50]}")
 
         except discord.HTTPException as e:
             logger.error(f"Failed to send general announcement for '{article.title}': {e}")
+
+    async def on_reaction_add(
+        self, reaction: discord.Reaction, user: discord.User
+    ) -> None:
+        """
+        Event handler for when a reaction is added to a message.
+
+        DESIGN: Enforce eyes emoji (👀) only on announcement embeds
+        Remove any other reactions from users to keep announcements clean
+        Bot reactions are allowed (for initial eyes emoji)
+        """
+        # DESIGN: Ignore bot's own reactions
+        # Bot adds the eyes emoji initially, don't remove it
+        if user.bot:
+            return
+
+        # DESIGN: Check if this is an announcement message
+        # Only enforce reaction rules on tracked announcement messages
+        if reaction.message.id not in self.announcement_messages:
+            return
+
+        # DESIGN: Remove any reaction that isn't eyes emoji
+        # Allow only 👀, remove everything else
+        if str(reaction.emoji) != "👀":
+            try:
+                await reaction.remove(user)
+                logger.info(
+                    f"🗑️ Removed invalid reaction {reaction.emoji} from {user.name} on announcement"
+                )
+            except discord.HTTPException as e:
+                logger.warning(f"Failed to remove reaction: {e}")
 
     async def close(self) -> None:
         """
