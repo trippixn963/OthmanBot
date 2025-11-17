@@ -155,13 +155,13 @@ class OthmanBot(commands.Bot):
             await self.soccer_scraper.__aenter__()
 
             # DESIGN: Initialize soccer scheduler with callback to post_soccer_news method
-            # Scheduler will call this method every 3 hours automatically
+            # Scheduler will call this method every hour automatically
             self.soccer_scheduler = SoccerScheduler(self.post_soccer_news)
 
-            # DESIGN: Start soccer scheduler - 3-hour intervals
-            # post_immediately=False to maintain consistent schedule (12:00, 3:00, 6:00, 9:00)
+            # DESIGN: Start soccer scheduler - hourly intervals
+            # post_immediately=False to maintain consistent schedule (1:00, 2:00, 3:00, etc.)
             await self.soccer_scheduler.start(post_immediately=False)
-            logger.success("⚽ Automated soccer news started - posting every 3 hours")
+            logger.success("⚽ Automated soccer news started - posting hourly")
         else:
             logger.info("⚽ Soccer channel not configured - skipping soccer news automation")
 

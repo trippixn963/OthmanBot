@@ -40,10 +40,10 @@ class SoccerScheduler:
         self.state_file: Path = Path("data/soccer_scheduler_state.json")
         self.state_file.parent.mkdir(exist_ok=True)
 
-        # DESIGN: 3-hour interval for soccer news (8 posts per day)
-        # Less frequent than regular news (hourly) since soccer is a specialty topic
-        # Avoids overwhelming the sports channel
-        self.interval_hours: int = 3
+        # DESIGN: 1-hour interval for soccer news (24 posts per day)
+        # Same frequency as regular news to keep sports channel active
+        # Users want consistent hourly updates for sports content
+        self.interval_hours: int = 1
 
         # DESIGN: Load saved state to resume after restarts
         # Tracks whether scheduler was running before shutdown
@@ -76,7 +76,7 @@ class SoccerScheduler:
         Start the automated soccer news posting schedule.
 
         Args:
-            post_immediately: If True, post soccer news immediately then start 3-hour schedule
+            post_immediately: If True, post soccer news immediately then start hourly schedule
 
         Returns:
             True if started successfully, False if already running
@@ -97,7 +97,7 @@ class SoccerScheduler:
         self.is_running = True
         self._save_state()
 
-        # DESIGN: Create background task for 3-hour interval posting
+        # DESIGN: Create background task for hourly interval posting
         # Task runs indefinitely until stopped
         # Separate task prevents blocking main bot operations
         self.task = asyncio.create_task(self._schedule_loop())
@@ -136,17 +136,17 @@ class SoccerScheduler:
 
     async def _schedule_loop(self) -> None:
         """
-        Main scheduling loop - runs every 3 hours.
+        Main scheduling loop - runs every hour.
 
-        DESIGN: Posts soccer news every 3 hours (8 times per day)
+        DESIGN: Posts soccer news every hour (24 times per day)
         Calculates wait time dynamically to maintain consistent intervals
         Handles errors gracefully to keep scheduler running
         """
         while self.is_running:
             try:
-                # DESIGN: Calculate exact wait time until next 3-hour interval
-                # Ensures posts happen consistently every 3 hours
-                # Example: Current time 1:30 PM → wait 1.5 hours → post at 3:00 PM
+                # DESIGN: Calculate exact wait time until next hour mark
+                # Ensures posts happen consistently every hour
+                # Example: Current time 2:15 PM → wait 45 minutes → post at 3:00 PM
                 next_post_time: datetime = self._calculate_next_post_time()
                 wait_seconds: float = (next_post_time - datetime.now()).total_seconds()
 
@@ -160,7 +160,7 @@ class SoccerScheduler:
                 # DESIGN: Post soccer news if still running after wait
                 # Check is_running again in case stop() was called during sleep
                 if self.is_running:
-                    logger.info("⚽⏰ 3-hour soccer post triggered")
+                    logger.info("⚽⏰ Hourly soccer post triggered")
                     try:
                         await self.post_callback()
                     except Exception as e:
@@ -179,37 +179,25 @@ class SoccerScheduler:
 
     def _calculate_next_post_time(self) -> datetime:
         """
-        Calculate the next 3-hour interval post time.
+        Calculate the next hourly post time.
 
         Returns:
             datetime object for next post time
 
-        DESIGN: Posts every 3 hours starting from midnight
-        Post times: 12:00 AM, 3:00 AM, 6:00 AM, 9:00 AM, 12:00 PM, 3:00 PM, 6:00 PM, 9:00 PM
+        DESIGN: Posts every hour on the hour mark (1:00, 2:00, 3:00, etc.)
+        Same as news scheduler to maintain consistency
         """
         now: datetime = datetime.now()
 
-        # DESIGN: Calculate next 3-hour boundary
-        # Find current hour, round up to next multiple of 3
-        current_hour: int = now.hour
-        current_3hour_slot: int = (current_hour // 3) * 3
-
-        # Calculate next 3-hour boundary
-        if now.minute == 0 and now.second == 0 and current_hour % 3 == 0:
-            # If exactly on a 3-hour boundary, wait for next one
-            next_hour: int = current_3hour_slot + 3
+        # DESIGN: Calculate next hour boundary
+        # Always post at the top of each hour (minute=0, second=0)
+        if now.minute == 0 and now.second == 0:
+            # If exactly on the hour, wait for next hour
+            next_post: datetime = now + timedelta(hours=1)
         else:
-            # Otherwise, go to next 3-hour boundary
-            next_hour: int = current_3hour_slot + 3
-
-        # Handle day rollover
-        if next_hour >= 24:
-            next_post: datetime = (now + timedelta(days=1)).replace(
-                hour=next_hour % 24, minute=0, second=0, microsecond=0
-            )
-        else:
-            next_post: datetime = now.replace(
-                hour=next_hour, minute=0, second=0, microsecond=0
+            # Otherwise, go to next hour boundary
+            next_post: datetime = (now + timedelta(hours=1)).replace(
+                minute=0, second=0, microsecond=0
             )
 
         return next_post
