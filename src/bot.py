@@ -24,6 +24,8 @@ from discord.ext import commands
 from src.core.logger import logger
 from src.services.news_scraper import NewsScraper, NewsArticle
 from src.services.news_scheduler import NewsScheduler
+from src.services.soccer_scraper import SoccerScraper, SoccerArticle
+from src.services.soccer_scheduler import SoccerScheduler
 
 
 class OthmanBot(commands.Bot):
@@ -46,6 +48,7 @@ class OthmanBot(commands.Bot):
 
         # Load configuration from environment
         self.news_channel_id: Optional[int] = self._load_channel_id()
+        self.soccer_channel_id: Optional[int] = self._load_soccer_channel_id()
 
         # DESIGN: Track announcement message IDs for reaction management
         # Only eyes emoji (👀) allowed on announcement embeds
@@ -55,6 +58,8 @@ class OthmanBot(commands.Bot):
         # Initialize services
         self.news_scraper: Optional[NewsScraper] = None
         self.news_scheduler: Optional[NewsScheduler] = None
+        self.soccer_scraper: Optional[SoccerScraper] = None
+        self.soccer_scheduler: Optional[SoccerScheduler] = None
 
     def _load_channel_id(self) -> Optional[int]:
         """
@@ -64,6 +69,18 @@ class OthmanBot(commands.Bot):
             Channel ID as int or None if not configured
         """
         channel_id_str: Optional[str] = os.getenv("NEWS_CHANNEL_ID")
+        if channel_id_str and channel_id_str.isdigit():
+            return int(channel_id_str)
+        return None
+
+    def _load_soccer_channel_id(self) -> Optional[int]:
+        """
+        Load soccer channel ID from environment.
+
+        Returns:
+            Channel ID as int or None if not configured
+        """
+        channel_id_str: Optional[str] = os.getenv("SOCCER_CHANNEL_ID")
         if channel_id_str and channel_id_str.isdigit():
             return int(channel_id_str)
         return None
@@ -107,6 +124,10 @@ class OthmanBot(commands.Bot):
                     "News Channel",
                     str(self.news_channel_id) if self.news_channel_id else "Not Set",
                 ),
+                (
+                    "Soccer Channel",
+                    str(self.soccer_channel_id) if self.soccer_channel_id else "Not Set",
+                ),
             ],
             emoji="✅",
         )
@@ -126,6 +147,23 @@ class OthmanBot(commands.Bot):
         # This maintains consistent hourly schedule even after restarts
         await self.news_scheduler.start(post_immediately=False)
         logger.success("🤖 Automated news posting started - bot is fully autonomous")
+
+        # DESIGN: Initialize soccer scraper if soccer channel is configured
+        # Soccer news posts every 3 hours to SOCCER_CHANNEL_ID
+        if self.soccer_channel_id:
+            self.soccer_scraper = SoccerScraper()
+            await self.soccer_scraper.__aenter__()
+
+            # DESIGN: Initialize soccer scheduler with callback to post_soccer_news method
+            # Scheduler will call this method every 3 hours automatically
+            self.soccer_scheduler = SoccerScheduler(self.post_soccer_news)
+
+            # DESIGN: Start soccer scheduler - 3-hour intervals
+            # post_immediately=False to maintain consistent schedule (12:00, 3:00, 6:00, 9:00)
+            await self.soccer_scheduler.start(post_immediately=False)
+            logger.success("⚽ Automated soccer news started - posting every 3 hours")
+        else:
+            logger.info("⚽ Soccer channel not configured - skipping soccer news automation")
 
         # Set bot presence
         await self.update_presence()
@@ -575,6 +613,194 @@ class OthmanBot(commands.Bot):
         except discord.HTTPException as e:
             logger.error(f"Failed to send general announcement for '{article.title}': {e}")
 
+    async def post_soccer_news(self) -> None:
+        """
+        Post latest soccer news articles to the soccer channel.
+
+        DESIGN: Called by soccer scheduler every 3 hours automatically
+        Fetches soccer news, formats embeds, creates forum posts
+        Handles all errors gracefully to keep scheduler running
+        """
+        if not self.soccer_channel_id:
+            logger.error("SOCCER_CHANNEL_ID not configured - cannot post soccer news")
+            return
+
+        if not self.soccer_scraper:
+            logger.error("Soccer scraper not initialized")
+            return
+
+        try:
+            # Fetch latest soccer articles (or backfill from older ones)
+            logger.info("⚽ Fetching latest soccer news articles...")
+            articles: list[SoccerArticle] = await self.soccer_scraper.fetch_latest_soccer_news(
+                max_articles=1, hours_back=24  # Look back 24 hours for soccer news
+            )
+
+            if not articles:
+                logger.warning("No new soccer articles found to post")
+                return
+
+            # DESIGN: Post ONLY ONE article per 3-hour interval
+            # Get the most recent article with media
+            article = articles[0]
+
+            # Get soccer channel
+            channel = self.get_channel(self.soccer_channel_id)
+            if not channel:
+                logger.error(f"Soccer channel {self.soccer_channel_id} not found")
+                return
+
+            # DESIGN: Support both text channels and forum channels
+            # Forum channels create thread posts, text channels send regular messages
+            if isinstance(channel, discord.ForumChannel):
+                # Post to forum channel
+                try:
+                    await self._post_soccer_article_to_forum(channel, article)
+                except Exception as e:
+                    logger.error(f"Failed to post soccer article '{article.title}': {e}")
+                    return
+            elif isinstance(channel, discord.TextChannel):
+                # Post to text channel
+                try:
+                    await self._post_soccer_article(channel, article)
+                except Exception as e:
+                    logger.error(f"Failed to post soccer article '{article.title}': {e}")
+                    return
+            else:
+                logger.error(f"Soccer channel {self.soccer_channel_id} is not a text or forum channel")
+                return
+
+            logger.success(f"✅ Posted 1 soccer article")
+
+        except Exception as e:
+            logger.error(f"Failed to post soccer news: {e}")
+            # DESIGN: Don't raise exception - let scheduler continue
+
+    async def _post_soccer_article(
+        self, channel: discord.TextChannel, article: SoccerArticle
+    ) -> None:
+        """
+        Post a single soccer news article with embed.
+
+        Args:
+            channel: Discord channel to post in
+            article: SoccerArticle object to post
+        """
+        # Create embed
+        embed: discord.Embed = discord.Embed(
+            title=article.title,
+            url=article.url,
+            description=article.summary[:500] + "..." if len(article.summary) > 500 else article.summary,
+            color=discord.Color.green(),  # Green for soccer
+            timestamp=article.published_date,
+        )
+
+        # Add image if available
+        if article.image_url:
+            embed.set_image(url=article.image_url)
+
+        # Add source in footer
+        embed.set_footer(
+            text=f"{article.source_emoji} {article.source}",
+            icon_url=self.user.avatar.url if self.user.avatar else None,
+        )
+
+        # Post message
+        await channel.send(embed=embed)
+        logger.info(f"⚽ Posted soccer: {article.title}")
+
+    async def _post_soccer_article_to_forum(
+        self, channel: discord.ForumChannel, article: SoccerArticle
+    ) -> None:
+        """
+        Post a single soccer news article to a forum channel.
+
+        Args:
+            channel: Discord forum channel to post in
+            article: SoccerArticle object to post
+        """
+        # DESIGN: Download image, upload to Discord, then delete locally
+        import aiohttp
+        from pathlib import Path
+
+        image_file: Optional[discord.File] = None
+        temp_image_path: Optional[str] = None
+
+        # Create temp directory for media
+        temp_dir: Path = Path("data/temp_media")
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        # Download image
+        if article.image_url:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(article.image_url, timeout=10) as response:
+                        if response.status == 200:
+                            ext: str = ".jpg"
+                            if "." in article.image_url:
+                                url_ext = article.image_url.split(".")[-1].split("?")[0].lower()
+                                if url_ext in ["jpg", "jpeg", "png", "webp", "gif"]:
+                                    ext = f".{url_ext}"
+
+                            temp_image_path = str(temp_dir / f"temp_soccer_{hash(article.url)}{ext}")
+                            content: bytes = await response.read()
+
+                            with open(temp_image_path, "wb") as f:
+                                f.write(content)
+
+                            image_file = discord.File(temp_image_path, filename=f"soccer{ext}")
+                            logger.info(f"⚽ Downloaded image for soccer article: {article.title[:30]}")
+            except Exception as e:
+                logger.warning(f"Failed to download image for '{article.title}': {e}")
+
+        try:
+            # Create forum post content with bilingual summaries
+            content_parts: list[str] = []
+
+            # Arabic summary
+            if article.arabic_summary:
+                content_parts.append(f"🇸🇾 **ملخص بالعربية:**\n{article.arabic_summary}\n")
+
+            # English summary
+            if article.english_summary:
+                content_parts.append(f"🇬🇧 **English Translation:**\n{article.english_summary}\n")
+
+            # Read full article link
+            content_parts.append(f"📰 [Read Full Article]({article.url})")
+
+            # Source
+            content_parts.append(f"\n{article.source_emoji} **Source:** {article.source}")
+
+            full_content: str = "\n".join(content_parts)
+
+            # Create forum thread with image
+            files_to_upload: list[discord.File] = [image_file] if image_file else []
+
+            thread: discord.Thread
+            message: discord.Message
+
+            thread, message = await channel.create_thread(
+                name=article.title,
+                content=full_content[:2000],  # Discord limit
+                files=files_to_upload,
+            )
+
+            # DESIGN: Mark URL as posted immediately after forum thread creation
+            # Prevents duplicate posts on next hourly run
+            self.soccer_scraper.fetched_urls.add(article.url)
+            self.soccer_scraper._save_posted_urls()
+            logger.info(f"⚽ Marked soccer URL as posted: {article.url}")
+
+            logger.info(f"⚽ Posted soccer forum thread: {article.title}")
+
+        finally:
+            # Clean up temp image file
+            if temp_image_path and Path(temp_image_path).exists():
+                try:
+                    Path(temp_image_path).unlink()
+                except Exception as e:
+                    logger.warning(f"Failed to delete temp soccer image: {e}")
+
     async def on_reaction_add(
         self, reaction: discord.Reaction, user: discord.User
     ) -> None:
@@ -612,13 +838,21 @@ class OthmanBot(commands.Bot):
         """
         logger.info("Shutting down Othman Bot...")
 
-        # Stop scheduler
+        # Stop news scheduler
         if self.news_scheduler and self.news_scheduler.is_running:
             await self.news_scheduler.stop()
 
         # Close news scraper session
         if self.news_scraper:
             await self.news_scraper.__aexit__(None, None, None)
+
+        # Stop soccer scheduler
+        if self.soccer_scheduler and self.soccer_scheduler.is_running:
+            await self.soccer_scheduler.stop()
+
+        # Close soccer scraper session
+        if self.soccer_scraper:
+            await self.soccer_scraper.__aexit__(None, None, None)
 
         # Call parent close
         await super().close()
