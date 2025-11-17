@@ -122,8 +122,9 @@ class OthmanBot(commands.Bot):
 
         # DESIGN: Always start scheduler on bot ready
         # Bot is 100% automated - no manual control needed
-        # post_immediately=True for testing - will post right away then continue hourly
-        await self.news_scheduler.start(post_immediately=True)
+        # post_immediately=False ensures bot waits until next hour mark (e.g., 2:00, 3:00)
+        # This maintains consistent hourly schedule even after restarts
+        await self.news_scheduler.start(post_immediately=False)
         logger.success("🤖 Automated news posting started - bot is fully autonomous")
 
         # Set bot presence
@@ -330,7 +331,7 @@ class OthmanBot(commands.Bot):
                 logger.warning(f"Failed to download image for '{article.title}': {e}")
 
         # DESIGN: Download video if it exists (direct video files only, not embeds)
-        # Only download actual video files (.mp4, .webm, .mov), skip YouTube/Twitter embeds
+        # Only download actual video files (.mp4, .webm, .mov), skip platform embeds
         if article.video_url:
             try:
                 # Check if it's a direct video file (not an embed)
