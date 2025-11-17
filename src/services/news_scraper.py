@@ -425,7 +425,7 @@ class NewsScraper:
 
         DESIGN: Each news source has different HTML structure
         Use specific selectors for each source to extract article content, images, and videos
-        Looks for video tags, iframe embeds (YouTube, Twitter, etc.), and direct video files
+        Looks for video tags, iframe embeds, and direct video files
         """
         if not url or not self.session:
             return ("Content unavailable", None, None)
@@ -467,7 +467,7 @@ class NewsScraper:
                             break
 
                 # DESIGN: Extract video from article
-                # Look for video tags, iframes (YouTube, Twitter, etc.), and direct video files
+                # Look for video tags, iframe embeds, and direct video files
                 video_url: Optional[str] = None
 
                 if article_div:
@@ -486,12 +486,12 @@ class NewsScraper:
                             if any(ext in src.lower() for ext in [".mp4", ".webm", ".mov"]):
                                 video_url = self._make_url_absolute(src, url)
 
-                    # 2. Check for iframe embeds (YouTube, Twitter, etc.)
+                    # 2. Check for iframe embeds (social media platforms)
                     if not video_url:
                         iframe = article_div.find("iframe")
                         if iframe and iframe.get("src"):
                             iframe_src = iframe.get("src")
-                            # Look for YouTube, Twitter, Vimeo embeds
+                            # Look for common video embed platforms
                             if any(domain in iframe_src for domain in ["youtube.com", "youtu.be", "twitter.com", "x.com", "vimeo.com"]):
                                 video_url = iframe_src if iframe_src.startswith("http") else f"https:{iframe_src}"
 
