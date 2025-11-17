@@ -62,6 +62,10 @@ class OthmanBot(commands.Bot):
         self.soccer_scraper: Optional[SoccerScraper] = None
         self.soccer_scheduler: Optional[SoccerScheduler] = None
 
+        # DESIGN: Background task for updating presence every minute
+        # Shows live countdown to next post
+        self.presence_task: Optional[asyncio.Task] = None
+
     def _load_channel_id(self) -> Optional[int]:
         """
         Load news channel ID from environment.
@@ -169,6 +173,33 @@ class OthmanBot(commands.Bot):
         # Set bot presence
         await self.update_presence()
 
+        # DESIGN: Start background task to update presence every minute
+        # Shows live countdown that updates automatically
+        # Timezone-agnostic relative time ("Next post in 45 minutes" → "Next post in 44 minutes")
+        self.presence_task = asyncio.create_task(self._presence_update_loop())
+        logger.info("🔄 Started presence update loop (updates every 60 seconds)")
+
+    async def _presence_update_loop(self) -> None:
+        """
+        Background task that updates bot presence every minute.
+
+        DESIGN: Shows live countdown to next post
+        Updates every 60 seconds to keep time accurate
+        Timezone-agnostic relative time for all users
+        Runs continuously until bot shuts down
+        """
+        while True:
+            try:
+                await asyncio.sleep(60)  # Wait 60 seconds between updates
+                await self.update_presence()
+            except asyncio.CancelledError:
+                logger.info("Presence update loop cancelled")
+                break
+            except Exception as e:
+                logger.warning(f"Failed to update presence: {e}")
+                # DESIGN: Continue loop even if one update fails
+                # Don't let presence errors crash the background task
+
     async def update_presence(self, status_text: Optional[str] = None) -> None:
         """
         Update bot's Discord presence.
@@ -177,12 +208,24 @@ class OthmanBot(commands.Bot):
             status_text: Custom status text, or None for default
         """
         if status_text is None:
-            # DESIGN: Show next post time in bot presence
-            # Users can see when next news update is coming
+            # DESIGN: Show relative time instead of absolute time
+            # Timezone-agnostic - works for all users regardless of location
+            # Shows "Next post in X minutes" or "Posting hourly"
             if self.news_scheduler:
                 next_post = self.news_scheduler.get_next_post_time()
                 if next_post:
-                    status_text = f"Next post: {next_post.strftime('%I:%M %p')}"
+                    from datetime import datetime
+                    now = datetime.now()
+                    minutes_until = int((next_post - now).total_seconds() / 60)
+
+                    if minutes_until <= 0:
+                        status_text = "📰 Posting now..."
+                    elif minutes_until == 1:
+                        status_text = "📰 Next post in 1 minute"
+                    elif minutes_until < 60:
+                        status_text = f"📰 Next post in {minutes_until} minutes"
+                    else:
+                        status_text = "📰 Posting hourly"
                 else:
                     status_text = "📰 Automated News"
             else:
@@ -850,6 +893,14 @@ class OthmanBot(commands.Bot):
         Prevents resource leaks and ensures state is saved
         """
         logger.info("Shutting down Othman Bot...")
+
+        # Stop presence update loop
+        if self.presence_task and not self.presence_task.done():
+            self.presence_task.cancel()
+            try:
+                await self.presence_task
+            except asyncio.CancelledError:
+                pass
 
         # Stop news scheduler
         if self.news_scheduler and self.news_scheduler.is_running:
