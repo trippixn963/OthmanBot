@@ -60,7 +60,7 @@ class SoccerScraper:
         "kooora": {
             "name": "Kooora",
             "emoji": "⚽",
-            "rss_url": "https://www.kooora.com/rss.xml",
+            "rss_url": "https://feeds.footballco.com/kooora/feed/6p5bsxot7te8yick",
             "language": "Arabic",
         },
     }
