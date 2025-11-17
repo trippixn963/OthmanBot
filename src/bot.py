@@ -26,6 +26,7 @@ from src.services.news_scraper import NewsScraper, NewsArticle
 from src.services.news_scheduler import NewsScheduler
 from src.services.soccer_scraper import SoccerScraper, SoccerArticle
 from src.services.soccer_scheduler import SoccerScheduler
+from src.data.team_tags import SOCCER_TEAM_TAG_IDS
 
 
 class OthmanBot(commands.Bot):
@@ -773,7 +774,18 @@ class OthmanBot(commands.Bot):
 
             full_content: str = "\n".join(content_parts)
 
-            # Create forum thread with image
+            # DESIGN: Get team tag ID from AI-detected team name
+            # Look up Discord forum tag ID for the detected team
+            # Apply tag to forum thread for automatic categorization
+            applied_tags: list[discord.Object] = []
+            if article.team_tag and article.team_tag in SOCCER_TEAM_TAG_IDS:
+                tag_id: int = SOCCER_TEAM_TAG_IDS[article.team_tag]
+                applied_tags.append(discord.Object(id=tag_id))
+                logger.info(f"⚽ Applying team tag: {article.team_tag} (ID: {tag_id})")
+            else:
+                logger.warning(f"⚽ No valid team tag for article: {article.team_tag}")
+
+            # Create forum thread with image and team tag
             files_to_upload: list[discord.File] = [image_file] if image_file else []
 
             thread: discord.Thread
@@ -783,6 +795,7 @@ class OthmanBot(commands.Bot):
                 name=article.title,
                 content=full_content[:2000],  # Discord limit
                 files=files_to_upload,
+                applied_tags=applied_tags,
             )
 
             # DESIGN: Mark URL as posted immediately after forum thread creation

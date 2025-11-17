@@ -48,6 +48,7 @@ class SoccerArticle:
     published_date: datetime = None
     source: str = ""
     source_emoji: str = ""
+    team_tag: Optional[str] = None  # AI-detected team tag for categorization
 
 
 class SoccerScraper:
@@ -63,6 +64,32 @@ class SoccerScraper:
             "language": "Arabic",
         },
     }
+
+    # DESIGN: Soccer team categories for AI-powered tagging
+    # Maps team names to their exact string for tag matching
+    # AI will analyze article content and return ONE of these team names
+    # Fallback to "International" for multi-team or general soccer news
+    TEAM_CATEGORIES: list[str] = [
+        "Barcelona",
+        "Real Madrid",
+        "Atletico Madrid",
+        "Liverpool",
+        "Bayern Munich",
+        "Manchester City",
+        "Manchester United",
+        "Arsenal",
+        "Chelsea",
+        "Paris Saint-Germain",
+        "Juventus",
+        "AC Milan",
+        "Inter Milan",
+        "Napoli",
+        "Borussia Dortmund",
+        "Roma",
+        "Tottenham Hotspur",
+        "International",
+        "Champions League",
+    ]
 
     def __init__(self) -> None:
         """Initialize the soccer scraper."""
@@ -298,6 +325,11 @@ class SoccerScraper:
                 english_summary: str
                 arabic_summary, english_summary = self._generate_bilingual_summary(full_content)
 
+                # DESIGN: Detect team tag for article categorization
+                # AI analyzes title and content to determine primary team
+                # Used for Discord forum tag assignment
+                team_tag: str = self._detect_team_tag(ai_title, full_content)
+
                 article: SoccerArticle = SoccerArticle(
                     title=ai_title,
                     url=entry.get("link", ""),
@@ -309,6 +341,7 @@ class SoccerScraper:
                     published_date=published_date,
                     source=source_info["name"],
                     source_emoji=source_info["emoji"],
+                    team_tag=team_tag,
                 )
 
                 articles.append(article)
@@ -597,3 +630,58 @@ class SoccerScraper:
             logger.warning(f"Failed to generate bilingual soccer summary: {str(e)[:100]}")
             truncated: str = content[:300] + "..." if len(content) > 300 else content
             return (truncated, truncated)
+
+    def _detect_team_tag(self, title: str, content: str) -> str:
+        """
+        Detect which team the article is primarily about using AI.
+
+        Args:
+            title: Article title
+            content: Article content
+
+        Returns:
+            Team name string matching one of TEAM_CATEGORIES, defaults to "International"
+
+        DESIGN: Use AI to categorize articles by primary team mentioned
+        Helps organize soccer forum channel with proper team tags
+        AI analyzes title and content to determine the main team focus
+        Falls back to "International" for general news or multi-team articles
+        """
+        if not self.openai_client:
+            logger.warning("OpenAI client not initialized - using International tag")
+            return "International"
+
+        try:
+            teams_list: str = ", ".join(self.TEAM_CATEGORIES)
+            content_snippet: str = content[:800] if len(content) > 800 else content
+
+            response = self.openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": f"You are a soccer news categorization expert. Analyze articles and determine which team they are primarily about. You must respond with EXACTLY ONE of these team names: {teams_list}. If the article is about multiple teams, international soccer, World Cup, or general soccer news, respond with 'International'. If it's about Champions League in general, respond with 'Champions League'."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Which team is this soccer article primarily about? Respond with ONLY the team name from the list provided.\n\nTitle: {title}\n\nContent: {content_snippet}"
+                    }
+                ],
+                max_tokens=10,
+                temperature=0.3,  # Low temperature for consistent categorization
+            )
+
+            detected_team: str = response.choices[0].message.content.strip()
+
+            # DESIGN: Validate AI response against known team categories
+            # Ensure returned team name exactly matches one of our categories
+            if detected_team in self.TEAM_CATEGORIES:
+                logger.info(f"⚽ Detected team tag: '{detected_team}' for article '{title[:40]}'")
+                return detected_team
+            else:
+                logger.warning(f"AI returned invalid team '{detected_team}' - using International")
+                return "International"
+
+        except Exception as e:
+            logger.warning(f"Failed to detect team tag: {str(e)[:100]} - using International")
+            return "International"
