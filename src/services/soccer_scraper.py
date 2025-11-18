@@ -123,12 +123,41 @@ class SoccerScraper:
         if self.session:
             await self.session.close()
 
+    @staticmethod
+    def _extract_article_id(url: str) -> str:
+        """
+        Extract unique article ID from URL for deduplication.
+
+        DESIGN: Use article ID instead of full URL to prevent duplicate posts
+        Problem: Full URLs can be truncated, have different encodings, or vary in format
+        Solution: Extract the numeric article ID which is stable and unique
+        Example: https://feeds.footballco.com/.../article-12345-title → "12345"
+
+        Args:
+            url: Article URL
+
+        Returns:
+            Article ID extracted from URL, or full URL if extraction fails
+        """
+        import re
+        # DESIGN: Match article ID pattern: /NUMBERS/ or /NUMBERS? or -NUMBERS-
+        # Kooora URLs can follow different patterns depending on feed format
+        match = re.search(r'/(\d+)/', url)
+        if not match:
+            # Try pattern with dash separator (e.g., article-12345-title)
+            match = re.search(r'-(\d+)-', url)
+        if match:
+            return match.group(1)
+        # Fallback to full URL if no ID found
+        return url
+
     def _load_posted_urls(self) -> None:
         """
-        Load previously posted URLs from JSON file.
+        Load previously posted article IDs from JSON file.
 
-        DESIGN: Read URLs from persistent storage on bot startup
-        Prevents duplicate posts after bot restarts
+        DESIGN: Convert all entries to article IDs for reliable deduplication
+        Backward compatible: converts old URL entries to article IDs
+        Article IDs are more reliable than full URLs for preventing duplicates
         Gracefully handles missing or corrupt file
         """
         try:
@@ -136,35 +165,37 @@ class SoccerScraper:
                 with open(self.posted_urls_file, "r", encoding="utf-8") as f:
                     data: dict[str, list[str]] = json.load(f)
                     url_list: list[str] = data.get("posted_urls", [])
-                    self.fetched_urls = set(url_list)
-                    logger.info(f"⚽ Loaded {len(self.fetched_urls)} posted soccer URLs from cache")
+                    # DESIGN: Convert all entries (URLs or IDs) to article IDs
+                    # Backward compatible with old URL-based cache
+                    self.fetched_urls = set(self._extract_article_id(url) for url in url_list)
+                    logger.info(f"⚽ Loaded {len(self.fetched_urls)} posted soccer article IDs from cache")
             else:
-                logger.info("No posted soccer URLs cache found - starting fresh")
+                logger.info("No posted soccer article IDs cache found - starting fresh")
         except Exception as e:
-            logger.warning(f"Failed to load posted soccer URLs: {e}")
+            logger.warning(f"Failed to load posted soccer article IDs: {e}")
             self.fetched_urls = set()
 
     def _save_posted_urls(self) -> None:
         """
-        Save posted URLs to JSON file.
+        Save posted article IDs to JSON file.
 
-        DESIGN: Persist URLs to disk after each post
+        DESIGN: Persist article IDs to disk after each post
         Ensures duplicate prevention survives bot restarts
-        Saves ALL URLs (no limit) to prevent losing recently posted URLs
+        Saves ALL article IDs (no limit) to prevent losing recently posted IDs
         """
         try:
-            # DESIGN: Save ALL URLs in the set to avoid random subset bug
-            # Previous bug: list(set)[-1000:] takes random 1000 URLs due to undefined set order
-            # This caused newly-added URLs to be lost when saving
-            # Fix: Save ALL URLs, sort for consistency
-            urls_to_save: list[str] = sorted(list(self.fetched_urls))
+            # DESIGN: Save ALL article IDs in the set to avoid random subset bug
+            # Previous bug: list(set)[-1000:] takes random 1000 IDs due to undefined set order
+            # This caused newly-added IDs to be lost when saving
+            # Fix: Save ALL IDs, sort for consistency
+            ids_to_save: list[str] = sorted(list(self.fetched_urls))
 
             with open(self.posted_urls_file, "w", encoding="utf-8") as f:
-                json.dump({"posted_urls": urls_to_save}, f, indent=2, ensure_ascii=False)
+                json.dump({"posted_urls": ids_to_save}, f, indent=2, ensure_ascii=False)
 
-            logger.info(f"⚽ Saved {len(urls_to_save)} posted soccer URLs to cache")
+            logger.info(f"⚽ Saved {len(ids_to_save)} posted soccer article IDs to cache")
         except Exception as e:
-            logger.warning(f"Failed to save posted soccer URLs: {e}")
+            logger.warning(f"Failed to save posted soccer article IDs: {e}")
 
     async def fetch_latest_soccer_news(
         self, max_articles: int = 5, hours_back: int = 24
@@ -209,18 +240,22 @@ class SoccerScraper:
         all_articles.sort(key=lambda x: x.published_date, reverse=True)
 
         # DESIGN: Separate new articles from old articles
-        # New = not in posted URLs cache
+        # New = not in posted article IDs cache
         new_articles: list[SoccerArticle] = []
         old_articles: list[SoccerArticle] = []
-        seen_urls: set[str] = set()
+        seen_ids: set[str] = set()
 
         for article in all_articles:
-            if article.url in seen_urls:
+            # DESIGN: Extract article ID for reliable deduplication
+            # Article IDs are stable and unique, unlike URLs which can vary
+            article_id: str = self._extract_article_id(article.url)
+
+            if article_id in seen_ids:
                 continue  # Skip duplicates within this fetch
 
-            seen_urls.add(article.url)
+            seen_ids.add(article_id)
 
-            if article.url not in self.fetched_urls:
+            if article_id not in self.fetched_urls:
                 new_articles.append(article)
             else:
                 old_articles.append(article)
