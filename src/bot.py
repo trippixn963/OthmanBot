@@ -798,27 +798,44 @@ class OthmanBot(commands.Bot):
                 logger.warning(f"Failed to download image for '{article.title}': {e}")
 
         try:
-            # Create forum post content with bilingual summaries
-            content_parts: list[str] = []
+            # DESIGN: Format bilingual summaries with beautiful styling (EXACT same as news)
+            # Image will be uploaded as attachment instead of URL
+            # Use Discord markdown for professional formatting
 
-            # Arabic summary
-            if article.arabic_summary:
-                content_parts.append(f"🇸🇾 **ملخص بالعربية:**\n{article.arabic_summary}\n")
+            # Build message with professional formatting
+            message_content: str = ""
 
-            # English summary
-            if article.english_summary:
-                content_parts.append(f"🇬🇧 **English Translation:**\n{article.english_summary}\n")
+            # DESIGN: Key quote at the top for better engagement
+            # Extract first sentence as highlight to hook readers immediately
+            first_sentence: str = article.english_summary.split('.')[0].strip() + '.'
+            if len(first_sentence) > 20 and len(first_sentence) < 200:
+                message_content += f"> 💬 *\"{first_sentence}\"*\n\n"
+                message_content += "─────────────\n\n"
 
-            # Read full article link
-            content_parts.append(f"📰 [Read Full Article]({article.url})")
+            # DESIGN: Arabic summary section with emoji flag header
+            # Makes it clear which language is which
+            message_content += f"🇸🇾 **Arabic Summary**\n{article.arabic_summary}\n\n"
+            message_content += "─────────────\n\n"
 
-            # Source
-            content_parts.append(f"\n{article.source_emoji} **Source:** {article.source}")
+            # DESIGN: English translation section with emoji flag header
+            message_content += f"🇬🇧 **English Translation**\n{article.english_summary}\n\n"
+            message_content += "─────────────\n\n"
+
+            # DESIGN: Article metadata footer
+            # Wrap URL in angle brackets to suppress Discord auto-embed
+            # Discord creates embeds for naked URLs, <url> prevents this
+            published_date_str: str = article.published_date.strftime("%B %d, %Y") if article.published_date else "N/A"
+
+            # DESIGN: Combine source and read link on same line for cleaner footer
+            message_content += f"📰 **Source:** {article.source_emoji} {article.source} • 🔗 **[Read Full Article](<{article.url}>)**\n"
+            message_content += f"📅 **Published:** {published_date_str}\n\n"
 
             # Footer disclaimer in small text (same as news)
-            content_parts.append("\n-# ⚠️ This news article was automatically generated and posted by an automated bot. The content is sourced from various news outlets and summarized using AI. Bot developed by حَـــــنَّـــــا.")
+            message_content += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
+            message_content += "The content is sourced from various news outlets and summarized using AI. "
+            message_content += "Bot developed by حَـــــنَّـــــا."
 
-            full_content: str = "\n".join(content_parts)
+            full_content: str = message_content
 
             # DESIGN: Get team tag ID from AI-detected team name
             # Look up Discord forum tag ID for the detected team
