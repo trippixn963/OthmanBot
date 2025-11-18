@@ -815,6 +815,9 @@ class OthmanBot(commands.Bot):
             # Source
             content_parts.append(f"\n{article.source_emoji} **Source:** {article.source}")
 
+            # Footer disclaimer in small text (same as news)
+            content_parts.append("\n-# ⚠️ This news article was automatically generated and posted by an automated bot. The content is sourced from various news outlets and summarized using AI. Bot developed by حَـــــنَّـــــا.")
+
             full_content: str = "\n".join(content_parts)
 
             # DESIGN: Get team tag ID from AI-detected team name
