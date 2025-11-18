@@ -572,15 +572,16 @@ class OthmanBot(commands.Bot):
             media_info: str = f"Image: {'Yes' if image_file else 'No'}, Video: {'Yes' if video_file else 'No'}"
             logger.info(f"📰 Posted forum thread: {article.title} ({media_info}){tag_info}")
 
-            # DESIGN: Mark URL as posted to prevent duplicates
+            # DESIGN: Mark article ID as posted to prevent duplicates
             # Critical: Add to cache immediately after successful post
             # Without this, bot will repost same article every hour!
-            # CRITICAL: Normalize URL to handle trailing slash mismatches
+            # CRITICAL: Use article ID instead of full URL for reliability
+            # Article IDs are stable and unique, unlike URLs which can vary
             if self.news_scraper:
-                normalized_url: str = self.news_scraper._normalize_url(article.url)
-                self.news_scraper.fetched_urls.add(normalized_url)
+                article_id: str = self.news_scraper._extract_article_id(article.url)
+                self.news_scraper.fetched_urls.add(article_id)
                 self.news_scraper._save_posted_urls()  # Persist to disk
-                logger.info(f"✅ Marked URL as posted: {article.url[:50]}")
+                logger.info(f"✅ Marked article ID as posted: {article_id} (URL: {article.url[:50]})")
 
             # DESIGN: Send announcement embed to general channel with link to forum post
             # This notifies users in main chat about new news posts
@@ -984,13 +985,13 @@ class OthmanBot(commands.Bot):
                 applied_tags=applied_tags,
             )
 
-            # DESIGN: Mark URL as posted immediately after forum thread creation
+            # DESIGN: Mark article ID as posted immediately after forum thread creation
             # Prevents duplicate posts on next hourly run
-            # CRITICAL: Normalize URL to handle trailing slash mismatches
-            normalized_url: str = self.soccer_scraper._normalize_url(article.url)
-            self.soccer_scraper.fetched_urls.add(normalized_url)
+            # CRITICAL: Use article ID instead of full URL for reliability
+            article_id: str = self.soccer_scraper._extract_article_id(article.url)
+            self.soccer_scraper.fetched_urls.add(article_id)
             self.soccer_scraper._save_posted_urls()
-            logger.info(f"⚽ Marked soccer URL as posted: {article.url}")
+            logger.info(f"⚽ Marked soccer article ID as posted: {article_id} (URL: {article.url[:50]})")
 
             logger.info(f"⚽ Posted soccer forum thread: {article.title}")
 

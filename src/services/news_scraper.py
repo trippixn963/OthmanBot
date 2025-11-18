@@ -98,21 +98,72 @@ class NewsScraper:
         if self.session:
             await self.session.close()
 
+    @staticmethod
+    def _extract_article_id(url: str) -> str:
+        """
+        Extract unique article ID from URL for deduplication.
+
+        DESIGN: Use article ID instead of full URL to prevent duplicate posts
+        Problem: Full URLs can be truncated, have different encodings, or vary in format
+        Solution: Extract the numeric article ID which is stable and unique
+        Example: https://www.enabbaladi.net/784230/... → "784230"
+
+        Args:
+            url: Article URL
+
+        Returns:
+            Article ID extracted from URL, or full URL if extraction fails
+        """
+        import re
+        # DESIGN: Match article ID pattern: /NUMBERS/ or /NUMBERS?
+        # Enab Baladi URLs follow pattern: domain.com/ARTICLE_ID/title-slug/
+        match = re.search(r'/(\d+)/', url)
+        if match:
+            return match.group(1)
+        # Fallback to full URL if no ID found
+        return url
+
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        """
+        Normalize URL for consistent comparison.
+
+        DESIGN: Strip trailing slash to prevent duplicate posts
+        RSS feeds often have URLs without trailing slash
+        After HTTP redirects/fetching, URLs gain trailing slash
+        This causes "URL A" != "URL A/" mismatch
+        Solution: Always strip trailing slash for comparison
+
+        NOTE: This is now deprecated in favor of _extract_article_id()
+        which is more reliable for deduplication
+
+        Args:
+            url: URL to normalize
+
+        Returns:
+            Normalized URL without trailing slash
+        """
+        return url.rstrip('/')
+
     def _load_posted_urls(self) -> None:
         """
-        Load previously posted URLs from JSON file.
+        Load previously posted article IDs from JSON file.
 
-        DESIGN: Read URLs from persistent storage on bot startup
+        DESIGN: Read article IDs from persistent storage on bot startup
         Prevents duplicate posts after bot restarts
-        Gracefully handles missing or corrupt file
+        Now uses article IDs instead of full URLs for reliability
+        Gracefully handles both old URL format and new ID format
         """
         try:
             if self.posted_urls_file.exists():
                 with open(self.posted_urls_file, "r", encoding="utf-8") as f:
                     data: dict[str, list[str]] = json.load(f)
                     url_list: list[str] = data.get("posted_urls", [])
-                    self.fetched_urls = set(url_list)
-                    logger.info(f"📥 Loaded {len(self.fetched_urls)} posted URLs from cache")
+                    # DESIGN: Convert all entries to article IDs for consistency
+                    # Old entries may be full URLs, new entries will be article IDs
+                    # Extract article ID from each entry (handles both formats)
+                    self.fetched_urls = set(self._extract_article_id(url) for url in url_list)
+                    logger.info(f"📥 Loaded {len(self.fetched_urls)} posted article IDs from cache")
             else:
                 logger.info("No posted URLs cache found - starting fresh")
         except Exception as e:
@@ -121,25 +172,26 @@ class NewsScraper:
 
     def _save_posted_urls(self) -> None:
         """
-        Save posted URLs to JSON file.
+        Save posted article IDs to JSON file.
 
-        DESIGN: Persist URLs to disk after each post
+        DESIGN: Persist article IDs to disk after each post
         Ensures duplicate prevention survives bot restarts
-        Saves ALL URLs (no limit) to prevent losing recently posted URLs
+        Saves ALL IDs (no limit) for complete deduplication
+        Uses article IDs instead of full URLs for reliability
         """
         try:
-            # DESIGN: Save ALL URLs in the set to avoid random subset bug
-            # Previous bug: list(set)[-1000:] takes random 1000 URLs due to undefined set order
-            # This caused newly-added URLs to be lost when saving
-            # Fix: Save ALL URLs, sort for consistency
-            urls_to_save: list[str] = sorted(list(self.fetched_urls))
+            # DESIGN: Save ALL article IDs in the set to avoid random subset bug
+            # Previous bug: list(set)[-1000:] takes random 1000 IDs due to undefined set order
+            # This caused newly-added IDs to be lost when saving
+            # Fix: Save ALL IDs, sort for consistency
+            ids_to_save: list[str] = sorted(list(self.fetched_urls))
 
             with open(self.posted_urls_file, "w", encoding="utf-8") as f:
-                json.dump({"posted_urls": urls_to_save}, f, indent=2, ensure_ascii=False)
+                json.dump({"posted_urls": ids_to_save}, f, indent=2, ensure_ascii=False)
 
-            logger.info(f"💾 Saved {len(urls_to_save)} posted URLs to cache")
+            logger.info(f"💾 Saved {len(ids_to_save)} posted article IDs to cache")
         except Exception as e:
-            logger.warning(f"Failed to save posted URLs: {e}")
+            logger.warning(f"Failed to save posted article IDs: {e}")
 
     async def fetch_latest_news(
         self, max_articles: int = 5, hours_back: int = 168
@@ -185,18 +237,23 @@ class NewsScraper:
         all_articles.sort(key=lambda x: x.published_date, reverse=True)
 
         # DESIGN: Separate new articles from old articles
-        # New = not in posted URLs cache
+        # New = not in posted article IDs cache
         new_articles: list[NewsArticle] = []
         old_articles: list[NewsArticle] = []
-        seen_urls: set[str] = set()
+        seen_ids: set[str] = set()
 
         for article in all_articles:
-            if article.url in seen_urls:
+            # DESIGN: Extract article ID for reliable deduplication
+            # Article IDs are stable and unique, unlike URLs which can vary
+            # Example: https://www.enabbaladi.net/784230/... → "784230"
+            article_id: str = self._extract_article_id(article.url)
+
+            if article_id in seen_ids:
                 continue  # Skip duplicates within this fetch
 
-            seen_urls.add(article.url)
+            seen_ids.add(article_id)
 
-            if article.url not in self.fetched_urls:
+            if article_id not in self.fetched_urls:
                 new_articles.append(article)
             else:
                 old_articles.append(article)
