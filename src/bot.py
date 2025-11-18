@@ -468,8 +468,16 @@ class OthmanBot(commands.Bot):
 
         # DESIGN: Key quote at the top for better engagement
         # Extract first sentence as highlight to hook readers immediately
-        first_sentence: str = article.english_summary.split('.')[0].strip() + '.'
-        if len(first_sentence) > 20 and len(first_sentence) < 200:
+        # If first sentence is too long (>250 chars), truncate with ellipsis
+        first_sentence: str = article.english_summary.split('.')[0].strip()
+        if len(first_sentence) > 250:
+            first_sentence = first_sentence[:247].strip() + '...'
+        else:
+            first_sentence = first_sentence + '.'
+
+        # DESIGN: Always show key quote if we have a valid first sentence
+        # Changed from requiring < 200 chars to always showing (with truncation)
+        if len(first_sentence) > 20:
             message_content += f"> 💬 *\"{first_sentence}\"*\n\n"
             message_content += "─────────────\n\n"
 
@@ -544,8 +552,10 @@ class OthmanBot(commands.Bot):
             # DESIGN: Mark URL as posted to prevent duplicates
             # Critical: Add to cache immediately after successful post
             # Without this, bot will repost same article every hour!
+            # CRITICAL: Normalize URL to handle trailing slash mismatches
             if self.news_scraper:
-                self.news_scraper.fetched_urls.add(article.url)
+                normalized_url: str = self.news_scraper._normalize_url(article.url)
+                self.news_scraper.fetched_urls.add(normalized_url)
                 self.news_scraper._save_posted_urls()  # Persist to disk
                 logger.info(f"✅ Marked URL as posted: {article.url[:50]}")
 
@@ -889,8 +899,16 @@ class OthmanBot(commands.Bot):
 
             # DESIGN: Key quote at the top for better engagement
             # Extract first sentence as highlight to hook readers immediately
-            first_sentence: str = article.english_summary.split('.')[0].strip() + '.'
-            if len(first_sentence) > 20 and len(first_sentence) < 200:
+            # If first sentence is too long (>250 chars), truncate with ellipsis
+            first_sentence: str = article.english_summary.split('.')[0].strip()
+            if len(first_sentence) > 250:
+                first_sentence = first_sentence[:247].strip() + '...'
+            else:
+                first_sentence = first_sentence + '.'
+
+            # DESIGN: Always show key quote if we have a valid first sentence
+            # Changed from requiring < 200 chars to always showing (with truncation)
+            if len(first_sentence) > 20:
                 message_content += f"> 💬 *\"{first_sentence}\"*\n\n"
                 message_content += "─────────────\n\n"
 
@@ -945,7 +963,9 @@ class OthmanBot(commands.Bot):
 
             # DESIGN: Mark URL as posted immediately after forum thread creation
             # Prevents duplicate posts on next hourly run
-            self.soccer_scraper.fetched_urls.add(article.url)
+            # CRITICAL: Normalize URL to handle trailing slash mismatches
+            normalized_url: str = self.soccer_scraper._normalize_url(article.url)
+            self.soccer_scraper.fetched_urls.add(normalized_url)
             self.soccer_scraper._save_posted_urls()
             logger.info(f"⚽ Marked soccer URL as posted: {article.url}")
 
