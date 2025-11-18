@@ -593,14 +593,13 @@ class SoccerScraper:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a bilingual sports news summarizer for soccer/football articles. Create comprehensive summaries that capture ALL important context and details. Each summary should be 3-5 sentences covering: key facts, player/team statements, context, and significance. NEVER omit important context or quotes."
+                        "content": "You are a bilingual sports news summarizer for soccer/football articles. Create comprehensive summaries in both Arabic and English. Read the FULL article content and capture ALL important details including: key facts, player/team quotes, context, significance, and any important statements. NEVER omit important context or quotes. Make the summary as long as needed to convey the full story, but stay under Discord's character limit."
                     },
                     {
                         "role": "user",
-                        "content": f"Summarize this soccer article in both Arabic and English. IMPORTANT: Include ALL important context, quotes, and details. Don't leave out key information that readers need to understand the full story.\n\nFormat your response EXACTLY as:\n\nARABIC:\n[3-5 sentence comprehensive Arabic summary with all key context]\n\nENGLISH:\n[3-5 sentence comprehensive English summary with all key context]\n\nArticle content:\n{content[:3000]}"
+                        "content": f"Summarize this soccer article in both Arabic and English. IMPORTANT: Include ALL important context, quotes, and details from the article. Don't truncate or leave out key information that readers need to understand the full story.\n\nFormat your response EXACTLY as:\n\nARABIC:\n[Comprehensive Arabic summary with ALL key context and quotes]\n\nENGLISH:\n[Comprehensive English summary with ALL key context and quotes]\n\nArticle content:\n{content}"
                     }
                 ],
-                max_tokens=600,
                 temperature=0.7,
             )
 
