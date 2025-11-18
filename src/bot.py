@@ -657,6 +657,88 @@ class OthmanBot(commands.Bot):
         except discord.HTTPException as e:
             logger.error(f"Failed to send general announcement for '{article.title}': {e}")
 
+    async def _send_soccer_announcement(
+        self, thread: discord.Thread, article: "SoccerArticle", applied_tags: list[discord.Object]
+    ) -> None:
+        """
+        Send soccer announcement embed to general chat channel.
+
+        Args:
+            thread: Forum thread that was created
+            article: SoccerArticle that was posted
+            applied_tags: Tags applied to the forum thread (team tags)
+
+        DESIGN: Identical to news announcement for consistency
+        Same embed format, same button style, same notification flow
+        """
+        logger.info(f"🔔 Attempting to send soccer announcement to general channel (ID: {self.general_channel_id})")
+
+        general_channel = self.get_channel(self.general_channel_id)
+        if not general_channel:
+            logger.warning(f"❌ General channel {self.general_channel_id} not found")
+            return
+
+        if not isinstance(general_channel, discord.TextChannel):
+            logger.warning(f"❌ Channel {self.general_channel_id} is not a text channel (type: {type(general_channel).__name__})")
+            return
+
+        logger.info(f"✅ Found general channel: {general_channel.name}")
+
+        try:
+            # DESIGN: Create teaser embed with short preview and button to forum
+            # Identical format to news notifications
+            teaser: str = article.english_summary[:100] + "..." if len(article.english_summary) > 100 else article.english_summary
+
+            embed: discord.Embed = discord.Embed(
+                title=article.title,  # No emoji in title
+                description=teaser,
+                color=discord.Color.green(),  # Green for soccer (vs blue for news)
+            )
+
+            # DESIGN: Add developer footer with avatar (matches news format)
+            developer_id_str: Optional[str] = os.getenv("DEVELOPER_ID")
+            developer_avatar_url: str = self.user.display_avatar.url  # Fallback to bot avatar
+
+            if developer_id_str and developer_id_str.isdigit():
+                try:
+                    developer = await self.fetch_user(int(developer_id_str))
+                    if developer:
+                        developer_avatar_url = developer.display_avatar.url
+                        logger.info(f"✅ Fetched developer avatar for soccer footer: {developer.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch developer user {developer_id_str}: {e}")
+
+            embed.set_footer(
+                text="Developed By: حَـــــنَّـــــا",
+                icon_url=developer_avatar_url
+            )
+
+            # Add thumbnail if article has image
+            if article.image_url:
+                embed.set_thumbnail(url=article.image_url)
+
+            # DESIGN: Create "Read Full Article" button that links to forum thread
+            # Identical button style to news notifications
+            view = discord.ui.View()
+            button = discord.ui.Button(
+                label="⚽ Read Full Article",  # Soccer emoji instead of news emoji
+                style=discord.ButtonStyle.link,
+                url=thread.jump_url
+            )
+            view.add_item(button)
+
+            # Send embed with button (no reactions)
+            message: discord.Message = await general_channel.send(embed=embed, view=view)
+
+            # DESIGN: Track message ID for reaction blocking
+            # Block ALL reactions on announcement embeds (same as news)
+            self.announcement_messages.add(message.id)
+
+            logger.info(f"📣 Sent soccer announcement to general chat for: {article.title[:50]}")
+
+        except discord.HTTPException as e:
+            logger.error(f"Failed to send soccer announcement for '{article.title}': {e}")
+
     async def post_soccer_news(self) -> None:
         """
         Post latest soccer news articles to the soccer channel.
@@ -868,6 +950,14 @@ class OthmanBot(commands.Bot):
             logger.info(f"⚽ Marked soccer URL as posted: {article.url}")
 
             logger.info(f"⚽ Posted soccer forum thread: {article.title}")
+
+            # DESIGN: Send announcement embed to general channel with link to forum post
+            # Same notification system as news posts for consistency
+            logger.info(f"🔍 Checking general_channel_id for soccer announcement: {self.general_channel_id}")
+            if self.general_channel_id:
+                await self._send_soccer_announcement(thread, article, applied_tags)
+            else:
+                logger.warning("❌ General channel ID not configured - skipping soccer announcement")
 
         finally:
             # Clean up temp image file
