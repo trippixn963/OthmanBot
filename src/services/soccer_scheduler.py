@@ -184,20 +184,20 @@ class SoccerScheduler:
         Returns:
             datetime object for next post time
 
-        DESIGN: Posts every hour on the hour mark (1:00, 2:00, 3:00, etc.)
-        Same as news scheduler to maintain consistency
+        DESIGN: Posts every hour at 30 minutes past (1:30, 2:30, 3:30, etc.)
+        Offset from news scheduler to prevent simultaneous posting
         """
         now: datetime = datetime.now()
 
-        # DESIGN: Calculate next hour boundary
-        # Always post at the top of each hour (minute=0, second=0)
-        if now.minute == 0 and now.second == 0:
-            # If exactly on the hour, wait for next hour
-            next_post: datetime = now + timedelta(hours=1)
+        # DESIGN: Calculate next half-hour boundary (30 minutes past each hour)
+        # This staggers soccer posts from news posts which happen on the hour
+        if now.minute < 30:
+            # Before :30, post at current hour :30
+            next_post: datetime = now.replace(minute=30, second=0, microsecond=0)
         else:
-            # Otherwise, go to next hour boundary
+            # After :30, post at next hour :30
             next_post: datetime = (now + timedelta(hours=1)).replace(
-                minute=0, second=0, microsecond=0
+                minute=30, second=0, microsecond=0
             )
 
         return next_post
