@@ -310,10 +310,24 @@ class SoccerScraper:
                 if not image_url and scraped_image:
                     image_url = scraped_image
 
+                # DESIGN: Skip articles with fetch errors (timeout, extraction failed, etc.)
+                # These error messages are returned as content by _extract_full_content
+                # Don't post articles with error messages as content
+                error_messages: list[str] = [
+                    "Article fetch timed out",
+                    "Could not fetch article content",
+                    "Could not extract article text",
+                    "Content extraction failed",
+                    "Content unavailable"
+                ]
+                if any(error_msg in full_content for error_msg in error_messages):
+                    logger.info(f"⚽ Skipping soccer article due to fetch error: {entry.get('title', 'Untitled')[:50]}")
+                    continue
+
                 # DESIGN: Skip articles without images
                 # NEVER post articles without media - user requirement
                 if not image_url:
-                    logger.info(f"Skipping soccer article without image: {entry.get('title', 'Untitled')[:50]}")
+                    logger.info(f"⚽ Skipping soccer article without image: {entry.get('title', 'Untitled')[:50]}")
                     continue
 
                 # DESIGN: Generate AI-powered 3-5 word English title
