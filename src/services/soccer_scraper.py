@@ -150,12 +150,14 @@ class SoccerScraper:
 
         DESIGN: Persist URLs to disk after each post
         Ensures duplicate prevention survives bot restarts
-        Only saves last 1000 URLs to prevent file bloat
+        Saves ALL URLs (no limit) to prevent losing recently posted URLs
         """
         try:
-            # DESIGN: Limit saved URLs to max_cached_urls
-            # Keep most recent URLs, discard oldest
-            urls_to_save: list[str] = list(self.fetched_urls)[-self.max_cached_urls:]
+            # DESIGN: Save ALL URLs in the set to avoid random subset bug
+            # Previous bug: list(set)[-1000:] takes random 1000 URLs due to undefined set order
+            # This caused newly-added URLs to be lost when saving
+            # Fix: Save ALL URLs, sort for consistency
+            urls_to_save: list[str] = sorted(list(self.fetched_urls))
 
             with open(self.posted_urls_file, "w", encoding="utf-8") as f:
                 json.dump({"posted_urls": urls_to_save}, f, indent=2, ensure_ascii=False)
