@@ -208,26 +208,49 @@ class OthmanBot(commands.Bot):
             status_text: Custom status text, or None for default
         """
         if status_text is None:
-            # DESIGN: Show relative time instead of absolute time
-            # Timezone-agnostic - works for all users regardless of location
-            # Shows "Next post in X minutes" or "Posting hourly"
-            if self.news_scheduler:
-                next_post = self.news_scheduler.get_next_post_time()
-                if next_post:
-                    from datetime import datetime
-                    now = datetime.now()
-                    minutes_until = int((next_post - now).total_seconds() / 60)
+            # DESIGN: Show whichever post is coming next (news or soccer)
+            # News posts at :00 (1:00, 2:00, 3:00, etc.)
+            # Soccer posts at :30 (1:30, 2:30, 3:30, etc.)
+            # Display the soonest upcoming post with appropriate emoji
+            from datetime import datetime
+            now = datetime.now()
 
-                    if minutes_until <= 0:
-                        status_text = "📰 Posting now..."
-                    elif minutes_until == 1:
-                        status_text = "📰 Next post in 1 minute"
-                    elif minutes_until < 60:
-                        status_text = f"📰 Next post in {minutes_until} minutes"
-                    else:
-                        status_text = "📰 Posting hourly"
+            # Get next post times from both schedulers
+            next_news = self.news_scheduler.get_next_post_time() if self.news_scheduler else None
+            next_soccer = self.soccer_scheduler.get_next_post_time() if self.soccer_scheduler else None
+
+            # Find which post is soonest
+            soonest_post = None
+            post_type = "news"  # Default to news
+
+            if next_news and next_soccer:
+                # Both schedulers active - pick soonest
+                if next_news < next_soccer:
+                    soonest_post = next_news
+                    post_type = "news"
                 else:
-                    status_text = "📰 Automated News"
+                    soonest_post = next_soccer
+                    post_type = "soccer"
+            elif next_news:
+                soonest_post = next_news
+                post_type = "news"
+            elif next_soccer:
+                soonest_post = next_soccer
+                post_type = "soccer"
+
+            # Generate status text based on soonest post
+            if soonest_post:
+                minutes_until = int((soonest_post - now).total_seconds() / 60)
+                emoji = "📰" if post_type == "news" else "⚽"
+
+                if minutes_until <= 0:
+                    status_text = f"{emoji} Posting now..."
+                elif minutes_until == 1:
+                    status_text = f"{emoji} Next post in 1 minute"
+                elif minutes_until < 60:
+                    status_text = f"{emoji} Next post in {minutes_until} minutes"
+                else:
+                    status_text = f"{emoji} Posting hourly"
             else:
                 status_text = "📰 Automated News"
 
