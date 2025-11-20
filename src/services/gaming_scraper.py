@@ -630,15 +630,15 @@ class GamingScraper:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a bilingual gaming news summarizer. Create concise but informative summaries in both Arabic and English. IMPORTANT: Each summary MUST be under 400 characters. Focus on the most important facts: game name, key announcement, release info. Be concise."
+                        "content": "You are a bilingual gaming news summarizer. Create comprehensive, detailed summaries in both Arabic and English. Each summary should be 200-350 characters - detailed enough to give readers the full picture. Include: what happened, who is involved, why it matters, and any relevant context. NEVER write summaries under 150 characters."
                     },
                     {
                         "role": "user",
-                        "content": f"Summarize this gaming article in both Arabic and English. CRITICAL: Keep each summary under 400 characters. Focus on key facts only.\n\nFormat your response EXACTLY as:\n\nARABIC:\n[Arabic summary - MAX 400 characters]\n\nENGLISH:\n[English summary - MAX 400 characters]\n\nArticle content:\n{content}"
+                        "content": f"Summarize this gaming article in both Arabic and English. Each summary should be 200-350 characters with full context and details. Include all key information: names, dates, reasons, implications.\n\nFormat your response EXACTLY as:\n\nARABIC:\n[Arabic summary - 200-350 characters]\n\nENGLISH:\n[English summary - 200-350 characters]\n\nArticle content:\n{content}"
                     }
                 ],
                 temperature=0.7,
-                max_tokens=500,  # Limit AI response length
+                max_tokens=500,
             )
 
             result: str = response.choices[0].message.content.strip()
