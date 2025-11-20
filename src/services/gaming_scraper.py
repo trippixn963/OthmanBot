@@ -2,13 +2,15 @@
 Othman Discord Bot - Gaming Scraper Service
 ===========================================
 
-Fetches gaming news from IGN RSS feed.
+Fetches gaming news from GameSpot RSS feeds with rotation.
 
 Sources:
-- IGN - Leading gaming news and entertainment website
+- GameSpot News - All gaming news
+- GameSpot Game News - Game-specific news
+- GameSpot Reviews - Game reviews
 
 Features:
-- RSS feed parsing
+- RSS feed rotation between multiple GameSpot feeds
 - Image extraction from articles
 - AI-powered title generation
 - Bilingual summaries (Arabic + English)
@@ -22,6 +24,7 @@ Server: discord.gg/syria
 import os
 import json
 import asyncio
+import random
 import feedparser
 import aiohttp
 from bs4 import BeautifulSoup
@@ -53,19 +56,37 @@ class GamingArticle:
 
 
 class GamingScraper:
-    """Scrapes gaming news from PC Gamer."""
+    """Scrapes gaming news from GameSpot with feed rotation."""
 
-    # DESIGN: Single RSS source - PC Gamer
-    # Major gaming publication with reliable RSS feed and broad coverage
-    # Replaced TWIG which blocked requests with 403 Forbidden
-    GAMING_SOURCES: dict[str, dict[str, str]] = {
-        "pcgamer": {
-            "name": "PC Gamer",
+    # DESIGN: Multiple GameSpot RSS feeds with rotation
+    # Provides variety by rotating between news, game news, and reviews
+    # Replaced PC Gamer for better gaming-focused content
+    GAMING_FEEDS: list[dict[str, str]] = [
+        {
+            "key": "gamespot_news",
+            "name": "GameSpot News",
             "emoji": "🎮",
-            "rss_url": "https://www.pcgamer.com/rss/",
+            "rss_url": "https://www.gamespot.com/feeds/news/",
             "language": "English",
         },
-    }
+        {
+            "key": "gamespot_games",
+            "name": "GameSpot Games",
+            "emoji": "🎮",
+            "rss_url": "https://www.gamespot.com/feeds/game-news/",
+            "language": "English",
+        },
+        {
+            "key": "gamespot_reviews",
+            "name": "GameSpot Reviews",
+            "emoji": "⭐",
+            "rss_url": "https://www.gamespot.com/feeds/reviews/",
+            "language": "English",
+        },
+    ]
+
+    # DESIGN: Keep track of which feed to use next for rotation
+    _current_feed_index: int = 0
 
     # DESIGN: Gaming categories for AI-powered tagging
     # Maps game/platform names to their exact string for tag matching
@@ -228,27 +249,33 @@ class GamingScraper:
             List of GamingArticle objects (newest unposted first, or oldest if all new posted)
 
         DESIGN: 168-hour (7-day) lookback enables effective backfill
-        IGN may not publish frequently enough for 24-hour window to always have content
+        GameSpot may not publish frequently enough for 24-hour window to always have content
         Longer window ensures we always have articles to post during slow periods
         """
         all_articles: list[GamingArticle] = []
         cutoff_time: datetime = datetime.now() - timedelta(hours=hours_back)
 
-        # DESIGN: Fetch from gaming source
-        for source_key, source_info in self.GAMING_SOURCES.items():
-            try:
-                articles: list[GamingArticle] = await self._fetch_from_source(
-                    source_key, source_info, cutoff_time, max_articles * 10  # Fetch more for backfill
-                )
-                all_articles.extend(articles)
-                logger.success(
-                    f"🎮 Fetched {len(articles)} gaming articles from {source_info['name']}"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to fetch gaming news from {source_info['name']}: {str(e)[:100]}"
-                )
-                continue
+        # DESIGN: Rotate between GameSpot feeds for variety
+        # Uses round-robin rotation: News → Games → Reviews → News → ...
+        current_feed: dict[str, str] = self.GAMING_FEEDS[GamingScraper._current_feed_index]
+
+        # DESIGN: Advance feed index for next fetch (wraps around)
+        GamingScraper._current_feed_index = (GamingScraper._current_feed_index + 1) % len(self.GAMING_FEEDS)
+
+        logger.info(f"🎮 Using feed: {current_feed['name']} (rotation index: {GamingScraper._current_feed_index})")
+
+        try:
+            articles: list[GamingArticle] = await self._fetch_from_source(
+                current_feed["key"], current_feed, cutoff_time, max_articles * 10  # Fetch more for backfill
+            )
+            all_articles.extend(articles)
+            logger.success(
+                f"🎮 Fetched {len(articles)} gaming articles from {current_feed['name']}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to fetch gaming news from {current_feed['name']}: {str(e)[:100]}"
+            )
 
         # DESIGN: Sort by published date (newest first) initially
         all_articles.sort(key=lambda x: x.published_date, reverse=True)
@@ -504,16 +531,16 @@ class GamingScraper:
                 # DESIGN: Extract first article image
                 image_url: Optional[str] = None
 
-                # DESIGN: PC Gamer-specific image extraction
+                # DESIGN: GameSpot-specific image extraction
                 # og:image meta tag is most reliable for news sites
-                if source_key == "pcgamer":
+                if source_key.startswith("gamespot"):
                     og_image = soup.find("meta", property="og:image")
                     if og_image and og_image.get("content"):
                         image_url = og_image["content"]
 
                     # Fallback: article hero image
                     if not image_url:
-                        hero_img = soup.find("img", class_=lambda x: x and "hero" in x.lower() if x else False)
+                        hero_img = soup.find("img", class_=lambda x: x and ("hero" in x.lower() or "lead" in x.lower()) if x else False)
                         if hero_img:
                             image_url = hero_img.get("src") or hero_img.get("data-src")
 
@@ -543,26 +570,23 @@ class GamingScraper:
                 # DESIGN: Source-specific content extraction
                 content_text: str = ""
 
-                # DESIGN: PC Gamer-specific content extraction
-                # Uses article-body or article__body class
-                if source_key == "pcgamer":
-                    article_body = soup.find("div", id="article-body") or soup.find("div", class_="article__body")
+                # DESIGN: GameSpot-specific content extraction
+                # Uses content-entity-body or article-body class
+                if source_key.startswith("gamespot"):
+                    article_body = (
+                        soup.find("div", class_="content-entity-body")
+                        or soup.find("div", class_="article-body")
+                        or soup.find("div", class_="js-content-entity-body")
+                    )
                     if article_body:
                         paragraphs = article_body.find_all("p")
                         content_text = "\n\n".join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
 
-                # DESIGN: IGN-specific content extraction
-                elif source_key == "ign":
-                    article_body = soup.find("div", class_="article-body") or soup.find("div", class_="article-content")
-
-                    if article_body:
-                        paragraphs = article_body.find_all("p")
-                        content_text = "\n\n".join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
-
+                    # Fallback: try main content area
                     if not content_text:
-                        main_tag = soup.find("main")
-                        if main_tag:
-                            paragraphs = main_tag.find_all("p")
+                        main_content = soup.find("main") or soup.find("article")
+                        if main_content:
+                            paragraphs = main_content.find_all("p")
                             content_paragraphs = [p for p in paragraphs if len(p.get_text().strip()) > 50]
                             content_text = "\n\n".join([p.get_text().strip() for p in content_paragraphs])
 
