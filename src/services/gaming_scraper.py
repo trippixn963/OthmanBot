@@ -635,18 +635,18 @@ class GamingScraper:
 
         try:
             # DESIGN: Limit summaries to fit within Discord's 2000 char message limit
-            # Total budget: ~1600 chars (leaving room for headers/dividers/formatting)
-            # Arabic: 600 chars, English: 600 chars = 1200 chars for content
+            # Total budget: ~1200 chars (leaving room for key quote/headers/dividers/footer)
+            # Arabic: 400 chars, English: 400 chars = 800 chars for summaries
             response = self.openai_client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a bilingual gaming news summarizer. Create concise but informative summaries in both Arabic and English. IMPORTANT: Each summary MUST be under 600 characters. Focus on the most important facts: game name, key announcement, release info, and one notable quote if relevant. Be concise but capture the essential story."
+                        "content": "You are a bilingual gaming news summarizer. Create concise but informative summaries in both Arabic and English. IMPORTANT: Each summary MUST be under 400 characters. Focus on the most important facts: game name, key announcement, release info. Be concise."
                     },
                     {
                         "role": "user",
-                        "content": f"Summarize this gaming article in both Arabic and English. CRITICAL: Keep each summary under 600 characters. Focus on key facts and main announcement.\n\nFormat your response EXACTLY as:\n\nARABIC:\n[Arabic summary - MAX 600 characters]\n\nENGLISH:\n[English summary - MAX 600 characters]\n\nArticle content:\n{content}"
+                        "content": f"Summarize this gaming article in both Arabic and English. CRITICAL: Keep each summary under 400 characters. Focus on key facts only.\n\nFormat your response EXACTLY as:\n\nARABIC:\n[Arabic summary - MAX 400 characters]\n\nENGLISH:\n[English summary - MAX 400 characters]\n\nArticle content:\n{content}"
                     }
                 ],
                 temperature=0.7,
@@ -668,14 +668,14 @@ class GamingScraper:
                 english_summary = english_part
 
                 # DESIGN: Safety truncation to ensure summaries fit Discord limit
-                # Even with max_tokens and prompt limits, AI might exceed 600 chars
-                # Truncate with ellipsis to guarantee fit within Discord's 2000 char limit
-                if len(arabic_summary) > 600:
-                    arabic_summary = arabic_summary[:597] + "..."
-                    logger.warning(f"🎮 Truncated Arabic gaming summary from {len(arabic_part)} to 600 chars")
-                if len(english_summary) > 600:
-                    english_summary = english_summary[:597] + "..."
-                    logger.warning(f"🎮 Truncated English gaming summary from {len(english_part)} to 600 chars")
+                # Total content budget ~1600 chars (leaving room for headers/dividers/footer)
+                # 400 chars each = 800 chars for summaries, leaving plenty of room
+                if len(arabic_summary) > 400:
+                    arabic_summary = arabic_summary[:397] + "..."
+                    logger.warning(f"🎮 Truncated Arabic gaming summary from {len(arabic_part)} to 400 chars")
+                if len(english_summary) > 400:
+                    english_summary = english_summary[:397] + "..."
+                    logger.warning(f"🎮 Truncated English gaming summary from {len(english_part)} to 400 chars")
 
                 logger.info(f"🎮 Generated bilingual gaming summaries (AR: {len(arabic_summary)} chars, EN: {len(english_summary)} chars)")
             else:
