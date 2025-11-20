@@ -53,16 +53,16 @@ class GamingArticle:
 
 
 class GamingScraper:
-    """Scrapes gaming news from This Week in Videogames."""
+    """Scrapes gaming news from PC Gamer."""
 
-    # DESIGN: Single RSS source - This Week in Videogames
-    # "No ads. No AI. Just videogame coverage that matters."
-    # Pure gaming-focused news (replaced IGN which posted irrelevant content)
+    # DESIGN: Single RSS source - PC Gamer
+    # Major gaming publication with reliable RSS feed and broad coverage
+    # Replaced TWIG which blocked requests with 403 Forbidden
     GAMING_SOURCES: dict[str, dict[str, str]] = {
-        "twig": {
-            "name": "This Week in Videogames",
+        "pcgamer": {
+            "name": "PC Gamer",
             "emoji": "🎮",
-            "rss_url": "https://thisweekinvideogames.com/feed/",
+            "rss_url": "https://www.pcgamer.com/rss/",
             "language": "English",
         },
     }
@@ -504,47 +504,65 @@ class GamingScraper:
                 # DESIGN: Extract first article image
                 image_url: Optional[str] = None
 
-                # Try to find image in article content areas
-                article_div = (
-                    soup.find("div", class_="article-content")
-                    or soup.find("article")
-                    or soup.find("div", class_=lambda x: x and "content" in x.lower())
-                )
+                # DESIGN: PC Gamer-specific image extraction
+                # og:image meta tag is most reliable for news sites
+                if source_key == "pcgamer":
+                    og_image = soup.find("meta", property="og:image")
+                    if og_image and og_image.get("content"):
+                        image_url = og_image["content"]
 
-                if article_div:
-                    # Find first img tag with a valid src
-                    img_tags = article_div.find_all("img")
-                    for img in img_tags:
-                        src = img.get("src") or img.get("data-src")
-                        if src and any(ext in src.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"]):
-                            # Make URL absolute if it's relative
-                            if src.startswith("//"):
-                                image_url = "https:" + src
-                            elif src.startswith("/"):
-                                from urllib.parse import urlparse
-                                parsed = urlparse(url)
-                                image_url = f"{parsed.scheme}://{parsed.netloc}{src}"
-                            else:
-                                image_url = src
-                            break
+                    # Fallback: article hero image
+                    if not image_url:
+                        hero_img = soup.find("img", class_=lambda x: x and "hero" in x.lower() if x else False)
+                        if hero_img:
+                            image_url = hero_img.get("src") or hero_img.get("data-src")
 
-                # DESIGN: IGN-specific content extraction
+                # Generic image extraction for other sources
+                if not image_url:
+                    article_div = (
+                        soup.find("div", class_="article-content")
+                        or soup.find("article")
+                        or soup.find("div", class_=lambda x: x and "content" in x.lower() if x else False)
+                    )
+
+                    if article_div:
+                        img_tags = article_div.find_all("img")
+                        for img in img_tags:
+                            src = img.get("src") or img.get("data-src")
+                            if src and any(ext in src.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"]):
+                                if src.startswith("//"):
+                                    image_url = "https:" + src
+                                elif src.startswith("/"):
+                                    from urllib.parse import urlparse
+                                    parsed = urlparse(url)
+                                    image_url = f"{parsed.scheme}://{parsed.netloc}{src}"
+                                else:
+                                    image_url = src
+                                break
+
+                # DESIGN: Source-specific content extraction
                 content_text: str = ""
 
-                if source_key == "ign":
-                    # Try article body
+                # DESIGN: PC Gamer-specific content extraction
+                # Uses article-body or article__body class
+                if source_key == "pcgamer":
+                    article_body = soup.find("div", id="article-body") or soup.find("div", class_="article__body")
+                    if article_body:
+                        paragraphs = article_body.find_all("p")
+                        content_text = "\n\n".join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
+
+                # DESIGN: IGN-specific content extraction
+                elif source_key == "ign":
                     article_body = soup.find("div", class_="article-body") or soup.find("div", class_="article-content")
 
                     if article_body:
                         paragraphs = article_body.find_all("p")
                         content_text = "\n\n".join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
 
-                    # Fallback: Try main tag
                     if not content_text:
                         main_tag = soup.find("main")
                         if main_tag:
                             paragraphs = main_tag.find_all("p")
-                            # Filter paragraphs with substantial content
                             content_paragraphs = [p for p in paragraphs if len(p.get_text().strip()) > 50]
                             content_text = "\n\n".join([p.get_text().strip() for p in content_paragraphs])
 
