@@ -286,9 +286,9 @@ class OthmanBot(commands.Bot):
                 if minutes_until <= 0:
                     status_text = f"{emoji} Posting now..."
                 elif minutes_until == 1:
-                    status_text = f"{emoji} Next post in 1 minute"
+                    status_text = f"{emoji} Post in 1 minute"
                 elif minutes_until < 60:
-                    status_text = f"{emoji} Next post in {minutes_until} minutes"
+                    status_text = f"{emoji} Post in {minutes_until} minutes"
                 else:
                     status_text = f"{emoji} Posting hourly"
             else:
@@ -565,8 +565,8 @@ class OthmanBot(commands.Bot):
 
         # Footer disclaimer in small text
         message_content += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
-        message_content += "The content is sourced from various news outlets and summarized using AI. "
-        message_content += "Bot developed by حَـــــنَّـــــا."
+        message_content += "The content is sourced from various news outlets and summarized using AI.\n\n"
+        message_content += "-# Bot developed by حَـــــنَّـــــا."
 
         # Ensure we don't exceed Discord's 2000 char limit
         if len(message_content) > 1990:
@@ -1080,8 +1080,8 @@ class OthmanBot(commands.Bot):
 
             # Footer disclaimer in small text (same as news)
             message_content += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
-            message_content += "The content is sourced from various news outlets and summarized using AI. "
-            message_content += "Bot developed by حَـــــنَّـــــا."
+            message_content += "The content is sourced from various news outlets and summarized using AI.\n\n"
+            message_content += "-# Bot developed by حَـــــنَّـــــا."
 
             full_content: str = message_content
 
@@ -1101,6 +1101,7 @@ class OthmanBot(commands.Bot):
 
             # DESIGN: Format thread name with date emoji to match news format
             # Example: "📅 11-19-25 | Manchester United Transfer News"
+            from datetime import datetime
             post_date: str = datetime.now().strftime("%m-%d-%y")
             thread_name: str = f"📅 {post_date} | {article.title}"
             if len(thread_name) > 100:
@@ -1326,8 +1327,8 @@ class OthmanBot(commands.Bot):
 
             # Footer disclaimer in small text (same as news)
             message_content += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
-            message_content += "The content is sourced from various news outlets and summarized using AI. "
-            message_content += "Bot developed by حَـــــنَّـــــا."
+            message_content += "The content is sourced from various news outlets and summarized using AI.\n\n"
+            message_content += "-# Bot developed by حَـــــنَّـــــا."
 
             full_content: str = message_content
 
@@ -1336,6 +1337,7 @@ class OthmanBot(commands.Bot):
 
             # DESIGN: Format thread name with date emoji to match news format
             # Example: "📅 11-19-25 | PS5 Pro Launch Details"
+            from datetime import datetime
             post_date: str = datetime.now().strftime("%m-%d-%y")
             thread_name: str = f"📅 {post_date} | {article.title}"
             if len(thread_name) > 100:
