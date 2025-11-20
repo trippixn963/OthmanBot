@@ -314,36 +314,42 @@ class GamingScraper:
                 # DESIGN: Extract image from multiple possible locations
                 image_url: Optional[str] = await self._extract_image(entry)
 
-                # DESIGN: Get summary text, fallback to description or truncated content
-                summary: str = (
-                    entry.get("summary", "")
-                    or entry.get("description", "")
-                    or entry.get("content", [{}])[0].get("value", "")
-                )
+                # DESIGN: Extract content directly from RSS feed
+                # TWIG uses Cloudflare protection (HTTP 403), so we extract from content:encoded
+                # This approach is faster and more reliable than fetching article pages
+                content_encoded: str = ""
+                if "content" in entry and entry.content:
+                    content_encoded = entry.content[0].get("value", "")
+
+                # DESIGN: Extract image URL from content:encoded <img> tag
+                # TWIG embeds images in the RSS content as <img src="...">
+                if content_encoded and not image_url:
+                    content_soup = BeautifulSoup(content_encoded, "html.parser")
+                    img_tag = content_soup.find("img")
+                    if img_tag and img_tag.get("src"):
+                        image_url = img_tag["src"]
+
+                # DESIGN: Get summary text from description field
+                summary: str = entry.get("description", "") or entry.get("summary", "")
                 # Clean HTML tags from summary
-                summary = BeautifulSoup(summary, "html.parser").get_text()
+                summary = BeautifulSoup(summary, "html.parser").get_text().strip()
                 summary = summary[:500] + "..." if len(summary) > 500 else summary
 
-                # DESIGN: Extract full article content and image from the URL
-                full_content: str
-                scraped_image: Optional[str]
-                full_content, scraped_image = await self._extract_full_content(
-                    entry.get("link", ""), source_key
-                )
+                # DESIGN: Use content:encoded as full_content instead of fetching page
+                # This bypasses Cloudflare protection entirely
+                if content_encoded:
+                    content_soup = BeautifulSoup(content_encoded, "html.parser")
+                    # Remove "Read More" link at the end
+                    for a_tag in content_soup.find_all("a"):
+                        if "Read More" in a_tag.get_text():
+                            a_tag.decompose()
+                    # Get clean text content
+                    full_content = content_soup.get_text(separator="\n").strip()
+                else:
+                    full_content = summary
 
-                # DESIGN: Prefer scraped image from article page over RSS feed image
-                if not image_url and scraped_image:
-                    image_url = scraped_image
-
-                # DESIGN: Skip articles with fetch errors
-                error_messages: list[str] = [
-                    "Article fetch timed out",
-                    "Could not fetch article content",
-                    "Could not extract article text",
-                    "Content extraction failed",
-                    "Content unavailable"
-                ]
-                if any(error_msg in full_content for error_msg in error_messages):
+                # DESIGN: Skip if no meaningful content
+                if len(full_content) < 50:
                     continue
 
                 # DESIGN: Skip articles without images
