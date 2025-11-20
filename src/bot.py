@@ -527,13 +527,41 @@ class OthmanBot(commands.Bot):
         from datetime import datetime
         post_date: str = datetime.now().strftime("%m-%d-%y")
 
+        # DESIGN: Build footer FIRST to calculate remaining space for summaries
+        # This ensures the URL is never truncated (which breaks the "Read Full Article" link)
+        published_date_str: str = article.published_date.strftime("%B %d, %Y") if article.published_date else "N/A"
+
+        footer: str = ""
+        footer += f"📰 **Source:** {article.source_emoji} {article.source} • 🔗 **[Read Full Article](<{article.url}>)**\n"
+        footer += f"📅 **Published:** {published_date_str}\n\n"
+        footer += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
+        footer += "The content is sourced from various news outlets and summarized using AI.\n\n"
+        footer += "-# Bot developed by حَـــــنَّـــــا."
+
+        # Calculate maximum space for summaries (Discord limit minus footer)
+        # Reserve ~400 chars for key quote, headers, dividers, and safety margin
+        max_summary_space: int = 2000 - len(footer) - 400
+
+        # Truncate summaries if they're too long to fit
+        arabic_summary: str = article.arabic_summary
+        english_summary: str = article.english_summary
+
+        # If combined summaries exceed space, truncate each proportionally
+        combined_length: int = len(arabic_summary) + len(english_summary)
+        if combined_length > max_summary_space:
+            max_each: int = max_summary_space // 2
+            if len(arabic_summary) > max_each:
+                arabic_summary = arabic_summary[:max_each-3] + "..."
+            if len(english_summary) > max_each:
+                english_summary = english_summary[:max_each-3] + "..."
+
         # Build message with professional formatting
         message_content: str = ""
 
         # DESIGN: Key quote at the top for better engagement
         # Extract first sentence as highlight to hook readers immediately
         # If first sentence is too long (>250 chars), truncate with ellipsis
-        first_sentence: str = article.english_summary.split('.')[0].strip()
+        first_sentence: str = english_summary.split('.')[0].strip()
         if len(first_sentence) > 250:
             first_sentence = first_sentence[:247].strip() + '...'
         else:
@@ -547,30 +575,15 @@ class OthmanBot(commands.Bot):
 
         # DESIGN: Arabic summary section with emoji flag header
         # Makes it clear which language is which
-        message_content += f"🇸🇾 **Arabic Summary**\n{article.arabic_summary}\n\n"
+        message_content += f"🇸🇾 **Arabic Summary**\n{arabic_summary}\n\n"
         message_content += "─────────────\n\n"
 
         # DESIGN: English translation section with emoji flag header
-        message_content += f"🇬🇧 **English Translation**\n{article.english_summary}\n\n"
+        message_content += f"🇬🇧 **English Translation**\n{english_summary}\n\n"
         message_content += "─────────────\n\n"
 
-        # DESIGN: Article metadata footer
-        # Wrap URL in angle brackets to suppress Discord auto-embed
-        # Discord creates embeds for naked URLs, <url> prevents this
-        published_date_str: str = article.published_date.strftime("%B %d, %Y") if article.published_date else "N/A"
-
-        # DESIGN: Combine source and read link on same line for cleaner footer
-        message_content += f"📰 **Source:** {article.source_emoji} {article.source} • 🔗 **[Read Full Article](<{article.url}>)**\n"
-        message_content += f"📅 **Published:** {published_date_str}\n\n"
-
-        # Footer disclaimer in small text
-        message_content += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
-        message_content += "The content is sourced from various news outlets and summarized using AI.\n\n"
-        message_content += "-# Bot developed by حَـــــنَّـــــا."
-
-        # Ensure we don't exceed Discord's 2000 char limit
-        if len(message_content) > 1990:
-            message_content = message_content[:1990] + "..."
+        # Add the footer (with URL guaranteed to be complete)
+        message_content += footer
 
         # Update thread name to include date
         thread_name = f"📅 {post_date} | {article.title}"
@@ -1042,13 +1055,41 @@ class OthmanBot(commands.Bot):
             # Image will be uploaded as attachment instead of URL
             # Use Discord markdown for professional formatting
 
+            # DESIGN: Build footer FIRST to calculate remaining space for summaries
+            # This ensures the URL is never truncated (which breaks the "Read Full Article" link)
+            published_date_str: str = article.published_date.strftime("%B %d, %Y") if article.published_date else "N/A"
+
+            footer: str = ""
+            footer += f"📰 **Source:** {article.source_emoji} {article.source} • 🔗 **[Read Full Article](<{article.url}>)**\n"
+            footer += f"📅 **Published:** {published_date_str}\n\n"
+            footer += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
+            footer += "The content is sourced from various news outlets and summarized using AI.\n\n"
+            footer += "-# Bot developed by حَـــــنَّـــــا."
+
+            # Calculate maximum space for summaries (Discord limit minus footer)
+            # Reserve ~100 chars for headers, dividers, and safety margin
+            max_summary_space: int = 2000 - len(footer) - 400
+
+            # Truncate summaries if they're too long to fit
+            arabic_summary: str = article.arabic_summary
+            english_summary: str = article.english_summary
+
+            # If combined summaries exceed space, truncate each proportionally
+            combined_length: int = len(arabic_summary) + len(english_summary)
+            if combined_length > max_summary_space:
+                max_each: int = max_summary_space // 2
+                if len(arabic_summary) > max_each:
+                    arabic_summary = arabic_summary[:max_each-3] + "..."
+                if len(english_summary) > max_each:
+                    english_summary = english_summary[:max_each-3] + "..."
+
             # Build message with professional formatting
             message_content: str = ""
 
             # DESIGN: Key quote at the top for better engagement
             # Extract first sentence as highlight to hook readers immediately
             # If first sentence is too long (>250 chars), truncate with ellipsis
-            first_sentence: str = article.english_summary.split('.')[0].strip()
+            first_sentence: str = english_summary.split('.')[0].strip()
             if len(first_sentence) > 250:
                 first_sentence = first_sentence[:247].strip() + '...'
             else:
@@ -1062,26 +1103,15 @@ class OthmanBot(commands.Bot):
 
             # DESIGN: Arabic summary section with emoji flag header
             # Makes it clear which language is which
-            message_content += f"🇸🇾 **Arabic Summary**\n{article.arabic_summary}\n\n"
+            message_content += f"🇸🇾 **Arabic Summary**\n{arabic_summary}\n\n"
             message_content += "─────────────\n\n"
 
             # DESIGN: English translation section with emoji flag header
-            message_content += f"🇬🇧 **English Translation**\n{article.english_summary}\n\n"
+            message_content += f"🇬🇧 **English Translation**\n{english_summary}\n\n"
             message_content += "─────────────\n\n"
 
-            # DESIGN: Article metadata footer
-            # Wrap URL in angle brackets to suppress Discord auto-embed
-            # Discord creates embeds for naked URLs, <url> prevents this
-            published_date_str: str = article.published_date.strftime("%B %d, %Y") if article.published_date else "N/A"
-
-            # DESIGN: Combine source and read link on same line for cleaner footer
-            message_content += f"📰 **Source:** {article.source_emoji} {article.source} • 🔗 **[Read Full Article](<{article.url}>)**\n"
-            message_content += f"📅 **Published:** {published_date_str}\n\n"
-
-            # Footer disclaimer in small text (same as news)
-            message_content += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
-            message_content += "The content is sourced from various news outlets and summarized using AI.\n\n"
-            message_content += "-# Bot developed by حَـــــنَّـــــا."
+            # Add the footer (with URL that must not be truncated)
+            message_content += footer
 
             full_content: str = message_content
 
@@ -1112,7 +1142,7 @@ class OthmanBot(commands.Bot):
 
             thread, message = await channel.create_thread(
                 name=thread_name,
-                content=full_content[:2000],  # Discord limit
+                content=full_content,
                 files=files_to_upload,
                 applied_tags=applied_tags,
             )
@@ -1289,13 +1319,41 @@ class OthmanBot(commands.Bot):
             # Image will be uploaded as attachment instead of URL
             # Use Discord markdown for professional formatting
 
+            # DESIGN: Build footer FIRST to calculate remaining space for summaries
+            # This ensures the URL is never truncated (which breaks the "Read Full Article" link)
+            published_date_str: str = article.published_date.strftime("%B %d, %Y") if article.published_date else "N/A"
+
+            footer: str = ""
+            footer += f"📰 **Source:** {article.source_emoji} {article.source} • 🔗 **[Read Full Article](<{article.url}>)**\n"
+            footer += f"📅 **Published:** {published_date_str}\n\n"
+            footer += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
+            footer += "The content is sourced from various news outlets and summarized using AI.\n\n"
+            footer += "-# Bot developed by حَـــــنَّـــــا."
+
+            # Calculate maximum space for summaries (Discord limit minus footer)
+            # Reserve ~400 chars for key quote, headers, dividers, and safety margin
+            max_summary_space: int = 2000 - len(footer) - 400
+
+            # Truncate summaries if they're too long to fit
+            arabic_summary: str = article.arabic_summary
+            english_summary: str = article.english_summary
+
+            # If combined summaries exceed space, truncate each proportionally
+            combined_length: int = len(arabic_summary) + len(english_summary)
+            if combined_length > max_summary_space:
+                max_each: int = max_summary_space // 2
+                if len(arabic_summary) > max_each:
+                    arabic_summary = arabic_summary[:max_each-3] + "..."
+                if len(english_summary) > max_each:
+                    english_summary = english_summary[:max_each-3] + "..."
+
             # Build message with professional formatting
             message_content: str = ""
 
             # DESIGN: Key quote at the top for better engagement
             # Extract first sentence as highlight to hook readers immediately
             # If first sentence is too long (>250 chars), truncate with ellipsis
-            first_sentence: str = article.english_summary.split('.')[0].strip()
+            first_sentence: str = english_summary.split('.')[0].strip()
             if len(first_sentence) > 250:
                 first_sentence = first_sentence[:247].strip() + '...'
             else:
@@ -1309,26 +1367,15 @@ class OthmanBot(commands.Bot):
 
             # DESIGN: Arabic summary section with emoji flag header
             # Makes it clear which language is which
-            message_content += f"🇸🇾 **Arabic Summary**\n{article.arabic_summary}\n\n"
+            message_content += f"🇸🇾 **Arabic Summary**\n{arabic_summary}\n\n"
             message_content += "─────────────\n\n"
 
             # DESIGN: English translation section with emoji flag header
-            message_content += f"🇬🇧 **English Translation**\n{article.english_summary}\n\n"
+            message_content += f"🇬🇧 **English Translation**\n{english_summary}\n\n"
             message_content += "─────────────\n\n"
 
-            # DESIGN: Article metadata footer
-            # Wrap URL in angle brackets to suppress Discord auto-embed
-            # Discord creates embeds for naked URLs, <url> prevents this
-            published_date_str: str = article.published_date.strftime("%B %d, %Y") if article.published_date else "N/A"
-
-            # DESIGN: Combine source and read link on same line for cleaner footer
-            message_content += f"📰 **Source:** {article.source_emoji} {article.source} • 🔗 **[Read Full Article](<{article.url}>)**\n"
-            message_content += f"📅 **Published:** {published_date_str}\n\n"
-
-            # Footer disclaimer in small text (same as news)
-            message_content += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
-            message_content += "The content is sourced from various news outlets and summarized using AI.\n\n"
-            message_content += "-# Bot developed by حَـــــنَّـــــا."
+            # Add the footer (with URL guaranteed to be complete)
+            message_content += footer
 
             full_content: str = message_content
 
@@ -1348,7 +1395,7 @@ class OthmanBot(commands.Bot):
 
             thread, message = await channel.create_thread(
                 name=thread_name,
-                content=full_content[:2000],  # Discord limit
+                content=full_content,
                 files=files_to_upload,
             )
 
