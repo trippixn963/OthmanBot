@@ -233,89 +233,112 @@ class GamingScraper:
         self, max_articles: int = 5, hours_back: int = 168
     ) -> List[GamingArticle]:
         """
-        Fetch latest gaming news from IGN with backfill logic.
+        Fetch latest gaming news with priority-based feed selection.
 
-        BACKFILL STRATEGY:
-        1. Always check for new (unposted) articles first
-        2. If no new articles, go backwards through older articles
-        3. Post one old article per interval until a new one appears
-        4. This ensures consistent posting even during slow news periods
+        PRIORITY STRATEGY:
+        1. Check Reviews feed → ONLY latest article, skip if already posted
+        2. Check New Releases feed → ONLY latest article, skip if already posted
+        3. Fallback to Game News feed → check all articles with backfill support
 
         Args:
             max_articles: Maximum number of articles to return
             hours_back: How far back to search (default: 168 hours = 7 days)
 
         Returns:
-            List of GamingArticle objects (newest unposted first, or oldest if all new posted)
+            List of GamingArticle objects
 
-        DESIGN: 168-hour (7-day) lookback enables effective backfill
-        GameSpot may not publish frequently enough for 24-hour window to always have content
-        Longer window ensures we always have articles to post during slow periods
+        DESIGN: Priority-based selection ensures fresh reviews/releases take precedence
+        Game News acts as reliable fallback with full backfill capability
         """
-        all_articles: list[GamingArticle] = []
         cutoff_time: datetime = datetime.now() - timedelta(hours=hours_back)
 
-        # DESIGN: Rotate between GameSpot feeds for variety
-        # Uses round-robin rotation: News → Games → Reviews → News → ...
-        current_feed: dict[str, str] = self.GAMING_FEEDS[GamingScraper._current_feed_index]
+        # DESIGN: Define feed priority order
+        # Reviews and New Releases: latest-only (no backfill)
+        # Game News: full backfill support
+        reviews_feed: dict[str, str] = self.GAMING_FEEDS[2]  # gamespot_reviews
+        releases_feed: dict[str, str] = self.GAMING_FEEDS[1]  # gamespot_new_games
+        news_feed: dict[str, str] = self.GAMING_FEEDS[0]  # gamespot_game_news
 
-        # DESIGN: Advance feed index for next fetch (wraps around)
-        GamingScraper._current_feed_index = (GamingScraper._current_feed_index + 1) % len(self.GAMING_FEEDS)
-
-        logger.info(f"🎮 Using feed: {current_feed['name']} (rotation index: {GamingScraper._current_feed_index})")
-
+        # PRIORITY 1: Check Reviews feed - ONLY latest article
+        logger.info(f"🎮 Checking priority 1: {reviews_feed['name']} (latest only)")
         try:
-            articles: list[GamingArticle] = await self._fetch_from_source(
-                current_feed["key"], current_feed, cutoff_time, max_articles * 10  # Fetch more for backfill
+            reviews: list[GamingArticle] = await self._fetch_from_source(
+                reviews_feed["key"], reviews_feed, cutoff_time, 1  # Only fetch 1
             )
-            all_articles.extend(articles)
-            logger.success(
-                f"🎮 Fetched {len(articles)} gaming articles from {current_feed['name']}"
-            )
+            if reviews:
+                article_id: str = self._extract_article_id(reviews[0].url)
+                if article_id not in self.fetched_urls:
+                    logger.success(f"⭐ Found NEW review: {reviews[0].title[:50]}")
+                    return reviews[:max_articles]
+                else:
+                    logger.info("⏭️ Reviews: Latest already posted, checking releases...")
         except Exception as e:
-            logger.warning(
-                f"Failed to fetch gaming news from {current_feed['name']}: {str(e)[:100]}"
+            logger.warning(f"Failed to fetch reviews: {str(e)[:100]}")
+
+        # PRIORITY 2: Check New Releases feed - ONLY latest article
+        logger.info(f"🎮 Checking priority 2: {releases_feed['name']} (latest only)")
+        try:
+            releases: list[GamingArticle] = await self._fetch_from_source(
+                releases_feed["key"], releases_feed, cutoff_time, 1  # Only fetch 1
+            )
+            if releases:
+                article_id: str = self._extract_article_id(releases[0].url)
+                if article_id not in self.fetched_urls:
+                    logger.success(f"🆕 Found NEW release: {releases[0].title[:50]}")
+                    return releases[:max_articles]
+                else:
+                    logger.info("⏭️ Releases: Latest already posted, falling back to news...")
+        except Exception as e:
+            logger.warning(f"Failed to fetch releases: {str(e)[:100]}")
+
+        # PRIORITY 3: Fallback to Game News with full backfill support
+        logger.info(f"🎮 Fallback: {news_feed['name']} (with backfill)")
+        try:
+            news_articles: list[GamingArticle] = await self._fetch_from_source(
+                news_feed["key"], news_feed, cutoff_time, max_articles * 10  # Fetch more for backfill
             )
 
-        # DESIGN: Sort by published date (newest first) initially
-        all_articles.sort(key=lambda x: x.published_date, reverse=True)
+            if not news_articles:
+                logger.warning("⚠️ No gaming articles found in any feed")
+                return []
 
-        # DESIGN: Separate new articles from old articles
-        new_articles: list[GamingArticle] = []
-        old_articles: list[GamingArticle] = []
-        seen_ids: set[str] = set()
+            # DESIGN: Sort by published date (newest first)
+            news_articles.sort(key=lambda x: x.published_date, reverse=True)
 
-        for article in all_articles:
-            # DESIGN: Extract article ID for reliable deduplication
-            article_id: str = self._extract_article_id(article.url)
+            # DESIGN: Separate new articles from old articles
+            new_articles: list[GamingArticle] = []
+            old_articles: list[GamingArticle] = []
+            seen_ids: set[str] = set()
 
-            if article_id in seen_ids:
-                continue  # Skip duplicates within this fetch
+            for article in news_articles:
+                article_id: str = self._extract_article_id(article.url)
 
-            seen_ids.add(article_id)
+                if article_id in seen_ids:
+                    continue  # Skip duplicates
 
-            if article_id not in self.fetched_urls:
-                new_articles.append(article)
+                seen_ids.add(article_id)
+
+                if article_id not in self.fetched_urls:
+                    new_articles.append(article)
+                else:
+                    old_articles.append(article)
+
+            # DESIGN: Backfill logic - prefer new, fallback to old
+            if new_articles:
+                logger.success(f"✅ Found {len(new_articles)} NEW unposted news articles")
+                return new_articles[:max_articles]
+            elif old_articles:
+                # DESIGN: Reverse sort old articles to get OLDEST first for backfill
+                old_articles.sort(key=lambda x: x.published_date)  # Oldest first
+                logger.info(f"⏪ No new news - backfilling from {len(old_articles)} older articles")
+                return old_articles[:max_articles]
             else:
-                old_articles.append(article)
+                logger.warning("⚠️ All news articles already posted")
+                return []
 
-        # DESIGN: Backfill logic - prefer new, fallback to old
-        if new_articles:
-            logger.info(f"✅ Found {len(new_articles)} NEW unposted gaming articles")
-            selected_articles: list[GamingArticle] = new_articles[:max_articles]
-        elif old_articles:
-            # DESIGN: Reverse sort old articles to get OLDEST first
-            old_articles.sort(key=lambda x: x.published_date)  # Oldest first
-            logger.info(f"⏪ No new gaming articles - backfilling from {len(old_articles)} older articles")
-            selected_articles: list[GamingArticle] = old_articles[:max_articles]
-        else:
-            logger.warning("⚠️ No gaming articles found (all filtered or none available)")
+        except Exception as e:
+            logger.warning(f"Failed to fetch game news: {str(e)[:100]}")
             return []
-
-        logger.info(
-            f"🎮 Returning {len(selected_articles)} gaming article(s)"
-        )
-        return selected_articles
 
     async def _fetch_from_source(
         self,
