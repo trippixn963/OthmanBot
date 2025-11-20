@@ -26,6 +26,9 @@ from src.services.news_scraper import NewsScraper, NewsArticle
 from src.services.news_scheduler import NewsScheduler
 from src.services.soccer_scraper import SoccerScraper, SoccerArticle
 from src.services.soccer_scheduler import SoccerScheduler
+from src.services.gaming_scraper import GamingScraper, GamingArticle
+from src.services.gaming_scheduler import GamingScheduler
+from src.utils.retry import exponential_backoff
 from src.data.team_tags import SOCCER_TEAM_TAG_IDS
 
 
@@ -50,6 +53,7 @@ class OthmanBot(commands.Bot):
         # Load configuration from environment
         self.news_channel_id: Optional[int] = self._load_channel_id()
         self.soccer_channel_id: Optional[int] = self._load_soccer_channel_id()
+        self.gaming_channel_id: Optional[int] = self._load_gaming_channel_id()
 
         # DESIGN: Track announcement message IDs for reaction management
         # Only eyes emoji (👀) allowed on announcement embeds
@@ -61,6 +65,8 @@ class OthmanBot(commands.Bot):
         self.news_scheduler: Optional[NewsScheduler] = None
         self.soccer_scraper: Optional[SoccerScraper] = None
         self.soccer_scheduler: Optional[SoccerScheduler] = None
+        self.gaming_scraper: Optional[GamingScraper] = None
+        self.gaming_scheduler: Optional[GamingScheduler] = None
 
         # DESIGN: Background task for updating presence every minute
         # Shows live countdown to next post
@@ -86,6 +92,18 @@ class OthmanBot(commands.Bot):
             Channel ID as int or None if not configured
         """
         channel_id_str: Optional[str] = os.getenv("SOCCER_CHANNEL_ID")
+        if channel_id_str and channel_id_str.isdigit():
+            return int(channel_id_str)
+        return None
+
+    def _load_gaming_channel_id(self) -> Optional[int]:
+        """
+        Load gaming channel ID from environment.
+
+        Returns:
+            Channel ID as int or None if not configured
+        """
+        channel_id_str: Optional[str] = os.getenv("GAMING_CHANNEL_ID")
         if channel_id_str and channel_id_str.isdigit():
             return int(channel_id_str)
         return None
@@ -133,6 +151,10 @@ class OthmanBot(commands.Bot):
                     "Soccer Channel",
                     str(self.soccer_channel_id) if self.soccer_channel_id else "Not Set",
                 ),
+                (
+                    "Gaming Channel",
+                    str(self.gaming_channel_id) if self.gaming_channel_id else "Not Set",
+                ),
             ],
             emoji="✅",
         )
@@ -154,21 +176,38 @@ class OthmanBot(commands.Bot):
         logger.success("🤖 Automated news posting started - bot is fully autonomous")
 
         # DESIGN: Initialize soccer scraper if soccer channel is configured
-        # Soccer news posts every 3 hours to SOCCER_CHANNEL_ID
+        # Soccer news posts every hour at :20 to SOCCER_CHANNEL_ID
         if self.soccer_channel_id:
             self.soccer_scraper = SoccerScraper()
             await self.soccer_scraper.__aenter__()
 
             # DESIGN: Initialize soccer scheduler with callback to post_soccer_news method
-            # Scheduler will call this method every hour automatically
+            # Scheduler will call this method every hour at :20 automatically
             self.soccer_scheduler = SoccerScheduler(self.post_soccer_news)
 
-            # DESIGN: Start soccer scheduler - hourly intervals
-            # post_immediately=False to maintain consistent schedule (1:00, 2:00, 3:00, etc.)
+            # DESIGN: Start soccer scheduler - hourly at :20 past each hour
+            # post_immediately=False to maintain consistent schedule (12:20, 1:20, 2:20, etc.)
             await self.soccer_scheduler.start(post_immediately=False)
-            logger.success("⚽ Automated soccer news started - posting hourly")
+            logger.success("⚽ Automated soccer news started - posting hourly at :20")
         else:
             logger.info("⚽ Soccer channel not configured - skipping soccer news automation")
+
+        # DESIGN: Initialize gaming scraper if gaming channel is configured
+        # Gaming news posts every hour at :40 to GAMING_CHANNEL_ID
+        if self.gaming_channel_id:
+            self.gaming_scraper = GamingScraper()
+            await self.gaming_scraper.__aenter__()
+
+            # DESIGN: Initialize gaming scheduler with callback to post_gaming_news method
+            # Scheduler will call this method every hour at :40 automatically
+            self.gaming_scheduler = GamingScheduler(self.post_gaming_news)
+
+            # DESIGN: Start gaming scheduler - hourly at :40 past each hour
+            # post_immediately=False to maintain consistent schedule (12:40, 1:40, 2:40, etc.)
+            await self.gaming_scheduler.start(post_immediately=False)
+            logger.success("🎮 Automated gaming news started - posting hourly at :40")
+        else:
+            logger.info("🎮 Gaming channel not configured - skipping gaming news automation")
 
         # Set bot presence
         await self.update_presence()
@@ -208,40 +247,41 @@ class OthmanBot(commands.Bot):
             status_text: Custom status text, or None for default
         """
         if status_text is None:
-            # DESIGN: Show whichever post is coming next (news or soccer)
+            # DESIGN: Show whichever post is coming next (news, soccer, or gaming)
             # News posts at :00 (1:00, 2:00, 3:00, etc.)
-            # Soccer posts at :30 (1:30, 2:30, 3:30, etc.)
+            # Soccer posts at :20 (1:20, 2:20, 3:20, etc.)
+            # Gaming posts at :40 (1:40, 2:40, 3:40, etc.)
             # Display the soonest upcoming post with appropriate emoji
             from datetime import datetime
             now = datetime.now()
 
-            # Get next post times from both schedulers
+            # Get next post times from all schedulers
             next_news = self.news_scheduler.get_next_post_time() if self.news_scheduler else None
             next_soccer = self.soccer_scheduler.get_next_post_time() if self.soccer_scheduler else None
+            next_gaming = self.gaming_scheduler.get_next_post_time() if self.gaming_scheduler else None
 
             # Find which post is soonest
             soonest_post = None
             post_type = "news"  # Default to news
 
-            if next_news and next_soccer:
-                # Both schedulers active - pick soonest
-                if next_news < next_soccer:
-                    soonest_post = next_news
-                    post_type = "news"
-                else:
-                    soonest_post = next_soccer
-                    post_type = "soccer"
-            elif next_news:
-                soonest_post = next_news
-                post_type = "news"
-            elif next_soccer:
-                soonest_post = next_soccer
-                post_type = "soccer"
+            # Collect all upcoming posts
+            upcoming_posts = []
+            if next_news:
+                upcoming_posts.append((next_news, "news"))
+            if next_soccer:
+                upcoming_posts.append((next_soccer, "soccer"))
+            if next_gaming:
+                upcoming_posts.append((next_gaming, "gaming"))
+
+            # Sort by time to find soonest
+            if upcoming_posts:
+                upcoming_posts.sort(key=lambda x: x[0])
+                soonest_post, post_type = upcoming_posts[0]
 
             # Generate status text based on soonest post
             if soonest_post:
                 minutes_until = int((soonest_post - now).total_seconds() / 60)
-                emoji = "📰" if post_type == "news" else "⚽"
+                emoji = "📰" if post_type == "news" else ("⚽" if post_type == "soccer" else "🎮")
 
                 if minutes_until <= 0:
                     status_text = f"{emoji} Posting now..."
@@ -259,6 +299,7 @@ class OthmanBot(commands.Bot):
         )
         await self.change_presence(activity=activity)
 
+    @exponential_backoff(max_retries=3, base_delay=10)
     async def post_news(self) -> None:
         """
         Post latest news articles to the news channel.
@@ -773,6 +814,89 @@ class OthmanBot(commands.Bot):
         except discord.HTTPException as e:
             logger.error(f"Failed to send soccer announcement for '{article.title}': {e}")
 
+    async def _send_gaming_announcement(
+        self, thread: discord.Thread, article: "GamingArticle"
+    ) -> None:
+        """
+        Send gaming announcement embed to general chat channel.
+
+        Args:
+            thread: Forum thread that was created
+            article: GamingArticle that was posted
+
+        DESIGN: Identical to news/soccer announcement for consistency
+        Same embed format, same button style, same notification flow
+        Uses purple color to distinguish gaming from news (blue) and soccer (green)
+        """
+        logger.info(f"🔔 Attempting to send gaming announcement to general channel (ID: {self.general_channel_id})")
+
+        general_channel = self.get_channel(self.general_channel_id)
+        if not general_channel:
+            logger.warning(f"❌ General channel {self.general_channel_id} not found")
+            return
+
+        if not isinstance(general_channel, discord.TextChannel):
+            logger.warning(f"❌ Channel {self.general_channel_id} is not a text channel (type: {type(general_channel).__name__})")
+            return
+
+        logger.info(f"✅ Found general channel: {general_channel.name}")
+
+        try:
+            # DESIGN: Create teaser embed with short preview and button to forum
+            # Identical format to news/soccer notifications
+            teaser: str = article.english_summary[:100] + "..." if len(article.english_summary) > 100 else article.english_summary
+
+            embed: discord.Embed = discord.Embed(
+                title=article.title,  # No emoji in title
+                description=teaser,
+                color=discord.Color.purple(),  # Purple for gaming (vs blue for news, green for soccer)
+            )
+
+            # DESIGN: Add developer footer with avatar (matches news/soccer format)
+            developer_id_str: Optional[str] = os.getenv("DEVELOPER_ID")
+            developer_avatar_url: str = self.user.display_avatar.url  # Fallback to bot avatar
+
+            if developer_id_str and developer_id_str.isdigit():
+                try:
+                    developer = await self.fetch_user(int(developer_id_str))
+                    if developer:
+                        developer_avatar_url = developer.display_avatar.url
+                        logger.info(f"✅ Fetched developer avatar for gaming footer: {developer.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch developer user {developer_id_str}: {e}")
+
+            embed.set_footer(
+                text="Developed By: حَـــــنَّـــــا",
+                icon_url=developer_avatar_url
+            )
+
+            # Add thumbnail if article has image
+            if article.image_url:
+                embed.set_thumbnail(url=article.image_url)
+
+            # DESIGN: Create "Read Full Article" button that links to forum thread
+            # Identical button style to news/soccer notifications
+            view = discord.ui.View()
+            button = discord.ui.Button(
+                label="🎮 Read Full Article",  # Gaming emoji instead of news/soccer emoji
+                style=discord.ButtonStyle.link,
+                url=thread.jump_url
+            )
+            view.add_item(button)
+
+            # Send embed with button (no reactions)
+            message: discord.Message = await general_channel.send(embed=embed, view=view)
+
+            # DESIGN: Track message ID for reaction blocking
+            # Block ALL reactions on announcement embeds (same as news/soccer)
+            self.announcement_messages.add(message.id)
+
+            logger.info(f"📣 Sent gaming announcement to general chat for: {article.title[:50]}")
+
+        except discord.HTTPException as e:
+            logger.error(f"Failed to send gaming announcement for '{article.title}': {e}")
+
+    @exponential_backoff(max_retries=3, base_delay=10)
     async def post_soccer_news(self) -> None:
         """
         Post latest soccer news articles to the soccer channel.
@@ -975,11 +1099,18 @@ class OthmanBot(commands.Bot):
             # Create forum thread with image and team tag
             files_to_upload: list[discord.File] = [image_file] if image_file else []
 
+            # DESIGN: Format thread name with date emoji to match news format
+            # Example: "📅 11-19-25 | Manchester United Transfer News"
+            post_date: str = datetime.now().strftime("%m-%d-%y")
+            thread_name: str = f"📅 {post_date} | {article.title}"
+            if len(thread_name) > 100:
+                thread_name = f"📅 {post_date} | {article.title[:80]}..."
+
             thread: discord.Thread
             message: discord.Message
 
             thread, message = await channel.create_thread(
-                name=article.title,
+                name=thread_name,
                 content=full_content[:2000],  # Discord limit
                 files=files_to_upload,
                 applied_tags=applied_tags,
@@ -1010,6 +1141,240 @@ class OthmanBot(commands.Bot):
                     Path(temp_image_path).unlink()
                 except Exception as e:
                     logger.warning(f"Failed to delete temp soccer image: {e}")
+
+    @exponential_backoff(max_retries=3, base_delay=10)
+    async def post_gaming_news(self) -> None:
+        """
+        Post latest gaming news articles to the gaming channel.
+
+        DESIGN: Called by gaming scheduler every hour automatically
+        Fetches gaming news, formats embeds, creates forum posts
+        Handles all errors gracefully to keep scheduler running
+        """
+        if not self.gaming_channel_id:
+            logger.error("GAMING_CHANNEL_ID not configured - cannot post gaming news")
+            return
+
+        if not self.gaming_scraper:
+            logger.error("Gaming scraper not initialized")
+            return
+
+        try:
+            # Fetch latest gaming articles (or backfill from older ones)
+            logger.info("🎮 Fetching latest gaming news articles...")
+            articles: list[GamingArticle] = await self.gaming_scraper.fetch_latest_gaming_news(
+                max_articles=1, hours_back=24  # Look back 24 hours for gaming news
+            )
+
+            if not articles:
+                logger.warning("No new gaming articles found to post")
+                return
+
+            # DESIGN: Post ONLY ONE article per hour
+            # Get the most recent article with media
+            article = articles[0]
+
+            # Get gaming channel
+            channel = self.get_channel(self.gaming_channel_id)
+            if not channel:
+                logger.error(f"Gaming channel {self.gaming_channel_id} not found")
+                return
+
+            # DESIGN: Support both text channels and forum channels
+            # Forum channels create thread posts, text channels send regular messages
+            if isinstance(channel, discord.ForumChannel):
+                # Post to forum channel
+                try:
+                    await self._post_gaming_article_to_forum(channel, article)
+                except Exception as e:
+                    logger.error(f"Failed to post gaming article '{article.title}': {e}")
+                    return
+            elif isinstance(channel, discord.TextChannel):
+                # Post to text channel
+                try:
+                    await self._post_gaming_article(channel, article)
+                except Exception as e:
+                    logger.error(f"Failed to post gaming article '{article.title}': {e}")
+                    return
+            else:
+                logger.error(f"Gaming channel {self.gaming_channel_id} is not a text or forum channel")
+                return
+
+            logger.success(f"✅ Posted 1 gaming article")
+
+        except Exception as e:
+            logger.error(f"Failed to post gaming news: {e}")
+            # DESIGN: Don't raise exception - let scheduler continue
+
+    async def _post_gaming_article(
+        self, channel: discord.TextChannel, article: GamingArticle
+    ) -> None:
+        """
+        Post a single gaming news article with embed.
+
+        Args:
+            channel: Discord channel to post in
+            article: GamingArticle object to post
+        """
+        # Create embed
+        embed: discord.Embed = discord.Embed(
+            title=article.title,
+            url=article.url,
+            description=article.summary[:500] + "..." if len(article.summary) > 500 else article.summary,
+            color=discord.Color.purple(),  # Purple for gaming
+            timestamp=article.published_date,
+        )
+
+        # Add image if available
+        if article.image_url:
+            embed.set_image(url=article.image_url)
+
+        # Add source in footer
+        embed.set_footer(
+            text=f"{article.source_emoji} {article.source}",
+            icon_url=self.user.avatar.url if self.user.avatar else None,
+        )
+
+        # Post message
+        await channel.send(embed=embed)
+        logger.info(f"🎮 Posted gaming: {article.title}")
+
+    async def _post_gaming_article_to_forum(
+        self, channel: discord.ForumChannel, article: GamingArticle
+    ) -> None:
+        """
+        Post a single gaming news article to a forum channel.
+
+        Args:
+            channel: Discord forum channel to post in
+            article: GamingArticle object to post
+        """
+        # DESIGN: Download image, upload to Discord, then delete locally
+        import aiohttp
+        from pathlib import Path
+
+        image_file: Optional[discord.File] = None
+        temp_image_path: Optional[str] = None
+
+        # Create temp directory for media
+        temp_dir: Path = Path("data/temp_media")
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        # Download image
+        if article.image_url:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(article.image_url, timeout=10) as response:
+                        if response.status == 200:
+                            ext: str = ".jpg"
+                            if "." in article.image_url:
+                                url_ext = article.image_url.split(".")[-1].split("?")[0].lower()
+                                if url_ext in ["jpg", "jpeg", "png", "webp", "gif"]:
+                                    ext = f".{url_ext}"
+
+                            temp_image_path = str(temp_dir / f"temp_gaming_{hash(article.url)}{ext}")
+                            content: bytes = await response.read()
+
+                            with open(temp_image_path, "wb") as f:
+                                f.write(content)
+
+                            image_file = discord.File(temp_image_path, filename=f"gaming{ext}")
+                            logger.info(f"🎮 Downloaded image for gaming article: {article.title[:30]}")
+            except Exception as e:
+                logger.warning(f"Failed to download image for '{article.title}': {e}")
+
+        try:
+            # DESIGN: Format bilingual summaries with beautiful styling (EXACT same as news)
+            # Image will be uploaded as attachment instead of URL
+            # Use Discord markdown for professional formatting
+
+            # Build message with professional formatting
+            message_content: str = ""
+
+            # DESIGN: Key quote at the top for better engagement
+            # Extract first sentence as highlight to hook readers immediately
+            # If first sentence is too long (>250 chars), truncate with ellipsis
+            first_sentence: str = article.english_summary.split('.')[0].strip()
+            if len(first_sentence) > 250:
+                first_sentence = first_sentence[:247].strip() + '...'
+            else:
+                first_sentence = first_sentence + '.'
+
+            # DESIGN: Always show key quote if we have a valid first sentence
+            # Changed from requiring < 200 chars to always showing (with truncation)
+            if len(first_sentence) > 20:
+                message_content += f"> 💬 *\"{first_sentence}\"*\n\n"
+                message_content += "─────────────\n\n"
+
+            # DESIGN: Arabic summary section with emoji flag header
+            # Makes it clear which language is which
+            message_content += f"🇸🇾 **Arabic Summary**\n{article.arabic_summary}\n\n"
+            message_content += "─────────────\n\n"
+
+            # DESIGN: English translation section with emoji flag header
+            message_content += f"🇬🇧 **English Translation**\n{article.english_summary}\n\n"
+            message_content += "─────────────\n\n"
+
+            # DESIGN: Article metadata footer
+            # Wrap URL in angle brackets to suppress Discord auto-embed
+            # Discord creates embeds for naked URLs, <url> prevents this
+            published_date_str: str = article.published_date.strftime("%B %d, %Y") if article.published_date else "N/A"
+
+            # DESIGN: Combine source and read link on same line for cleaner footer
+            message_content += f"📰 **Source:** {article.source_emoji} {article.source} • 🔗 **[Read Full Article](<{article.url}>)**\n"
+            message_content += f"📅 **Published:** {published_date_str}\n\n"
+
+            # Footer disclaimer in small text (same as news)
+            message_content += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
+            message_content += "The content is sourced from various news outlets and summarized using AI. "
+            message_content += "Bot developed by حَـــــنَّـــــا."
+
+            full_content: str = message_content
+
+            # Create forum thread with image (no tags for gaming - simpler than soccer)
+            files_to_upload: list[discord.File] = [image_file] if image_file else []
+
+            # DESIGN: Format thread name with date emoji to match news format
+            # Example: "📅 11-19-25 | PS5 Pro Launch Details"
+            post_date: str = datetime.now().strftime("%m-%d-%y")
+            thread_name: str = f"📅 {post_date} | {article.title}"
+            if len(thread_name) > 100:
+                thread_name = f"📅 {post_date} | {article.title[:80]}..."
+
+            thread: discord.Thread
+            message: discord.Message
+
+            thread, message = await channel.create_thread(
+                name=thread_name,
+                content=full_content[:2000],  # Discord limit
+                files=files_to_upload,
+            )
+
+            # DESIGN: Mark article ID as posted immediately after forum thread creation
+            # Prevents duplicate posts on next hourly run
+            # CRITICAL: Use article ID instead of full URL for reliability
+            article_id: str = self.gaming_scraper._extract_article_id(article.url)
+            self.gaming_scraper.fetched_urls.add(article_id)
+            self.gaming_scraper._save_posted_urls()
+            logger.info(f"🎮 Marked gaming article ID as posted: {article_id} (URL: {article.url[:50]})")
+
+            logger.info(f"🎮 Posted gaming forum thread: {article.title}")
+
+            # DESIGN: Send announcement embed to general channel with link to forum post
+            # Same notification system as news posts for consistency
+            logger.info(f"🔍 Checking general_channel_id for gaming announcement: {self.general_channel_id}")
+            if self.general_channel_id:
+                await self._send_gaming_announcement(thread, article)
+            else:
+                logger.warning("❌ General channel ID not configured - skipping gaming announcement")
+
+        finally:
+            # Clean up temp image file
+            if temp_image_path and Path(temp_image_path).exists():
+                try:
+                    Path(temp_image_path).unlink()
+                except Exception as e:
+                    logger.warning(f"Failed to delete temp gaming image: {e}")
 
     async def on_reaction_add(
         self, reaction: discord.Reaction, user: discord.User
