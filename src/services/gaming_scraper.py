@@ -53,15 +53,16 @@ class GamingArticle:
 
 
 class GamingScraper:
-    """Scrapes gaming news from IGN."""
+    """Scrapes gaming news from This Week in Videogames."""
 
-    # DESIGN: Single RSS source - IGN
-    # Leading gaming news website with comprehensive coverage
+    # DESIGN: Single RSS source - This Week in Videogames
+    # "No ads. No AI. Just videogame coverage that matters."
+    # Pure gaming-focused news (replaced IGN which posted irrelevant content)
     GAMING_SOURCES: dict[str, dict[str, str]] = {
-        "ign": {
-            "name": "IGN",
+        "twig": {
+            "name": "This Week in Videogames",
             "emoji": "🎮",
-            "rss_url": "https://feeds.ign.com/ign/all",
+            "rss_url": "https://thisweekinvideogames.com/feed/",
             "language": "English",
         },
     }
