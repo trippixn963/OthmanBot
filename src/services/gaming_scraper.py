@@ -2,20 +2,18 @@
 Othman Discord Bot - Gaming Scraper Service
 ===========================================
 
-Fetches gaming news from GameSpot RSS feeds with rotation.
+Fetches gaming news from This Week in Videogames RSS feed.
 
 Sources:
-- GameSpot News - All gaming news
-- GameSpot Game News - Game-specific news
-- GameSpot Reviews - Game reviews
+- This Week in Videogames - "No ads. No AI. Just videogame coverage that matters."
 
 Features:
-- RSS feed rotation between multiple GameSpot feeds
+- Pure gaming-focused content (no hardware sales, no Black Friday deals)
 - Image extraction from articles
 - AI-powered title generation
 - Bilingual summaries (Arabic + English)
 - Duplicate detection
-- Gaming-focused content
+- Quality gaming journalism
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
@@ -56,31 +54,17 @@ class GamingArticle:
 
 
 class GamingScraper:
-    """Scrapes gaming news from GameSpot with feed rotation."""
+    """Scrapes gaming news from This Week in Videogames."""
 
-    # DESIGN: Three GameSpot RSS feeds with rotation
-    # User-specified feeds: Game News, New Game Releases, Game Reviews
-    # Rotation provides variety in gaming content each hour
+    # DESIGN: Single source - This Week in Videogames
+    # "No ads. No AI. Just videogame coverage that matters."
+    # Pure gaming content without deals, hardware sales, or Black Friday garbage
     GAMING_FEEDS: list[dict[str, str]] = [
         {
-            "key": "gamespot_game_news",
-            "name": "GameSpot",
+            "key": "twig",
+            "name": "This Week in Videogames",
             "emoji": "",
-            "rss_url": "https://www.gamespot.com/feeds/game-news/",
-            "language": "English",
-        },
-        {
-            "key": "gamespot_new_games",
-            "name": "GameSpot",
-            "emoji": "",
-            "rss_url": "https://www.gamespot.com/feeds/new-games/",
-            "language": "English",
-        },
-        {
-            "key": "gamespot_reviews",
-            "name": "GameSpot",
-            "emoji": "",
-            "rss_url": "https://www.gamespot.com/feeds/reviews/",
+            "rss_url": "https://thisweekinvideogames.com/feed/",
             "language": "English",
         },
     ]
@@ -233,12 +217,7 @@ class GamingScraper:
         self, max_articles: int = 5, hours_back: int = 168
     ) -> List[GamingArticle]:
         """
-        Fetch latest gaming news with priority-based feed selection.
-
-        PRIORITY STRATEGY:
-        1. Check Reviews feed → ONLY latest article, skip if already posted
-        2. Check New Releases feed → ONLY latest article, skip if already posted
-        3. Fallback to Game News feed → check all articles with backfill support
+        Fetch latest gaming news from This Week in Videogames.
 
         Args:
             max_articles: Maximum number of articles to return
@@ -247,70 +226,33 @@ class GamingScraper:
         Returns:
             List of GamingArticle objects
 
-        DESIGN: Priority-based selection ensures fresh reviews/releases take precedence
-        Game News acts as reliable fallback with full backfill capability
+        DESIGN: Simple single-source fetch from TWIG
+        Pure gaming content without deals, hardware sales, or Black Friday garbage
         """
         cutoff_time: datetime = datetime.now() - timedelta(hours=hours_back)
 
-        # DESIGN: Define feed priority order
-        # Reviews and New Releases: latest-only (no backfill)
-        # Game News: full backfill support
-        reviews_feed: dict[str, str] = self.GAMING_FEEDS[2]  # gamespot_reviews
-        releases_feed: dict[str, str] = self.GAMING_FEEDS[1]  # gamespot_new_games
-        news_feed: dict[str, str] = self.GAMING_FEEDS[0]  # gamespot_game_news
+        # DESIGN: Single source - This Week in Videogames
+        source: dict[str, str] = self.GAMING_FEEDS[0]
 
-        # PRIORITY 1: Check Reviews feed - ONLY latest article
-        logger.info(f"🎮 Checking priority 1: {reviews_feed['name']} (latest only)")
-        try:
-            reviews: list[GamingArticle] = await self._fetch_from_source(
-                reviews_feed["key"], reviews_feed, cutoff_time, 1  # Only fetch 1
-            )
-            if reviews:
-                article_id: str = self._extract_article_id(reviews[0].url)
-                if article_id not in self.fetched_urls:
-                    logger.success(f"⭐ Found NEW review: {reviews[0].title[:50]}")
-                    return reviews[:max_articles]
-                else:
-                    logger.info("⏭️ Reviews: Latest already posted, checking releases...")
-        except Exception as e:
-            logger.warning(f"Failed to fetch reviews: {str(e)[:100]}")
+        logger.info(f"🎮 Fetching gaming news from {source['name']}")
 
-        # PRIORITY 2: Check New Releases feed - ONLY latest article
-        logger.info(f"🎮 Checking priority 2: {releases_feed['name']} (latest only)")
         try:
-            releases: list[GamingArticle] = await self._fetch_from_source(
-                releases_feed["key"], releases_feed, cutoff_time, 1  # Only fetch 1
-            )
-            if releases:
-                article_id: str = self._extract_article_id(releases[0].url)
-                if article_id not in self.fetched_urls:
-                    logger.success(f"🆕 Found NEW release: {releases[0].title[:50]}")
-                    return releases[:max_articles]
-                else:
-                    logger.info("⏭️ Releases: Latest already posted, falling back to news...")
-        except Exception as e:
-            logger.warning(f"Failed to fetch releases: {str(e)[:100]}")
-
-        # PRIORITY 3: Fallback to Game News with full backfill support
-        logger.info(f"🎮 Fallback: {news_feed['name']} (with backfill)")
-        try:
-            news_articles: list[GamingArticle] = await self._fetch_from_source(
-                news_feed["key"], news_feed, cutoff_time, max_articles * 10  # Fetch more for backfill
+            articles: list[GamingArticle] = await self._fetch_from_source(
+                source["key"], source, cutoff_time, max_articles * 10
             )
 
-            if not news_articles:
-                logger.warning("⚠️ No gaming articles found in any feed")
+            if not articles:
+                logger.warning("⚠️ No gaming articles found in feed")
                 return []
 
             # DESIGN: Sort by published date (newest first)
-            news_articles.sort(key=lambda x: x.published_date, reverse=True)
+            articles.sort(key=lambda x: x.published_date, reverse=True)
 
-            # DESIGN: Separate new articles from old articles
+            # DESIGN: Filter to only NEW articles
             new_articles: list[GamingArticle] = []
-            old_articles: list[GamingArticle] = []
             seen_ids: set[str] = set()
 
-            for article in news_articles:
+            for article in articles:
                 article_id: str = self._extract_article_id(article.url)
 
                 if article_id in seen_ids:
@@ -320,20 +262,17 @@ class GamingScraper:
 
                 if article_id not in self.fetched_urls:
                     new_articles.append(article)
-                else:
-                    old_articles.append(article)
 
             # DESIGN: Only return NEW articles that haven't been posted yet
-            # Removed backfill logic that was causing duplicate posts
             if new_articles:
-                logger.success(f"✅ Found {len(new_articles)} NEW unposted news articles")
+                logger.success(f"✅ Found {len(new_articles)} NEW gaming articles from TWIG")
                 return new_articles[:max_articles]
             else:
-                logger.info(f"📭 No new gaming articles found (all {len(old_articles)} articles already posted)")
+                logger.info(f"📭 No new gaming articles found (all already posted)")
                 return []
 
         except Exception as e:
-            logger.warning(f"Failed to fetch game news: {str(e)[:100]}")
+            logger.warning(f"Failed to fetch gaming news: {str(e)[:100]}")
             return []
 
     async def _fetch_from_source(
