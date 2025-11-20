@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from openai import OpenAI
 
 from src.core.logger import logger
+from src.utils import AICache
 
 
 @dataclass
@@ -59,7 +60,7 @@ class SoccerScraper:
     SOCCER_SOURCES: dict[str, dict[str, str]] = {
         "kooora": {
             "name": "Kooora",
-            "emoji": "⚽",
+            "emoji": "",
             "rss_url": "https://feeds.footballco.com/kooora/feed/6p5bsxot7te8yick",
             "language": "Arabic",
         },
@@ -112,6 +113,11 @@ class SoccerScraper:
         # Uses API key from environment variables
         api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
         self.openai_client: Optional[OpenAI] = OpenAI(api_key=api_key) if api_key else None
+
+        # DESIGN: Initialize AI response cache to reduce OpenAI API costs
+        # Caches titles, summaries, and team tags for previously seen articles
+        # Especially useful during backfill operations (7-day lookback)
+        self.ai_cache: AICache = AICache("data/soccer_ai_cache.json")
 
     async def __aenter__(self) -> "SoccerScraper":
         """Async context manager entry."""
@@ -312,6 +318,7 @@ class SoccerScraper:
 
         for entry in feed.entries[: max_articles * 2]:  # Fetch extra for filtering
             try:
+
                 # DESIGN: Parse published date with multiple fallback formats
                 # Different RSS feeds use different date formats
                 published_date: Optional[datetime] = self._parse_date(entry)
@@ -356,30 +363,60 @@ class SoccerScraper:
                     "Content unavailable"
                 ]
                 if any(error_msg in full_content for error_msg in error_messages):
-                    logger.info(f"⚽ Skipping soccer article due to fetch error: {entry.get('title', 'Untitled')[:50]}")
                     continue
 
                 # DESIGN: Skip articles without images
                 # NEVER post articles without media - user requirement
                 if not image_url:
-                    logger.info(f"⚽ Skipping soccer article without image: {entry.get('title', 'Untitled')[:50]}")
                     continue
 
-                # DESIGN: Generate AI-powered 3-5 word English title
-                # Replaces original title (may be Arabic or too long) with clean English title
+                # DESIGN: Extract article ID for cache key
+                # Use article ID from URL for all AI caching operations
+                article_id: str = self._extract_article_id(entry.get("link", ""))
                 original_title: str = entry.get("title", "Untitled")
-                ai_title: str = self._generate_ai_title(original_title, full_content)
 
-                # DESIGN: Generate bilingual summaries (Arabic + English)
-                # AI creates concise 3-4 sentence summaries in both languages
-                arabic_summary: str
-                english_summary: str
-                arabic_summary, english_summary = self._generate_bilingual_summary(full_content)
+                # DESIGN: Check AI cache for title before generating
+                # Cache saves money on OpenAI API calls, especially during backfill
+                cached_title = self.ai_cache.get_title(article_id)
+                if cached_title:
+                    ai_title: str = cached_title["english_title"]
+                    logger.info(f"💾 Cache hit: Using cached title for article {article_id}")
+                else:
+                    # DESIGN: Generate AI-powered 3-5 word English title
+                    # Replaces original title (may be Arabic or too long) with clean English title
+                    # Uses OpenAI GPT-3.5-turbo to understand article and create concise title
+                    ai_title: str = self._generate_ai_title(original_title, full_content)
+                    self.ai_cache.cache_title(article_id, original_title, ai_title)
+                    logger.info(f"🔄 Cache miss: Generated and cached title for article {article_id}")
 
-                # DESIGN: Detect team tag for article categorization
-                # AI analyzes title and content to determine primary team
-                # Used for Discord forum tag assignment
-                team_tag: str = self._detect_team_tag(ai_title, full_content)
+                # DESIGN: Check AI cache for summaries before generating
+                # Summaries are expensive (long content = more tokens), cache saves significant cost
+                cached_summary = self.ai_cache.get_summary(article_id)
+                if cached_summary:
+                    arabic_summary: str = cached_summary["arabic_summary"]
+                    english_summary: str = cached_summary["english_summary"]
+                    logger.info(f"💾 Cache hit: Using cached summary for article {article_id}")
+                else:
+                    # DESIGN: Generate bilingual summaries (Arabic + English)
+                    # AI creates concise 3-4 sentence summaries in both languages
+                    # Much better than truncated raw text
+                    arabic_summary, english_summary = self._generate_bilingual_summary(full_content)
+                    self.ai_cache.cache_summary(article_id, arabic_summary, english_summary)
+                    logger.info(f"🔄 Cache miss: Generated and cached summary for article {article_id}")
+
+                # DESIGN: Check AI cache for team tag before detecting
+                # Team tag detection uses AI, cache saves on API costs
+                cached_team = self.ai_cache.get_team_tag(article_id)
+                if cached_team:
+                    team_tag: str = cached_team
+                    logger.info(f"💾 Cache hit: Using cached team tag for article {article_id}")
+                else:
+                    # DESIGN: Detect team tag for article categorization
+                    # AI analyzes title and content to determine primary team
+                    # Used for Discord forum tag assignment
+                    team_tag: str = self._detect_team_tag(ai_title, full_content)
+                    self.ai_cache.cache_team_tag(article_id, team_tag)
+                    logger.info(f"🔄 Cache miss: Generated and cached team tag for article {article_id}")
 
                 article: SoccerArticle = SoccerArticle(
                     title=ai_title,
@@ -529,21 +566,29 @@ class SoccerScraper:
                             break
 
                 # DESIGN: Kooora-specific content extraction
+                # Kooora.com new URL format uses div.fco-article-body for article content
                 content_text: str = ""
 
                 if source_key == "kooora":
-                    # Kooora: article content in various div structures
-                    article_div = (
-                        soup.find("div", class_="article-content")
-                        or soup.find("div", class_="news-text")
-                        or soup.find("article")
-                    )
-                    if article_div:
-                        # Get all paragraphs
-                        paragraphs = article_div.find_all("p")
+                    # Kooora: New URL format - article content in div.fco-article-body
+                    article_body = soup.find("div", class_="fco-article-body")
+
+                    if article_body:
+                        # Get all paragraphs from the article body
+                        paragraphs = article_body.find_all("p")
                         content_text = "\n\n".join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
 
-                # DESIGN: Fallback - try common article tags
+                    # Fallback: Try main tag (new Kooora structure)
+                    if not content_text:
+                        main_tag = soup.find("main")
+                        if main_tag:
+                            paragraphs = main_tag.find_all("p")
+                            # Filter paragraphs with substantial content (>50 chars)
+                            content_paragraphs = [p for p in paragraphs if len(p.get_text().strip()) > 50]
+                            content_text = "\n\n".join([p.get_text().strip() for p in content_paragraphs])
+
+                # DESIGN: Generic fallback - try common article tags
+                # This should rarely be needed since Kooora URLs now use consistent structure
                 if not content_text:
                     article = soup.find("article") or soup.find("div", class_=lambda x: x and "content" in x.lower())
                     if article:

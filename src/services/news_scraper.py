@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from openai import OpenAI
 
 from src.core.logger import logger
+from src.utils import AICache
 
 
 @dataclass
@@ -60,7 +61,7 @@ class NewsScraper:
     NEWS_SOURCES: dict[str, dict[str, str]] = {
         "enab_baladi": {
             "name": "Enab Baladi",
-            "emoji": "🍇",
+            "emoji": "",
             "rss_url": "https://www.enabbaladi.net/feed/",
             "language": "Arabic/English",
         },
@@ -87,6 +88,11 @@ class NewsScraper:
         # Uses API key from environment variables
         api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
         self.openai_client: Optional[OpenAI] = OpenAI(api_key=api_key) if api_key else None
+
+        # DESIGN: Initialize AI response cache to reduce OpenAI API costs
+        # Caches titles, summaries, and categories for previously seen articles
+        # Especially useful during backfill operations (7-day lookback)
+        self.ai_cache: AICache = AICache("data/news_ai_cache.json")
 
     async def __aenter__(self) -> "NewsScraper":
         """Async context manager entry."""
@@ -352,22 +358,44 @@ class NewsScraper:
                     logger.info(f"Skipping article without media: {entry.get('title', 'Untitled')[:50]}")
                     continue
 
-                # DESIGN: Generate AI-powered 3-5 word English title
-                # Replaces original title (may be Arabic or too long) with clean English title
-                # Uses OpenAI GPT-3.5-turbo to understand article and create concise title
+                # DESIGN: Extract article ID for cache key
+                # Use article ID from URL for all AI caching operations
+                article_id: str = self._extract_article_id(entry.get("link", ""))
                 original_title: str = entry.get("title", "Untitled")
-                ai_title: str = self._generate_ai_title(original_title, full_content)
 
-                # DESIGN: Generate bilingual summaries (Arabic + English)
-                # AI creates concise 3-4 sentence summaries in both languages
-                # Much better than truncated raw text
-                arabic_summary: str
-                english_summary: str
-                arabic_summary, english_summary = self._generate_bilingual_summary(full_content)
+                # DESIGN: Check AI cache for title before generating
+                # Cache saves money on OpenAI API calls, especially during backfill
+                cached_title = self.ai_cache.get_title(article_id)
+                if cached_title:
+                    ai_title: str = cached_title["english_title"]
+                    logger.info(f"💾 Cache hit: Using cached title for article {article_id}")
+                else:
+                    # DESIGN: Generate AI-powered 3-5 word English title
+                    # Replaces original title (may be Arabic or too long) with clean English title
+                    # Uses OpenAI GPT-3.5-turbo to understand article and create concise title
+                    ai_title: str = self._generate_ai_title(original_title, full_content)
+                    self.ai_cache.cache_title(article_id, original_title, ai_title)
+                    logger.info(f"🔄 Cache miss: Generated and cached title for article {article_id}")
+
+                # DESIGN: Check AI cache for summaries before generating
+                # Summaries are expensive (long content = more tokens), cache saves significant cost
+                cached_summary = self.ai_cache.get_summary(article_id)
+                if cached_summary:
+                    arabic_summary: str = cached_summary["arabic_summary"]
+                    english_summary: str = cached_summary["english_summary"]
+                    logger.info(f"💾 Cache hit: Using cached summary for article {article_id}")
+                else:
+                    # DESIGN: Generate bilingual summaries (Arabic + English)
+                    # AI creates concise 3-4 sentence summaries in both languages
+                    # Much better than truncated raw text
+                    arabic_summary, english_summary = self._generate_bilingual_summary(full_content)
+                    self.ai_cache.cache_summary(article_id, arabic_summary, english_summary)
+                    logger.info(f"🔄 Cache miss: Generated and cached summary for article {article_id}")
 
                 # DESIGN: Categorize article for Discord forum tag
                 # AI analyzes content and selects most appropriate category
                 # Returns Discord tag ID for automatic tag assignment
+                # Note: Categories not cached as they're very cheap (short prompt/response)
                 category_tag_id: Optional[int] = self._categorize_article(ai_title, full_content)
 
                 article: NewsArticle = NewsArticle(
