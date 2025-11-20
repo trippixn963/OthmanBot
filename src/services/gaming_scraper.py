@@ -323,17 +323,13 @@ class GamingScraper:
                 else:
                     old_articles.append(article)
 
-            # DESIGN: Backfill logic - prefer new, fallback to old
+            # DESIGN: Only return NEW articles that haven't been posted yet
+            # Removed backfill logic that was causing duplicate posts
             if new_articles:
                 logger.success(f"✅ Found {len(new_articles)} NEW unposted news articles")
                 return new_articles[:max_articles]
-            elif old_articles:
-                # DESIGN: Reverse sort old articles to get OLDEST first for backfill
-                old_articles.sort(key=lambda x: x.published_date)  # Oldest first
-                logger.info(f"⏪ No new news - backfilling from {len(old_articles)} older articles")
-                return old_articles[:max_articles]
             else:
-                logger.warning("⚠️ All news articles already posted")
+                logger.info(f"📭 No new gaming articles found (all {len(old_articles)} articles already posted)")
                 return []
 
         except Exception as e:
