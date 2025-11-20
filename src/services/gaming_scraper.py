@@ -58,22 +58,22 @@ class GamingArticle:
 class GamingScraper:
     """Scrapes gaming news from GameSpot with feed rotation."""
 
-    # DESIGN: Multiple GameSpot RSS feeds with rotation
-    # Provides variety by rotating between news, game news, and reviews
-    # Replaced PC Gamer for better gaming-focused content
+    # DESIGN: Three GameSpot RSS feeds with rotation
+    # User-specified feeds: Game News, New Game Releases, Game Reviews
+    # Rotation provides variety in gaming content each hour
     GAMING_FEEDS: list[dict[str, str]] = [
         {
-            "key": "gamespot_news",
-            "name": "GameSpot News",
+            "key": "gamespot_game_news",
+            "name": "GameSpot Game News",
             "emoji": "🎮",
-            "rss_url": "https://www.gamespot.com/feeds/news/",
+            "rss_url": "https://www.gamespot.com/feeds/game-news/",
             "language": "English",
         },
         {
-            "key": "gamespot_games",
-            "name": "GameSpot Games",
-            "emoji": "🎮",
-            "rss_url": "https://www.gamespot.com/feeds/game-news/",
+            "key": "gamespot_new_games",
+            "name": "GameSpot New Releases",
+            "emoji": "🆕",
+            "rss_url": "https://www.gamespot.com/feeds/new-games/",
             "language": "English",
         },
         {
