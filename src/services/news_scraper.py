@@ -264,20 +264,13 @@ class NewsScraper:
             else:
                 old_articles.append(article)
 
-        # DESIGN: Backfill logic - prefer new, fallback to old
-        # If we have new articles, use those (newest first)
-        # If no new articles, use old articles (oldest first, to go backwards chronologically)
+        # DESIGN: Only return NEW articles that haven't been posted yet
+        # Removed backfill logic that was causing duplicate posts (returning old_articles)
         if new_articles:
             logger.info(f"✅ Found {len(new_articles)} NEW unposted articles")
             selected_articles: list[NewsArticle] = new_articles[:max_articles]
-        elif old_articles:
-            # DESIGN: Reverse sort old articles to get OLDEST first
-            # This creates a backfill effect: post older articles in chronological order
-            old_articles.sort(key=lambda x: x.published_date)  # Oldest first
-            logger.info(f"⏪ No new articles - backfilling from {len(old_articles)} older articles")
-            selected_articles: list[NewsArticle] = old_articles[:max_articles]
         else:
-            logger.warning("⚠️ No articles found (all filtered or none available)")
+            logger.info(f"📭 No new articles found (all {len(old_articles)} articles already posted)")
             return []
 
         logger.info(
