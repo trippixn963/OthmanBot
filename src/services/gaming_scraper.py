@@ -64,21 +64,21 @@ class GamingScraper:
     GAMING_FEEDS: list[dict[str, str]] = [
         {
             "key": "gamespot_game_news",
-            "name": "GameSpot Game News",
+            "name": "GameSpot",
             "emoji": "🎮",
             "rss_url": "https://www.gamespot.com/feeds/game-news/",
             "language": "English",
         },
         {
             "key": "gamespot_new_games",
-            "name": "GameSpot New Releases",
+            "name": "GameSpot",
             "emoji": "🆕",
             "rss_url": "https://www.gamespot.com/feeds/new-games/",
             "language": "English",
         },
         {
             "key": "gamespot_reviews",
-            "name": "GameSpot Reviews",
+            "name": "GameSpot",
             "emoji": "⭐",
             "rss_url": "https://www.gamespot.com/feeds/reviews/",
             "language": "English",
