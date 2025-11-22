@@ -1,11 +1,11 @@
 """
-Othman Discord Bot - Soccer Scheduler Service
-=============================================
+Othman Discord Bot - Gaming Scheduler Service
+==============================================
 
-Manages automated 3-hour soccer news posting with state persistence.
+Manages automated hourly gaming news posting with state persistence.
 
 Features:
-- 3-hour scheduling intervals
+- Hourly scheduling at :40 past each hour
 - Background async task
 - Start/stop controls
 - State persistence across restarts
@@ -24,29 +24,28 @@ from typing import Optional, Callable, Any
 from src.core.logger import logger
 
 
-class SoccerScheduler:
-    """Manages automated 3-hour soccer news posting schedule."""
+class GamingScheduler:
+    """Manages automated hourly gaming news posting schedule."""
 
     def __init__(self, post_callback: Callable[[], Any]) -> None:
         """
-        Initialize the soccer scheduler.
+        Initialize the gaming scheduler.
 
         Args:
-            post_callback: Async function to call when posting soccer news
+            post_callback: Async function to call when posting gaming news
         """
         self.post_callback: Callable[[], Any] = post_callback
         self.is_running: bool = False
         self.task: Optional[asyncio.Task] = None
-        self.state_file: Path = Path("data/soccer_scheduler_state.json")
+        self.state_file: Path = Path("data/gaming_scheduler_state.json")
         self.state_file.parent.mkdir(exist_ok=True)
 
-        # DESIGN: 1-hour interval for soccer news (24 posts per day)
-        # Same frequency as regular news to keep sports channel active
-        # Users want consistent hourly updates for sports content
+        # DESIGN: 1-hour interval for gaming news (24 posts per day)
+        # Same frequency as news and soccer for consistent content flow
+        # Posts at :40 past each hour to complete 3-way stagger
         self.interval_hours: int = 1
 
         # DESIGN: Load saved state to resume after restarts
-        # Tracks whether scheduler was running before shutdown
         self._load_state()
 
     def _load_state(self) -> None:
@@ -57,10 +56,10 @@ class SoccerScheduler:
                     data: dict[str, Any] = json.load(f)
                     self.is_running = data.get("is_running", False)
                     logger.info(
-                        f"⚽ Loaded soccer scheduler state: {'RUNNING' if self.is_running else 'STOPPED'}"
+                        f"🎮 Loaded gaming scheduler state: {'RUNNING' if self.is_running else 'STOPPED'}"
                     )
         except Exception as e:
-            logger.warning(f"Failed to load soccer scheduler state: {e}")
+            logger.warning(f"Failed to load gaming scheduler state: {e}")
             self.is_running = False
 
     def _save_state(self) -> None:
@@ -69,61 +68,55 @@ class SoccerScheduler:
             with open(self.state_file, "w") as f:
                 json.dump({"is_running": self.is_running}, f, indent=2)
         except Exception as e:
-            logger.warning(f"Failed to save soccer scheduler state: {e}")
+            logger.warning(f"Failed to save gaming scheduler state: {e}")
 
     async def start(self, post_immediately: bool = False) -> bool:
         """
-        Start the automated soccer news posting schedule.
+        Start the automated gaming news posting schedule.
 
         Args:
-            post_immediately: If True, post soccer news immediately then start hourly schedule
+            post_immediately: If True, post gaming news immediately then start hourly schedule
 
         Returns:
             True if started successfully, False if already running
         """
-        # DESIGN: Post immediately if requested, even if scheduler is already running
-        # This allows testing the bot without restarting from scratch
+        # DESIGN: Post immediately if requested
         if post_immediately:
-            logger.info("⚽ Posting soccer news immediately (test mode)")
+            logger.info("🎮 Posting gaming news immediately (test mode)")
             await self.post_callback()
 
-        # DESIGN: Check if background task is already running (not just state flag)
-        # State file may say "running" but task could have crashed
-        # Always create new task if none exists or previous task is done
+        # DESIGN: Check if background task is already running
         if self.task and not self.task.done():
-            logger.warning("Soccer scheduler task is already running")
+            logger.warning("Gaming scheduler task is already running")
             return False
 
         self.is_running = True
         self._save_state()
 
-        # DESIGN: Create background task for hourly interval posting
-        # Task runs indefinitely until stopped
-        # Separate task prevents blocking main bot operations
+        # DESIGN: Create background task for hourly posting at :40
         self.task = asyncio.create_task(self._schedule_loop())
 
         next_post: datetime = self._calculate_next_post_time()
         logger.success(
-            f"⚽ Soccer scheduler started - Next post at {next_post.strftime('%I:%M %p %Z')}"
+            f"🎮 Gaming scheduler started - Next post at {next_post.strftime('%I:%M %p %Z')}"
         )
         return True
 
     async def stop(self) -> bool:
         """
-        Stop the automated soccer news posting schedule.
+        Stop the automated gaming news posting schedule.
 
         Returns:
             True if stopped successfully, False if not running
         """
         if not self.is_running:
-            logger.warning("Soccer scheduler is not running")
+            logger.warning("Gaming scheduler is not running")
             return False
 
         self.is_running = False
         self._save_state()
 
         # DESIGN: Cancel background task gracefully
-        # Allow current operation to complete before stopping
         if self.task and not self.task.done():
             self.task.cancel()
             try:
@@ -131,73 +124,67 @@ class SoccerScheduler:
             except asyncio.CancelledError:
                 pass
 
-        logger.success("⚽ Soccer scheduler stopped")
+        logger.success("🎮 Gaming scheduler stopped")
         return True
 
     async def _schedule_loop(self) -> None:
         """
-        Main scheduling loop - runs every hour.
+        Main scheduling loop - runs every hour at :40.
 
-        DESIGN: Posts soccer news every hour (24 times per day)
-        Calculates wait time dynamically to maintain consistent intervals
-        Handles errors gracefully to keep scheduler running
+        DESIGN: Posts gaming news every hour at :40 (12:40, 1:40, 2:40, etc.)
+        Completes the 3-way stagger: News at :00, Soccer at :20, Gaming at :40
         """
         while self.is_running:
             try:
-                # DESIGN: Calculate exact wait time until next hour mark
-                # Ensures posts happen consistently every hour
-                # Example: Current time 2:15 PM → wait 45 minutes → post at 3:00 PM
+                # DESIGN: Calculate exact wait time until next :40 mark
                 next_post_time: datetime = self._calculate_next_post_time()
                 wait_seconds: float = (next_post_time - datetime.now()).total_seconds()
 
                 if wait_seconds > 0:
                     logger.info(
-                        f"⚽ Next soccer post scheduled for {next_post_time.strftime('%I:%M %p %Z')} "
+                        f"🎮 Next gaming post scheduled for {next_post_time.strftime('%I:%M %p %Z')} "
                         f"(in {wait_seconds / 60:.1f} minutes)"
                     )
                     await asyncio.sleep(wait_seconds)
 
-                # DESIGN: Post soccer news if still running after wait
-                # Check is_running again in case stop() was called during sleep
+                # DESIGN: Post gaming news if still running after wait
                 if self.is_running:
-                    logger.info("⚽⏰ Hourly soccer post triggered")
+                    logger.info("🎮⏰ Hourly gaming post triggered")
                     try:
                         await self.post_callback()
                     except Exception as e:
-                        logger.error(f"Failed to post soccer news: {e}")
+                        logger.error(f"Failed to post gaming news: {e}")
                         # DESIGN: Continue scheduling even if one post fails
-                        # One failure shouldn't stop all future posts
 
             except asyncio.CancelledError:
-                logger.info("Soccer scheduler loop cancelled")
+                logger.info("Gaming scheduler loop cancelled")
                 break
             except Exception as e:
-                logger.error(f"Soccer scheduler loop error: {e}")
+                logger.error(f"Gaming scheduler loop error: {e}")
                 # DESIGN: Wait 15 minutes before retry on error
-                # Prevents rapid error loops while allowing recovery
                 await asyncio.sleep(900)
 
     def _calculate_next_post_time(self) -> datetime:
         """
-        Calculate the next hourly post time.
+        Calculate the next hourly post time at :40 past each hour.
 
         Returns:
             datetime object for next post time
 
-        DESIGN: Posts every hour at 20 minutes past (12:20, 1:20, 2:20, etc.)
+        DESIGN: Posts every hour at 40 minutes past (12:40, 1:40, 2:40, etc.)
         Staggered schedule: News at :00, Soccer at :20, Gaming at :40
         """
         now: datetime = datetime.now()
 
-        # DESIGN: Calculate next :20 boundary each hour
-        # This staggers soccer posts 20 minutes after news posts
-        if now.minute < 20:
-            # Before :20, post at current hour :20
-            next_post: datetime = now.replace(minute=20, second=0, microsecond=0)
+        # DESIGN: Calculate next :40 boundary each hour
+        # This staggers gaming posts 40 minutes after news, 20 minutes after soccer
+        if now.minute < 40:
+            # Before :40, post at current hour :40
+            next_post: datetime = now.replace(minute=40, second=0, microsecond=0)
         else:
-            # After :20, post at next hour :20
+            # After :40, post at next hour :40
             next_post: datetime = (now + timedelta(hours=1)).replace(
-                minute=20, second=0, microsecond=0
+                minute=40, second=0, microsecond=0
             )
 
         return next_post

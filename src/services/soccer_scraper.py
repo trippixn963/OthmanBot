@@ -13,46 +13,23 @@ Features:
 - AI-powered title generation
 - Bilingual summaries (Arabic + English)
 - Duplicate detection
-- Soccer-focused content
+- Team tag detection for forum categorization
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
-import os
-import json
 import asyncio
 import feedparser
-import aiohttp
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Optional, List, Dict, Any
-from dataclasses import dataclass
-from openai import OpenAI
+from typing import Optional
 
 from src.core.logger import logger
-from src.utils import AICache
+from src.services.base_scraper import BaseScraper, Article
 
 
-@dataclass
-class SoccerArticle:
-    """Represents a soccer news article with all necessary information."""
-
-    title: str
-    url: str
-    summary: str
-    full_content: str  # Full article text extracted from page
-    arabic_summary: str  # AI-generated Arabic summary
-    english_summary: str  # AI-generated English summary
-    image_url: Optional[str]
-    published_date: datetime = None
-    source: str = ""
-    source_emoji: str = ""
-    team_tag: Optional[str] = None  # AI-detected team tag for categorization
-
-
-class SoccerScraper:
+class SoccerScraper(BaseScraper):
     """Scrapes soccer/football news from Kooora.com."""
 
     # DESIGN: Single RSS source - Kooora.com
@@ -67,7 +44,6 @@ class SoccerScraper:
     }
 
     # DESIGN: Soccer team categories for AI-powered tagging
-    # Maps team names to their exact string for tag matching
     # AI will analyze article content and return ONE of these team names
     # Fallback to "International" for multi-team or general soccer news
     TEAM_CATEGORIES: list[str] = [
@@ -94,142 +70,33 @@ class SoccerScraper:
 
     def __init__(self) -> None:
         """Initialize the soccer scraper."""
-        self.session: Optional[aiohttp.ClientSession] = None
-
-        # DESIGN: Track fetched URLs to avoid duplicate posts
-        # Stored as set for O(1) lookup performance
-        # Limited to last 1000 URLs to prevent memory growth
-        # PERSISTED to JSON file to survive bot restarts
-        self.fetched_urls: set[str] = set()
-        self.max_cached_urls: int = 1000
-        self.posted_urls_file: Path = Path("data/posted_soccer_urls.json")
-        self.posted_urls_file.parent.mkdir(exist_ok=True)
-
-        # DESIGN: Load previously posted URLs on startup
-        # Prevents re-posting same articles after bot restart
-        self._load_posted_urls()
-
-        # DESIGN: Initialize OpenAI client for title generation and summaries
-        # Uses API key from environment variables
-        api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
-        self.openai_client: Optional[OpenAI] = OpenAI(api_key=api_key) if api_key else None
-
-        # DESIGN: Initialize AI response cache to reduce OpenAI API costs
-        # Caches titles, summaries, and team tags for previously seen articles
-        # Especially useful during backfill operations (7-day lookback)
-        self.ai_cache: AICache = AICache("data/soccer_ai_cache.json")
-
-    async def __aenter__(self) -> "SoccerScraper":
-        """Async context manager entry."""
-        self.session = aiohttp.ClientSession()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Async context manager exit."""
-        if self.session:
-            await self.session.close()
-
-    @staticmethod
-    def _extract_article_id(url: str) -> str:
-        """
-        Extract unique article ID from URL for deduplication.
-
-        DESIGN: Use article ID instead of full URL to prevent duplicate posts
-        Problem: Full URLs can be truncated, have different encodings, or vary in format
-        Solution: Extract the numeric article ID which is stable and unique
-        Example: https://feeds.footballco.com/.../article-12345-title → "12345"
-
-        Args:
-            url: Article URL
-
-        Returns:
-            Article ID extracted from URL, or full URL if extraction fails
-        """
-        import re
-        # DESIGN: Match article ID pattern: /NUMBERS/ or /NUMBERS? or -NUMBERS-
-        # Kooora URLs can follow different patterns depending on feed format
-        match = re.search(r'/(\d+)/', url)
-        if not match:
-            # Try pattern with dash separator (e.g., article-12345-title)
-            match = re.search(r'-(\d+)-', url)
-        if match:
-            return match.group(1)
-        # Fallback to full URL if no ID found
-        return url
-
-    def _load_posted_urls(self) -> None:
-        """
-        Load previously posted article IDs from JSON file.
-
-        DESIGN: Convert all entries to article IDs for reliable deduplication
-        Backward compatible: converts old URL entries to article IDs
-        Article IDs are more reliable than full URLs for preventing duplicates
-        Gracefully handles missing or corrupt file
-        """
-        try:
-            if self.posted_urls_file.exists():
-                with open(self.posted_urls_file, "r", encoding="utf-8") as f:
-                    data: dict[str, list[str]] = json.load(f)
-                    url_list: list[str] = data.get("posted_urls", [])
-                    # DESIGN: Convert all entries (URLs or IDs) to article IDs
-                    # Backward compatible with old URL-based cache
-                    self.fetched_urls = set(self._extract_article_id(url) for url in url_list)
-                    logger.info(f"⚽ Loaded {len(self.fetched_urls)} posted soccer article IDs from cache")
-            else:
-                logger.info("No posted soccer article IDs cache found - starting fresh")
-        except Exception as e:
-            logger.warning(f"Failed to load posted soccer article IDs: {e}")
-            self.fetched_urls = set()
-
-    def _save_posted_urls(self) -> None:
-        """
-        Save posted article IDs to JSON file.
-
-        DESIGN: Persist article IDs to disk after each post
-        Ensures duplicate prevention survives bot restarts
-        Saves ALL article IDs (no limit) to prevent losing recently posted IDs
-        """
-        try:
-            # DESIGN: Save ALL article IDs in the set to avoid random subset bug
-            # Previous bug: list(set)[-1000:] takes random 1000 IDs due to undefined set order
-            # This caused newly-added IDs to be lost when saving
-            # Fix: Save ALL IDs, sort for consistency
-            ids_to_save: list[str] = sorted(list(self.fetched_urls))
-
-            with open(self.posted_urls_file, "w", encoding="utf-8") as f:
-                json.dump({"posted_urls": ids_to_save}, f, indent=2, ensure_ascii=False)
-
-            logger.info(f"⚽ Saved {len(ids_to_save)} posted soccer article IDs to cache")
-        except Exception as e:
-            logger.warning(f"Failed to save posted soccer article IDs: {e}")
+        super().__init__(
+            cache_filename="data/posted_soccer_urls.json",
+            ai_cache_filename="data/soccer_ai_cache.json",
+            content_type="soccer",
+            log_emoji="⚽",
+        )
 
     async def fetch_latest_soccer_news(
         self, max_articles: int = 5, hours_back: int = 24
-    ) -> List[SoccerArticle]:
+    ) -> list[Article]:
         """
-        Fetch latest soccer news from Kooora.com with backfill logic.
-
-        BACKFILL STRATEGY:
-        1. Always check for new (unposted) articles first
-        2. If no new articles, go backwards through older articles
-        3. Post one old article per interval until a new one appears
-        4. This ensures consistent posting even during slow news periods
+        Fetch latest soccer news from Kooora.com.
 
         Args:
             max_articles: Maximum number of articles to return
             hours_back: How far back to search (default: 24 hours)
 
         Returns:
-            List of SoccerArticle objects (newest unposted first, or oldest if all new posted)
+            List of Article objects (newest unposted first)
         """
-        all_articles: list[SoccerArticle] = []
+        all_articles: list[Article] = []
         cutoff_time: datetime = datetime.now() - timedelta(hours=hours_back)
 
-        # DESIGN: Fetch from soccer source
         for source_key, source_info in self.SOCCER_SOURCES.items():
             try:
-                articles: list[SoccerArticle] = await self._fetch_from_source(
-                    source_key, source_info, cutoff_time, max_articles * 10  # Fetch more for backfill
+                articles = await self._fetch_from_source(
+                    source_key, source_info, cutoff_time, max_articles * 10
                 )
                 all_articles.extend(articles)
                 logger.success(
@@ -241,51 +108,30 @@ class SoccerScraper:
                 )
                 continue
 
-        # DESIGN: Sort by published date (newest first) initially
-        # This allows us to check latest articles first
+        # Sort by published date (newest first)
         all_articles.sort(key=lambda x: x.published_date, reverse=True)
 
-        # DESIGN: Separate new articles from old articles
-        # New = not in posted article IDs cache
-        new_articles: list[SoccerArticle] = []
-        old_articles: list[SoccerArticle] = []
+        # Filter to only NEW articles
+        new_articles: list[Article] = []
         seen_ids: set[str] = set()
 
         for article in all_articles:
-            # DESIGN: Extract article ID for reliable deduplication
-            # Article IDs are stable and unique, unlike URLs which can vary
-            article_id: str = self._extract_article_id(article.url)
+            article_id = self._extract_article_id(article.url)
 
             if article_id in seen_ids:
-                continue  # Skip duplicates within this fetch
+                continue
 
             seen_ids.add(article_id)
 
             if article_id not in self.fetched_urls:
                 new_articles.append(article)
-            else:
-                old_articles.append(article)
 
-        # DESIGN: Backfill logic - prefer new, fallback to old
-        # If we have new articles, use those (newest first)
-        # If no new articles, use old articles (oldest first, to go backwards chronologically)
         if new_articles:
             logger.info(f"✅ Found {len(new_articles)} NEW unposted soccer articles")
-            selected_articles: list[SoccerArticle] = new_articles[:max_articles]
-        elif old_articles:
-            # DESIGN: Reverse sort old articles to get OLDEST first
-            # This creates a backfill effect: post older articles in chronological order
-            old_articles.sort(key=lambda x: x.published_date)  # Oldest first
-            logger.info(f"⏪ No new soccer articles - backfilling from {len(old_articles)} older articles")
-            selected_articles: list[SoccerArticle] = old_articles[:max_articles]
+            return new_articles[:max_articles]
         else:
-            logger.warning("⚠️ No soccer articles found (all filtered or none available)")
+            logger.info(f"📭 No new soccer articles found")
             return []
-
-        logger.info(
-            f"⚽ Returning {len(selected_articles)} soccer article(s)"
-        )
-        return selected_articles
 
     async def _fetch_from_source(
         self,
@@ -293,69 +139,46 @@ class SoccerScraper:
         source_info: dict[str, str],
         cutoff_time: datetime,
         max_articles: int,
-    ) -> List[SoccerArticle]:
-        """
-        Fetch articles from Kooora RSS feed.
+    ) -> list[Article]:
+        """Fetch articles from Kooora RSS feed."""
+        articles: list[Article] = []
 
-        Args:
-            source_key: Source identifier
-            source_info: Source configuration dict
-            cutoff_time: Only fetch articles newer than this
-            max_articles: Maximum articles to fetch
-
-        Returns:
-            List of SoccerArticle objects from this source
-        """
-        articles: list[SoccerArticle] = []
-
-        # DESIGN: Use feedparser for reliable RSS parsing
-        # feedparser handles various RSS/Atom formats automatically
-        feed: feedparser.FeedParserDict = feedparser.parse(source_info["rss_url"])
+        feed = feedparser.parse(source_info["rss_url"])
 
         if not feed.entries:
             logger.warning(f"No entries found in {source_info['name']} feed")
             return articles
 
-        for entry in feed.entries[: max_articles * 2]:  # Fetch extra for filtering
+        for entry in feed.entries[: max_articles * 2]:
             try:
-
-                # DESIGN: Parse published date with multiple fallback formats
-                # Different RSS feeds use different date formats
-                published_date: Optional[datetime] = self._parse_date(entry)
+                # Parse date
+                published_date = self._parse_date(entry)
                 if not published_date or published_date < cutoff_time:
                     continue
 
-                # DESIGN: Extract image from multiple possible locations
-                # RSS feeds store images in different tags
-                image_url: Optional[str] = await self._extract_image(entry)
+                # Extract image from RSS
+                image_url = await self._extract_image(entry)
 
-                # DESIGN: Get summary text, fallback to description or truncated content
-                summary: str = (
+                # Get summary
+                summary = (
                     entry.get("summary", "")
                     or entry.get("description", "")
                     or entry.get("content", [{}])[0].get("value", "")
                 )
-                # Clean HTML tags from summary
                 summary = BeautifulSoup(summary, "html.parser").get_text()
                 summary = summary[:500] + "..." if len(summary) > 500 else summary
 
-                # DESIGN: Extract full article content and image from the URL
-                # Fetch the actual article page and extract text + media
-                full_content: str
-                scraped_image: Optional[str]
+                # Extract full content and image
                 full_content, scraped_image = await self._extract_full_content(
                     entry.get("link", ""), source_key
                 )
 
-                # DESIGN: Prefer scraped image from article page over RSS feed image
-                # Article page images are usually better quality and more relevant
+                # Prefer scraped image
                 if not image_url and scraped_image:
                     image_url = scraped_image
 
-                # DESIGN: Skip articles with fetch errors (timeout, extraction failed, etc.)
-                # These error messages are returned as content by _extract_full_content
-                # Don't post articles with error messages as content
-                error_messages: list[str] = [
+                # Skip articles with fetch errors
+                error_messages = [
                     "Article fetch timed out",
                     "Could not fetch article content",
                     "Could not extract article text",
@@ -365,60 +188,46 @@ class SoccerScraper:
                 if any(error_msg in full_content for error_msg in error_messages):
                     continue
 
-                # DESIGN: Skip articles without images
-                # NEVER post articles without media - user requirement
+                # Skip articles without images
                 if not image_url:
                     continue
 
-                # DESIGN: Extract article ID for cache key
-                # Use article ID from URL for all AI caching operations
-                article_id: str = self._extract_article_id(entry.get("link", ""))
-                original_title: str = entry.get("title", "Untitled")
+                # Generate AI content
+                article_id = self._extract_article_id(entry.get("link", ""))
+                original_title = entry.get("title", "Untitled")
 
-                # DESIGN: Check AI cache for title before generating
-                # Cache saves money on OpenAI API calls, especially during backfill
+                # Check cache for title
                 cached_title = self.ai_cache.get_title(article_id)
                 if cached_title:
-                    ai_title: str = cached_title["english_title"]
+                    ai_title = cached_title["english_title"]
                     logger.info(f"💾 Cache hit: Using cached title for article {article_id}")
                 else:
-                    # DESIGN: Generate AI-powered 3-5 word English title
-                    # Replaces original title (may be Arabic or too long) with clean English title
-                    # Uses OpenAI GPT-3.5-turbo to understand article and create concise title
-                    ai_title: str = self._generate_ai_title(original_title, full_content)
+                    ai_title = await self._generate_soccer_title(original_title, full_content)
                     self.ai_cache.cache_title(article_id, original_title, ai_title)
-                    logger.info(f"🔄 Cache miss: Generated and cached title for article {article_id}")
+                    logger.info(f"🔄 Cache miss: Generated title for article {article_id}")
 
-                # DESIGN: Check AI cache for summaries before generating
-                # Summaries are expensive (long content = more tokens), cache saves significant cost
+                # Check cache for summaries
                 cached_summary = self.ai_cache.get_summary(article_id)
                 if cached_summary:
-                    arabic_summary: str = cached_summary["arabic_summary"]
-                    english_summary: str = cached_summary["english_summary"]
+                    arabic_summary = cached_summary["arabic_summary"]
+                    english_summary = cached_summary["english_summary"]
                     logger.info(f"💾 Cache hit: Using cached summary for article {article_id}")
                 else:
-                    # DESIGN: Generate bilingual summaries (Arabic + English)
-                    # AI creates concise 3-4 sentence summaries in both languages
-                    # Much better than truncated raw text
-                    arabic_summary, english_summary = self._generate_bilingual_summary(full_content)
+                    arabic_summary, english_summary = await self._generate_bilingual_summary(full_content)
                     self.ai_cache.cache_summary(article_id, arabic_summary, english_summary)
-                    logger.info(f"🔄 Cache miss: Generated and cached summary for article {article_id}")
+                    logger.info(f"🔄 Cache miss: Generated summary for article {article_id}")
 
-                # DESIGN: Check AI cache for team tag before detecting
-                # Team tag detection uses AI, cache saves on API costs
+                # Check cache for team tag
                 cached_team = self.ai_cache.get_team_tag(article_id)
                 if cached_team:
-                    team_tag: str = cached_team
+                    team_tag = cached_team
                     logger.info(f"💾 Cache hit: Using cached team tag for article {article_id}")
                 else:
-                    # DESIGN: Detect team tag for article categorization
-                    # AI analyzes title and content to determine primary team
-                    # Used for Discord forum tag assignment
-                    team_tag: str = self._detect_team_tag(ai_title, full_content)
+                    team_tag = await self._detect_team_tag(ai_title, full_content)
                     self.ai_cache.cache_team_tag(article_id, team_tag)
-                    logger.info(f"🔄 Cache miss: Generated and cached team tag for article {article_id}")
+                    logger.info(f"🔄 Cache miss: Generated team tag for article {article_id}")
 
-                article: SoccerArticle = SoccerArticle(
+                article = Article(
                     title=ai_title,
                     url=entry.get("link", ""),
                     summary=summary,
@@ -446,16 +255,7 @@ class SoccerScraper:
         return articles
 
     def _parse_date(self, entry: feedparser.FeedParserDict) -> Optional[datetime]:
-        """
-        Parse publication date from RSS entry.
-
-        Args:
-            entry: RSS feed entry
-
-        Returns:
-            datetime object or None if parsing fails
-        """
-        # DESIGN: Try multiple date fields with fallbacks
+        """Parse publication date from RSS entry."""
         date_tuple = entry.get("published_parsed") or entry.get("updated_parsed")
 
         if date_tuple:
@@ -464,21 +264,10 @@ class SoccerScraper:
             except (TypeError, ValueError):
                 pass
 
-        # DESIGN: Fallback to current time if no date available
         return datetime.now()
 
     async def _extract_image(self, entry: feedparser.FeedParserDict) -> Optional[str]:
-        """
-        Extract image URL from RSS entry.
-
-        Args:
-            entry: RSS feed entry
-
-        Returns:
-            Image URL string or None
-        """
-        # DESIGN: Check multiple possible image locations in RSS feed
-
+        """Extract image URL from RSS entry."""
         # Try media:content tag
         if "media_content" in entry:
             for media in entry.media_content:
@@ -498,34 +287,29 @@ class SoccerScraper:
                 if enclosure.get("type", "").startswith("image/"):
                     return enclosure.get("href")
 
-        # DESIGN: Try to extract first image from article content
-        content: str = (
+        # Try content
+        content = (
             entry.get("summary", "")
             or entry.get("description", "")
             or entry.get("content", [{}])[0].get("value", "")
         )
 
         if content:
-            soup: BeautifulSoup = BeautifulSoup(content, "html.parser")
+            soup = BeautifulSoup(content, "html.parser")
             img_tag = soup.find("img")
             if img_tag and img_tag.get("src"):
                 return img_tag["src"]
 
         return None
 
-    async def _extract_full_content(self, url: str, source_key: str) -> tuple[str, Optional[str]]:
+    async def _extract_full_content(
+        self, url: str, source_key: str
+    ) -> tuple[str, Optional[str]]:
         """
-        Extract full article text content and image from article URL.
-
-        Args:
-            url: Article URL to fetch
-            source_key: Source identifier (kooora)
+        Extract full article text and image from article URL.
 
         Returns:
-            Tuple of (full article text content, image URL or None)
-
-        DESIGN: Kooora.com has specific HTML structure
-        Use specific selectors to extract article content and images
+            Tuple of (full text, image URL)
         """
         if not url or not self.session:
             return ("Content unavailable", None)
@@ -535,13 +319,11 @@ class SoccerScraper:
                 if response.status != 200:
                     return ("Could not fetch article content", None)
 
-                html: str = await response.text()
-                soup: BeautifulSoup = BeautifulSoup(html, "html.parser")
+                html = await response.text()
+                soup = BeautifulSoup(html, "html.parser")
 
-                # DESIGN: Extract first article image
+                # Extract image
                 image_url: Optional[str] = None
-
-                # Try to find image in article content areas
                 article_div = (
                     soup.find("div", class_="article-content")
                     or soup.find("article")
@@ -549,55 +331,39 @@ class SoccerScraper:
                 )
 
                 if article_div:
-                    # Find first img tag with a valid src
                     img_tags = article_div.find_all("img")
                     for img in img_tags:
                         src = img.get("src") or img.get("data-src")
                         if src and any(ext in src.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"]):
-                            # Make URL absolute if it's relative
-                            if src.startswith("//"):
-                                image_url = "https:" + src
-                            elif src.startswith("/"):
-                                from urllib.parse import urlparse
-                                parsed = urlparse(url)
-                                image_url = f"{parsed.scheme}://{parsed.netloc}{src}"
-                            else:
-                                image_url = src
+                            image_url = self._make_url_absolute(src, url)
                             break
 
-                # DESIGN: Kooora-specific content extraction
-                # Kooora.com new URL format uses div.fco-article-body for article content
-                content_text: str = ""
+                # Extract content - Kooora specific
+                content_text = ""
 
                 if source_key == "kooora":
-                    # Kooora: New URL format - article content in div.fco-article-body
                     article_body = soup.find("div", class_="fco-article-body")
 
                     if article_body:
-                        # Get all paragraphs from the article body
                         paragraphs = article_body.find_all("p")
                         content_text = "\n\n".join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
 
-                    # Fallback: Try main tag (new Kooora structure)
+                    # Fallback: Try main tag
                     if not content_text:
                         main_tag = soup.find("main")
                         if main_tag:
                             paragraphs = main_tag.find_all("p")
-                            # Filter paragraphs with substantial content (>50 chars)
                             content_paragraphs = [p for p in paragraphs if len(p.get_text().strip()) > 50]
                             content_text = "\n\n".join([p.get_text().strip() for p in content_paragraphs])
 
-                # DESIGN: Generic fallback - try common article tags
-                # This should rarely be needed since Kooora URLs now use consistent structure
+                # Generic fallback
                 if not content_text:
                     article = soup.find("article") or soup.find("div", class_=lambda x: x and "content" in x.lower())
                     if article:
                         paragraphs = article.find_all("p")
                         content_text = "\n\n".join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
 
-                # Clean content (no truncation - AI will summarize)
                 if content_text:
-                    # Remove extra whitespace
                     content_text = "\n\n".join(line.strip() for line in content_text.split("\n") if line.strip())
                     logger.info(f"⚽ Extracted from {url} - Image: {image_url[:50] if image_url else 'None'}")
                     return (content_text, image_url)
@@ -611,122 +377,52 @@ class SoccerScraper:
             logger.warning(f"Failed to extract soccer content from {url}: {str(e)[:100]}")
             return ("Content extraction failed", None)
 
-    def _generate_ai_title(self, original_title: str, content: str) -> str:
+    def _make_url_absolute(self, url_str: str, base_url: str) -> str:
+        """Convert relative URL to absolute URL."""
+        if url_str.startswith("//"):
+            return f"https:{url_str}"
+        elif url_str.startswith("/"):
+            from urllib.parse import urlparse
+            parsed = urlparse(base_url)
+            return f"{parsed.scheme}://{parsed.netloc}{url_str}"
+        elif url_str.startswith("http"):
+            return url_str
+        else:
+            from urllib.parse import urljoin
+            return urljoin(base_url, url_str)
+
+    async def _generate_soccer_title(self, original_title: str, content: str) -> str:
         """
-        Generate a concise 3-5 word English title using OpenAI GPT-3.5-turbo.
+        Generate a concise 3-5 word English title for soccer articles.
 
         Args:
             original_title: Original article title (may be in Arabic)
             content: Article content for context
 
         Returns:
-            Generated English title (3-5 words) or original if AI fails
-
-        DESIGN: Use AI to create clean, readable English titles for soccer news
-        Original titles may be in Arabic or too long
-        AI creates short, descriptive English titles for Discord forum posts
+            Generated English title or original if AI fails
         """
         if not self.openai_client:
-            logger.warning("OpenAI client not initialized - using original title")
             return original_title
 
         try:
-            content_snippet: str = content[:500] if len(content) > 500 else content
-
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a sports headline writer specializing in soccer/football news. Create concise, clear English titles for soccer articles. Your titles must be EXACTLY 3-5 words, in English only, and capture the main soccer topic (teams, players, matches, transfers, etc.)."
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Create a 3-5 word English title for this soccer article.\n\nOriginal title: {original_title}\n\nContent: {content_snippet}\n\nRespond with ONLY the title, nothing else."
-                    }
-                ],
+            response = await self._call_openai(
+                system_prompt="You are a sports headline writer specializing in soccer/football news. Create concise, clear English titles for soccer articles. Your titles must be EXACTLY 3-5 words, in English only, and capture the main soccer topic.",
+                user_prompt=f"Create a 3-5 word English title for this soccer article.\n\nOriginal title: {original_title}\n\nContent: {content[:500]}\n\nRespond with ONLY the title.",
                 max_tokens=20,
                 temperature=0.7,
             )
 
-            ai_title: str = response.choices[0].message.content.strip()
-
-            # DESIGN: Validate AI response
+            ai_title = response.strip()
             if ai_title and 3 <= len(ai_title.split()) <= 7:
-                logger.info(f"⚽ AI generated soccer title: '{ai_title}' from '{original_title[:50]}'")
+                logger.info(f"⚽ AI generated soccer title: '{ai_title}'")
                 return ai_title
-            else:
-                logger.warning(f"AI soccer title invalid: '{ai_title}' - using original")
-                return original_title
-
+            return original_title
         except Exception as e:
             logger.warning(f"Failed to generate AI soccer title: {str(e)[:100]}")
             return original_title
 
-    def _generate_bilingual_summary(self, content: str) -> tuple[str, str]:
-        """
-        Generate bilingual summaries (Arabic and English) using OpenAI GPT-3.5-turbo.
-
-        Args:
-            content: Full article content
-
-        Returns:
-            Tuple of (arabic_summary, english_summary)
-
-        DESIGN: Create concise summaries in both languages for Syrian soccer fans
-        Arabic summary comes first (primary language)
-        English summary second (for international readers)
-        Each summary is 3-4 sentences, capturing key points
-        """
-        if not self.openai_client:
-            logger.warning("OpenAI client not initialized - using truncated content")
-            truncated: str = content[:300] + "..." if len(content) > 300 else content
-            return (truncated, truncated)
-
-        try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a bilingual sports news summarizer for soccer/football articles. Create comprehensive summaries in both Arabic and English. Read the FULL article content and capture ALL important details including: key facts, player/team quotes, context, significance, and any important statements. NEVER omit important context or quotes. Make the summary as long as needed to convey the full story, but stay under Discord's character limit."
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Summarize this soccer article in both Arabic and English. IMPORTANT: Include ALL important context, quotes, and details from the article. Don't truncate or leave out key information that readers need to understand the full story.\n\nFormat your response EXACTLY as:\n\nARABIC:\n[Comprehensive Arabic summary with ALL key context and quotes]\n\nENGLISH:\n[Comprehensive English summary with ALL key context and quotes]\n\nArticle content:\n{content}"
-                    }
-                ],
-                temperature=0.7,
-            )
-
-            result: str = response.choices[0].message.content.strip()
-
-            # DESIGN: Parse AI response to extract Arabic and English summaries
-            arabic_summary: str = ""
-            english_summary: str = ""
-
-            if "ARABIC:" in result and "ENGLISH:" in result:
-                parts: list[str] = result.split("ENGLISH:")
-                arabic_part: str = parts[0].replace("ARABIC:", "").strip()
-                english_part: str = parts[1].strip()
-
-                arabic_summary = arabic_part
-                english_summary = english_part
-
-                logger.info(f"⚽ Generated bilingual soccer summaries (AR: {len(arabic_summary)} chars, EN: {len(english_summary)} chars)")
-            else:
-                logger.warning("AI soccer summary format invalid - using truncated content")
-                truncated: str = content[:300] + "..." if len(content) > 300 else content
-                return (truncated, truncated)
-
-            return (arabic_summary, english_summary)
-
-        except Exception as e:
-            logger.warning(f"Failed to generate bilingual soccer summary: {str(e)[:100]}")
-            truncated: str = content[:300] + "..." if len(content) > 300 else content
-            return (truncated, truncated)
-
-    def _detect_team_tag(self, title: str, content: str) -> str:
+    async def _detect_team_tag(self, title: str, content: str) -> str:
         """
         Detect which team the article is primarily about using AI.
 
@@ -735,48 +431,29 @@ class SoccerScraper:
             content: Article content
 
         Returns:
-            Team name string matching one of TEAM_CATEGORIES, defaults to "International"
-
-        DESIGN: Use AI to categorize articles by primary team mentioned
-        Helps organize soccer forum channel with proper team tags
-        AI analyzes title and content to determine the main team focus
-        Falls back to "International" for general news or multi-team articles
+            Team name string matching one of TEAM_CATEGORIES
         """
         if not self.openai_client:
-            logger.warning("OpenAI client not initialized - using International tag")
             return "International"
 
         try:
-            teams_list: str = ", ".join(self.TEAM_CATEGORIES)
-            content_snippet: str = content[:800] if len(content) > 800 else content
+            teams_list = ", ".join(self.TEAM_CATEGORIES)
 
-            response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": f"You are a soccer news categorization expert. Analyze articles and determine which team they are primarily about. You must respond with EXACTLY ONE of these team names: {teams_list}. If the article is about multiple teams, international soccer, World Cup, or general soccer news, respond with 'International'. If it's about Champions League in general, respond with 'Champions League'."
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Which team is this soccer article primarily about? Respond with ONLY the team name from the list provided.\n\nTitle: {title}\n\nContent: {content_snippet}"
-                    }
-                ],
+            response = await self._call_openai(
+                system_prompt=f"You are a soccer news categorization expert. Analyze articles and determine which team they are primarily about. You must respond with EXACTLY ONE of these team names: {teams_list}. If the article is about multiple teams, international soccer, or general news, respond with 'International'.",
+                user_prompt=f"Which team is this soccer article primarily about? Respond with ONLY the team name.\n\nTitle: {title}\n\nContent: {content[:800]}",
                 max_tokens=10,
-                temperature=0.3,  # Low temperature for consistent categorization
+                temperature=0.3,
             )
 
-            detected_team: str = response.choices[0].message.content.strip()
-
-            # DESIGN: Validate AI response against known team categories
-            # Ensure returned team name exactly matches one of our categories
+            detected_team = response.strip()
             if detected_team in self.TEAM_CATEGORIES:
-                logger.info(f"⚽ Detected team tag: '{detected_team}' for article '{title[:40]}'")
+                logger.info(f"⚽ Detected team tag: '{detected_team}'")
                 return detected_team
             else:
                 logger.warning(f"AI returned invalid team '{detected_team}' - using International")
                 return "International"
 
         except Exception as e:
-            logger.warning(f"Failed to detect team tag: {str(e)[:100]} - using International")
+            logger.warning(f"Failed to detect team tag: {str(e)[:100]}")
             return "International"
