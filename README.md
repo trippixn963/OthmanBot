@@ -1,259 +1,199 @@
-# 📰 Othman News Bot
+# 📰 OthmanBot - Automated News Discord Bot
 
-[![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Discord.py](https://img.shields.io/badge/discord.py-2.3.2-blue.svg)](https://github.com/Rapptz/discord.py)
-[![Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+<div align="center">
 
-**Fully automated** Discord bot that posts hourly Syrian news updates with images and creates discussion threads.
+![Python](https://img.shields.io/badge/Python-3.12-blue.svg)
+![Discord.py](https://img.shields.io/badge/Discord.py-2.3.2+-green.svg)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--3.5-orange.svg)
 
-Built with ❤️ for **discord.gg/syria**
+**Fully automated multilingual news posting with AI-generated summaries**
+
+*Built for discord.gg/syria*
+
+[![Join Discord Server](https://img.shields.io/badge/Join%20Server-discord.gg/syria-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/syria)
+
+</div>
+
+---
+
+## 🎯 What is OthmanBot?
+
+A fully automated Discord bot that posts hourly news updates from multiple sources with AI-generated bilingual summaries (Arabic/English). Covers Syrian news, soccer/football, and gaming across three separate channels.
+
+**⚠️ Custom-built for discord.gg/syria • No support provided**
 
 ---
 
 ## ✨ Features
 
-- 🤖 **100% Automated** - No commands, no manual intervention needed
-- 📡 **Multi-Source News** - Fetches from Enab Baladi, Al Jazeera Arabic, Syrian Observer
-- ⏰ **Hourly Posts** - Automatic posting on the hour, every hour
-- 🖼️ **Rich Embeds** - Beautiful news embeds with article images
-- 💬 **Auto Threads** - Creates discussion threads for each article
-- 🚫 **Smart Filtering** - Duplicate detection, never posts same article twice
-- 🔄 **Self-Healing** - Continues running even if one post fails
+- 🤖 **100% Automated** - Zero commands, runs 24/7 autonomously
+- 🌍 **Bilingual Summaries** - AI-generated Arabic and English summaries
+- 📰 **Multi-Content** - News, Soccer, Gaming on separate schedules
+- 🖼️ **Rich Media** - Images and videos embedded in forum posts
+- 💬 **Forum Threads** - Auto-creates discussion threads with category tags
+- 🔔 **Announcements** - Sends notification embeds to general channel
+- 🧠 **Smart Caching** - AI response caching to reduce API costs
+- 🔄 **Self-Healing** - Exponential backoff retry on failures
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Clone and Install
-
 ```bash
-git clone https://github.com/yourusername/OthmanBot.git
+# Clone and setup
+git clone https://github.com/trippixn963/OthmanBot.git
 cd OthmanBot
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-```
 
-### 2. Configure
-
-```bash
+# Configure
 cp .env.example .env
-# Edit .env and add your bot token and channel ID
-```
+# Edit .env with your tokens and IDs
 
-Required settings in `.env`:
-```env
-DISCORD_TOKEN=your_bot_token_here
-NEWS_CHANNEL_ID=1234567890123456789
-```
-
-### 3. Run
-
-```bash
+# Run
 python main.py
 ```
-
-**That's it!** The bot starts posting news automatically.
-
----
-
-## 🤖 How It Works
-
-1. **Bot starts** → Connects to Discord
-2. **Scheduler begins** → Calculates next hour (:00 minutes)
-3. **Fetches news** → Scrapes latest Syrian news from 3 sources
-4. **Filters content** → Removes duplicates and old articles
-5. **Posts automatically** → Creates embeds with images and threads
-6. **Repeats** → Waits until next hour, repeats steps 3-5
-
-**Zero interaction required** - Bot runs 24/7 with no manual control needed.
-
----
-
-## 📦 Project Structure
-
-```
-OthmanBot/
-├── main.py                     # Entry point
-├── requirements.txt            # Dependencies
-├── .env                        # Configuration (create from .env.example)
-├── .env.example               # Configuration template
-├── .gitignore                 # Git ignore rules
-├── data/                      # Runtime data (scheduler state)
-├── logs/                      # Log files
-└── src/
-    ├── __init__.py
-    ├── bot.py                 # Main bot class (fully automated)
-    ├── core/
-    │   ├── __init__.py
-    │   └── logger.py          # Custom logging with EST timezone
-    ├── services/
-    │   ├── __init__.py
-    │   ├── news_scraper.py    # RSS feed scraping
-    │   └── news_scheduler.py  # Hourly scheduling
-    ├── handlers/
-    │   └── __init__.py
-    └── utils/
-        └── __init__.py
-```
-
----
-
-## 🗞️ News Sources
-
-- **🍇 Enab Baladi** (Primary) - Syria-focused independent journalism
-  - RSS: https://www.enabbaladi.net/feed/
-  - Language: Arabic/English
-
-- **📡 Al Jazeera Arabic** - Major network coverage
-  - RSS: https://www.aljazeera.net/xml/rss/all.xml
-  - Language: Arabic
-
-- **📰 Syrian Observer** - English alternative
-  - RSS: https://syrianobserver.com/feed/
-  - Language: English
 
 ---
 
 ## ⚙️ Configuration
 
-### Environment Variables
+Essential environment variables in `.env`:
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DISCORD_TOKEN` | ✅ Yes | Your Discord bot token |
-| `NEWS_CHANNEL_ID` | ✅ Yes | Channel ID where news will be posted |
+```env
+# Discord
+DISCORD_TOKEN=your_bot_token
+DEVELOPER_ID=your_user_id
 
-### Getting Channel ID
+# OpenAI
+OPENAI_API_KEY=your_api_key
 
-1. Enable Developer Mode in Discord (User Settings → Advanced → Developer Mode)
-2. Right-click the channel → Copy ID
-
-### Bot Permissions
-
-The bot needs these Discord permissions:
-- Send Messages
-- Embed Links
-- Create Public Threads
-- Read Message History
-
----
-
-## 📊 Automation Details
-
-### Posting Schedule
-
-- Posts at **:00 minutes** of every hour (1:00 PM, 2:00 PM, 3:00 PM, etc.)
-- Fetches **up to 3 articles** per post
-- Looks back **24 hours** for recent news
-- **2-second delay** between multiple articles (Discord rate limit compliance)
-
-### Duplicate Prevention
-
-- Caches last **1000 article URLs** in memory
-- Articles are filtered by URL before posting
-- Prevents same article from appearing twice
-
-### Thread Management
-
-- Auto-creates discussion thread for each article
-- Thread name: First 100 characters of article title
-- Auto-archives after **24 hours** of inactivity
-
-### State Persistence
-
-- Scheduler state saved to `data/scheduler_state.json`
-- Bot resumes automatically after restart
-- No configuration loss on reboot
-
----
-
-## 🛠️ Development
-
-### Code Style
-
-This project uses [Black](https://github.com/psf/black) for code formatting:
-
-```bash
-python3 -m black .
+# Channels (Forum channels)
+NEWS_CHANNEL_ID=news_forum_channel
+SOCCER_CHANNEL_ID=soccer_forum_channel
+GAMING_CHANNEL_ID=gaming_forum_channel
+GENERAL_CHANNEL_ID=announcements_channel
 ```
 
-### Type Hints
-
-All code follows Python 3.12+ type hint standards with comprehensive annotations.
-
-### Design Comments
-
-Architecture decisions are explained with `# DESIGN:` comments throughout the codebase.
+**Discord Bot Setup:**
+- Enable "Message Content Intent"
+- Invite bot with permissions: Send Messages, Manage Messages, Create Public Threads, Embed Links
 
 ---
 
-## 🐛 Troubleshooting
+## 📅 Posting Schedule
 
-### Bot doesn't post news
+| Content | Time | Frequency |
+|---------|------|-----------|
+| 📰 News | :00 | Hourly |
+| ⚽ Soccer | :20 | Hourly |
+| 🎮 Gaming | :40 | Hourly |
 
-- **Check `NEWS_CHANNEL_ID`** is correct in `.env`
-- **Verify bot permissions**: Send Messages, Embed Links, Create Threads
-- **Check logs**: `logs/othman_YYYY-MM-DD.log` for errors
-- **RSS feeds down?** Wait 5-10 minutes and check again
-
-### No threads created
-
-- **Bot needs** "Create Public Threads" permission
-- **Check logs** for specific error messages
-
-### Bot crashes on startup
-
-- **Missing `DISCORD_TOKEN`** in `.env`
-- **Invalid token** - regenerate from Discord Developer Portal
-- **Python version** - Requires Python 3.12+
+Each post includes:
+- AI-generated 3-5 word English title
+- Bilingual summary (Arabic + English)
+- Source image/video
+- Category tags
+- Announcement embed in general channel
 
 ---
 
-## 📈 Monitoring
+## 🗞️ News Sources
 
-### Bot Status
+**Syrian News:**
+- 🍇 Enab Baladi - Syria-focused independent journalism
 
-Bot presence shows **next post time**:
-- Example: "Watching Next post: 3:00 PM"
-- Updates automatically after each post
+**Soccer:**
+- ⚽ Kooora - Arabic football/soccer news
 
-### Logs
-
-All activity logged to `logs/` directory:
-- **Format**: `othman_YYYY-MM-DD.log`
-- **Timezone**: Eastern Standard Time (EST/EDT)
-- **Rotation**: New file daily
+**Gaming:**
+- 🎮 This Week in Videogames - Gaming industry news
 
 ---
 
-## 🤝 Contributing
+## 🏗️ Structure
 
-This bot follows the same structure and quality standards as TahaBot and AzabBot. When contributing:
+```
+OthmanBot/
+├── src/
+│   ├── bot.py                    # Main bot (posting logic)
+│   ├── core/
+│   │   └── logger.py             # Custom EST logging
+│   ├── services/
+│   │   ├── news_scraper.py       # News RSS scraping + AI
+│   │   ├── news_scheduler.py     # Hourly news scheduler
+│   │   ├── soccer_scraper.py     # Soccer RSS scraping + AI
+│   │   ├── soccer_scheduler.py   # Hourly soccer scheduler
+│   │   ├── gaming_scraper.py     # Gaming RSS scraping + AI
+│   │   └── gaming_scheduler.py   # Hourly gaming scheduler
+│   ├── utils/
+│   │   ├── ai_cache.py           # AI response caching
+│   │   └── retry.py              # Exponential backoff
+│   └── data/
+│       └── team_tags.py          # Soccer team tag mappings
+├── data/                         # Runtime data & caches
+├── logs/                         # Log files
+├── main.py                       # Entry point
+└── requirements.txt              # Dependencies
+```
 
-- Use Black formatting (88 char limit, double quotes)
-- Add comprehensive type hints (Python 3.12+ syntax)
-- Include `# DESIGN:` comments for architectural decisions
-- Follow existing file header format with author attribution
+**Tech Stack:** discord.py, OpenAI GPT-3.5, feedparser, BeautifulSoup, aiohttp
 
 ---
 
-## 📄 License
+## 🔧 How It Works
 
-This project is open source and available for use.
+1. **Startup** - Loads caches, initializes scrapers and schedulers
+2. **Scheduling** - Three independent schedulers for :00, :20, :40
+3. **Fetching** - Scrapes RSS feeds for latest articles
+4. **AI Processing** - Generates titles and bilingual summaries
+5. **Posting** - Creates forum thread with media and tags
+6. **Announcing** - Sends embed to general channel
+7. **Caching** - Marks article as posted, saves AI responses
+8. **Repeat** - Waits for next scheduled time
 
 ---
 
-## 👤 Author
+## 📊 Features Detail
+
+### AI-Generated Content
+- **Titles**: Concise 3-5 word English titles
+- **Summaries**: 200-350 character bilingual summaries
+- **Caching**: Responses cached to reduce API costs
+
+### Forum Posts
+- Beautiful formatted content with key quote
+- Arabic (🇸🇾) and English (🇬🇧) sections
+- Source attribution and publish date
+- Auto-applied category tags
+
+### Announcements
+- Teaser embed sent to general channel
+- "Read Full Article" button linking to forum thread
+- Color-coded: Blue (news), Green (soccer), Purple (gaming)
+
+### Smart Deduplication
+- Article ID extraction from URLs
+- Persistent cache across restarts
+- Prevents duplicate posts
+
+---
+
+## ⚠️ Disclaimer
+
+Educational purposes only. No support provided. Use at own risk.
+
+---
+
+## 👨‍💻 Author
+
+<div align="center">
 
 **حَـــــنَّـــــا**
-Discord: discord.gg/syria
 
----
+*Built with ❤️ for discord.gg/syria*
 
-## 🙏 Acknowledgments
+[![Discord](https://img.shields.io/badge/Discord-discord.gg/syria-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/syria)
 
-- Built with [discord.py](https://github.com/Rapptz/discord.py)
-- RSS parsing with [feedparser](https://github.com/kurtmckee/feedparser)
-- HTML parsing with [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/)
-- News sources: Enab Baladi, Al Jazeera Arabic, Syrian Observer
+</div>
