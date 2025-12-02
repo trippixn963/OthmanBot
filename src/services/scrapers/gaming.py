@@ -36,6 +36,10 @@ from src.core.logger import logger
 from src.utils import AICache
 
 
+# =============================================================================
+# Data Classes
+# =============================================================================
+
 @dataclass
 class GamingArticle:
     """Represents a gaming news article with all necessary information."""
@@ -52,6 +56,10 @@ class GamingArticle:
     source_emoji: str = ""
     game_category: Optional[str] = None  # AI-detected game/platform tag for categorization
 
+
+# =============================================================================
+# Gaming Scraper Class
+# =============================================================================
 
 class GamingScraper:
     """Scrapes gaming news from This Week in Videogames."""
@@ -120,6 +128,10 @@ class GamingScraper:
         # Especially useful during backfill operations (7-day lookback)
         self.ai_cache: AICache = AICache("data/gaming_ai_cache.json")
 
+    # -------------------------------------------------------------------------
+    # Async Context Manager
+    # -------------------------------------------------------------------------
+
     async def __aenter__(self) -> "GamingScraper":
         """Async context manager entry."""
         # DESIGN: Use browser-like headers to avoid 403 Forbidden errors
@@ -140,6 +152,10 @@ class GamingScraper:
         """Async context manager exit."""
         if self.session:
             await self.session.close()
+
+    # -------------------------------------------------------------------------
+    # URL Tracking Methods
+    # -------------------------------------------------------------------------
 
     @staticmethod
     def _extract_article_id(url: str) -> str:
@@ -213,6 +229,10 @@ class GamingScraper:
         except Exception as e:
             logger.warning(f"Failed to save posted gaming article IDs: {e}")
 
+    # -------------------------------------------------------------------------
+    # Public Methods
+    # -------------------------------------------------------------------------
+
     async def fetch_latest_gaming_news(
         self, max_articles: int = 5, hours_back: int = 168
     ) -> List[GamingArticle]:
@@ -274,6 +294,10 @@ class GamingScraper:
         except Exception as e:
             logger.warning(f"Failed to fetch gaming news: {str(e)[:100]}")
             return []
+
+    # -------------------------------------------------------------------------
+    # Private Methods - RSS Fetching
+    # -------------------------------------------------------------------------
 
     async def _fetch_from_source(
         self,
@@ -421,6 +445,10 @@ class GamingScraper:
                 continue
 
         return articles
+
+    # -------------------------------------------------------------------------
+    # Private Methods - Content Extraction
+    # -------------------------------------------------------------------------
 
     def _parse_date(self, entry: feedparser.FeedParserDict) -> Optional[datetime]:
         """Parse publication date from RSS entry."""
@@ -575,6 +603,10 @@ class GamingScraper:
         except Exception as e:
             logger.warning(f"Failed to extract gaming content from {url}: {str(e)[:100]}")
             return ("Content extraction failed", None)
+
+    # -------------------------------------------------------------------------
+    # Private Methods - AI Generation
+    # -------------------------------------------------------------------------
 
     def _generate_ai_title(self, original_title: str, content: str) -> str:
         """Generate a concise 3-5 word English title using OpenAI GPT-3.5-turbo."""

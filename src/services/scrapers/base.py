@@ -28,6 +28,10 @@ from src.core.logger import logger
 from src.utils import AICache
 
 
+# =============================================================================
+# Article Dataclass
+# =============================================================================
+
 @dataclass
 class Article:
     """
@@ -51,6 +55,10 @@ class Article:
     team_tag: Optional[str] = None  # Soccer team tag
     game_category: Optional[str] = None  # Gaming category
 
+
+# =============================================================================
+# Base Scraper Class
+# =============================================================================
 
 class BaseScraper:
     """
@@ -113,6 +121,10 @@ class BaseScraper:
         """Async context manager exit."""
         if self.session:
             await self.session.close()
+
+    # -------------------------------------------------------------------------
+    # URL Deduplication
+    # -------------------------------------------------------------------------
 
     @staticmethod
     def _extract_article_id(url: str) -> str:
@@ -206,6 +218,10 @@ class BaseScraper:
         article_id: str = self._extract_article_id(url)
         return article_id in self.fetched_urls
 
+    # -------------------------------------------------------------------------
+    # AI Generation Methods
+    # -------------------------------------------------------------------------
+
     async def _generate_title(self, original_title: str, content: str) -> str:
         """
         Generate an English title using AI.
@@ -228,7 +244,7 @@ class BaseScraper:
 
         try:
             response = await self._call_openai(
-                system_prompt="You are a news headline writer. Generate a concise, engaging English title (3-7 words) for this article. Return ONLY the title, no quotes or explanation.",
+                system_prompt="You are a news headline writer. Generate a concise, engaging title in ENGLISH ONLY (3-7 words) for this article. IMPORTANT: The title MUST be in English, not Arabic. Translate Arabic titles to English. Return ONLY the English title, no quotes or explanation.",
                 user_prompt=f"Original title: {original_title}\n\nContent preview: {content[:500]}",
                 max_tokens=50,
                 temperature=0.7,
@@ -257,8 +273,24 @@ class BaseScraper:
         Returns:
             Tuple of (arabic_summary, english_summary)
         """
+        # Fallback function to create summaries from raw content
+        def create_fallback_summaries() -> tuple[str, str]:
+            """Create basic summaries from raw content when AI is unavailable."""
+            # Clean and truncate content
+            clean_content = content.strip()
+
+            # Create a simple truncated summary
+            if len(clean_content) > max_length:
+                fallback = clean_content[:max_length - 3] + "..."
+            else:
+                fallback = clean_content
+
+            logger.info(f"Using fallback summary (AI unavailable) - {len(fallback)} chars")
+            return (fallback, fallback)  # Return same content for both languages
+
         if not self.openai_client:
-            return ("", "")
+            logger.warning("OpenAI client not initialized - using fallback summaries")
+            return create_fallback_summaries()
 
         # Check cache first
         cache_key: str = f"summary_{content[:200]}"
@@ -270,15 +302,18 @@ class BaseScraper:
 
         try:
             response = await self._call_openai(
-                system_prompt=f"""You are a news summarizer. Generate comprehensive, detailed summaries of this article in both Arabic and English.
+                system_prompt=f"""You are a news summarizer. Generate complete, standalone summaries of this article in both Arabic and English.
 
-Requirements:
-- Each summary MUST be {min_length}-{max_length} characters
-- NEVER write summaries under {min_length} characters
-- Include: what happened, who is involved, why it matters, key context
-- Arabic summary first, then English
+CRITICAL REQUIREMENTS:
+- Each summary MUST be {min_length}-{max_length} characters (count carefully!)
+- Summaries MUST be COMPLETE - end with a proper conclusion, never mid-sentence
+- DO NOT exceed {max_length} characters - write concisely to fit within the limit
+- Include: what happened, who is involved, why it matters
+- Arabic summary first, then English translation of the same content
 - Separate with "|||"
-- Format: Arabic summary|||English summary""",
+- Format: Arabic summary|||English summary
+
+The English summary should be a direct translation of the Arabic summary to maintain consistency.""",
                 user_prompt=f"Article content:\n\n{content}",
                 max_tokens=800,
                 temperature=0.7,
@@ -299,10 +334,13 @@ Requirements:
                 self.ai_cache.set(cache_key, f"{arabic}|||{english}")
                 return (arabic, english)
 
-            return ("", "")
+            # AI returned invalid format - use fallback
+            logger.warning("AI returned invalid summary format - using fallback")
+            return create_fallback_summaries()
+
         except Exception as e:
-            logger.warning(f"Failed to generate summaries: {e}")
-            return ("", "")
+            logger.warning(f"Failed to generate summaries: {e} - using fallback")
+            return create_fallback_summaries()
 
     async def _call_openai(
         self,
@@ -341,3 +379,10 @@ Requirements:
         )
 
         return response.choices[0].message.content.strip()
+
+
+# =============================================================================
+# Module Export
+# =============================================================================
+
+__all__ = ["Article", "BaseScraper"]

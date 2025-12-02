@@ -1,53 +1,38 @@
 """
-Othman Discord Bot - AI Response Cache
-=======================================
+Othman Discord Bot - AI Cache Utility
+======================================
 
-Caches OpenAI API responses to reduce costs and API calls.
-
-Features:
-- Caches article titles, summaries, and team tags
-- Persistent JSON storage
-- Automatic cleanup of old entries (90 days)
-- Thread-safe operations
-- Memory-efficient design
+JSON-based cache for AI-generated responses to reduce API costs.
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
 import json
-from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional
 
 from src.core.logger import logger
 
 
 class AICache:
-    """Manages caching of AI-generated content to reduce API costs."""
+    """
+    Simple JSON-based cache for AI responses.
 
-    def __init__(self, cache_file: str = "data/ai_cache.json") -> None:
+    Stores AI-generated content (titles, summaries) to avoid
+    redundant OpenAI API calls for the same content.
+    """
+
+    def __init__(self, filename: str) -> None:
         """
         Initialize the AI cache.
 
         Args:
-            cache_file: Path to cache file (default: data/ai_cache.json)
+            filename: Path to JSON cache file (e.g., "data/news_ai_cache.json")
         """
-        self.cache_file: Path = Path(cache_file)
+        self.cache_file: Path = Path(filename)
         self.cache_file.parent.mkdir(exist_ok=True)
-
-        # DESIGN: Cache structure with separate sections for different AI operations
-        # This allows easy retrieval and cleanup of specific types
-        self.cache: Dict[str, Dict[str, Any]] = {
-            "titles": {},  # article_id -> {arabic_title, english_title, timestamp}
-            "summaries": {},  # article_id -> {arabic_summary, english_summary, timestamp}
-            "team_tags": {},  # article_id -> {team, timestamp}
-        }
-
-        # DESIGN: 90-day cache TTL - balance between cost savings and freshness
-        # Articles older than 90 days are unlikely to be seen again
-        self.cache_ttl_days: int = 90
-
+        self.cache: dict[str, str] = {}
         self._load_cache()
 
     def _load_cache(self) -> None:
@@ -55,28 +40,11 @@ class AICache:
         try:
             if self.cache_file.exists():
                 with open(self.cache_file, "r", encoding="utf-8") as f:
-                    loaded_cache: Dict[str, Any] = json.load(f)
-
-                # DESIGN: Validate cache structure and merge with defaults
-                # This ensures backward compatibility if cache format changes
-                for key in self.cache.keys():
-                    if key in loaded_cache:
-                        self.cache[key] = loaded_cache[key]
-
-                logger.info(
-                    f"💾 Loaded AI cache: "
-                    f"{len(self.cache['titles'])} titles, "
-                    f"{len(self.cache['summaries'])} summaries, "
-                    f"{len(self.cache['team_tags'])} team tags"
-                )
-
-                # DESIGN: Clean up expired entries on load
-                # Prevents cache from growing indefinitely
-                self._cleanup_expired()
-
+                    self.cache = json.load(f)
+                logger.debug(f"Loaded {len(self.cache)} cached AI responses")
         except Exception as e:
             logger.warning(f"Failed to load AI cache: {e}")
-            logger.info("Starting with fresh AI cache")
+            self.cache = {}
 
     def _save_cache(self) -> None:
         """Save cache to disk."""
@@ -86,150 +54,133 @@ class AICache:
         except Exception as e:
             logger.warning(f"Failed to save AI cache: {e}")
 
-    def _cleanup_expired(self) -> None:
-        """Remove entries older than cache_ttl_days."""
-        try:
-            cutoff_date: datetime = datetime.now() - timedelta(
-                days=self.cache_ttl_days
-            )
-            cutoff_timestamp: str = cutoff_date.isoformat()
-
-            removed_count: int = 0
-
-            # DESIGN: Clean up each cache section separately
-            # Check timestamp and remove if expired
-            for section in self.cache.values():
-                expired_keys: list[str] = [
-                    key
-                    for key, value in section.items()
-                    if value.get("timestamp", "") < cutoff_timestamp
-                ]
-
-                for key in expired_keys:
-                    del section[key]
-                    removed_count += 1
-
-            if removed_count > 0:
-                logger.info(
-                    f"🧹 Cleaned up {removed_count} expired AI cache entries "
-                    f"(older than {self.cache_ttl_days} days)"
-                )
-                self._save_cache()
-
-        except Exception as e:
-            logger.warning(f"Failed to cleanup AI cache: {e}")
-
-    def get_title(self, article_id: str) -> Optional[Dict[str, str]]:
+    def get(self, key: str) -> Optional[str]:
         """
-        Get cached title for article.
+        Get a cached value.
 
         Args:
-            article_id: Article identifier
+            key: Cache key
 
         Returns:
-            Dict with arabic_title and english_title, or None if not cached
+            Cached value or None if not found
         """
-        cached: Optional[Dict[str, Any]] = self.cache["titles"].get(article_id)
-        if cached:
-            return {
-                "arabic_title": cached["arabic_title"],
-                "english_title": cached["english_title"],
-            }
-        return None
+        return self.cache.get(key)
 
-    def cache_title(
-        self, article_id: str, arabic_title: str, english_title: str
-    ) -> None:
+    def set(self, key: str, value: str) -> None:
         """
-        Cache AI-generated title.
+        Set a cache value.
 
         Args:
-            article_id: Article identifier
-            arabic_title: Original Arabic title
-            english_title: AI-generated English title
+            key: Cache key
+            value: Value to cache
         """
-        self.cache["titles"][article_id] = {
-            "arabic_title": arabic_title,
-            "english_title": english_title,
-            "timestamp": datetime.now().isoformat(),
-        }
+        self.cache[key] = value
         self._save_cache()
 
-    def get_summary(self, article_id: str) -> Optional[Dict[str, str]]:
+    def clear(self) -> None:
+        """Clear all cached values."""
+        self.cache = {}
+        self._save_cache()
+        logger.info("AI cache cleared")
+
+    # -------------------------------------------------------------------------
+    # Title Cache Methods
+    # -------------------------------------------------------------------------
+
+    def get_title(self, article_id: str) -> Optional[dict[str, str]]:
         """
-        Get cached summary for article.
+        Get cached title for an article.
 
         Args:
-            article_id: Article identifier
+            article_id: Unique article identifier
 
         Returns:
-            Dict with arabic_summary and english_summary, or None if not cached
+            Dict with 'original_title' and 'english_title' keys, or None if not cached
         """
-        cached: Optional[Dict[str, Any]] = self.cache["summaries"].get(article_id)
+        key = f"title:{article_id}"
+        cached = self.cache.get(key)
         if cached:
-            return {
-                "arabic_summary": cached["arabic_summary"],
-                "english_summary": cached["english_summary"],
-            }
+            parts = cached.split("|||", 1)
+            if len(parts) == 2:
+                return {"original_title": parts[0], "english_title": parts[1]}
         return None
 
-    def cache_summary(
-        self, article_id: str, arabic_summary: str, english_summary: str
-    ) -> None:
+    def cache_title(self, article_id: str, original_title: str, ai_title: str) -> None:
         """
-        Cache AI-generated summary.
+        Cache title for an article.
 
         Args:
-            article_id: Article identifier
-            arabic_summary: AI-generated Arabic summary
-            english_summary: AI-generated English summary
+            article_id: Unique article identifier
+            original_title: Original article title
+            ai_title: AI-cleaned/translated title
         """
-        self.cache["summaries"][article_id] = {
-            "arabic_summary": arabic_summary,
-            "english_summary": english_summary,
-            "timestamp": datetime.now().isoformat(),
-        }
+        key = f"title:{article_id}"
+        self.cache[key] = f"{original_title}|||{ai_title}"
         self._save_cache()
+
+    # -------------------------------------------------------------------------
+    # Summary Cache Methods
+    # -------------------------------------------------------------------------
+
+    def get_summary(self, article_id: str) -> Optional[dict[str, str]]:
+        """
+        Get cached summary for an article.
+
+        Args:
+            article_id: Unique article identifier
+
+        Returns:
+            Dict with 'arabic_summary' and 'english_summary' keys, or None if not cached
+        """
+        key = f"summary:{article_id}"
+        cached = self.cache.get(key)
+        if cached:
+            parts = cached.split("|||", 1)
+            if len(parts) == 2:
+                return {"arabic_summary": parts[0], "english_summary": parts[1]}
+        return None
+
+    def cache_summary(self, article_id: str, arabic_summary: str, english_summary: str) -> None:
+        """
+        Cache summary for an article.
+
+        Args:
+            article_id: Unique article identifier
+            arabic_summary: Arabic summary text
+            english_summary: English summary text
+        """
+        key = f"summary:{article_id}"
+        self.cache[key] = f"{arabic_summary}|||{english_summary}"
+        self._save_cache()
+
+    # -------------------------------------------------------------------------
+    # Team Tag Cache Methods (for soccer articles)
+    # -------------------------------------------------------------------------
 
     def get_team_tag(self, article_id: str) -> Optional[str]:
         """
-        Get cached team tag for article.
+        Get cached team tag for an article.
 
         Args:
-            article_id: Article identifier
+            article_id: Unique article identifier
 
         Returns:
-            Team name string, or None if not cached
+            Team tag string or None if not cached
         """
-        cached: Optional[Dict[str, Any]] = self.cache["team_tags"].get(article_id)
-        if cached:
-            return cached["team"]
-        return None
+        key = f"team:{article_id}"
+        return self.cache.get(key)
 
-    def cache_team_tag(self, article_id: str, team: str) -> None:
+    def cache_team_tag(self, article_id: str, team_tag: str) -> None:
         """
-        Cache AI-detected team tag.
+        Cache team tag for an article.
 
         Args:
-            article_id: Article identifier
-            team: Team name (e.g., "Barcelona", "Real Madrid")
+            article_id: Unique article identifier
+            team_tag: Team tag (e.g., "Real Madrid", "Barcelona")
         """
-        self.cache["team_tags"][article_id] = {
-            "team": team,
-            "timestamp": datetime.now().isoformat(),
-        }
+        key = f"team:{article_id}"
+        self.cache[key] = team_tag
         self._save_cache()
 
-    def get_cache_stats(self) -> Dict[str, int]:
-        """
-        Get cache statistics.
 
-        Returns:
-            Dict with counts for each cache section
-        """
-        return {
-            "titles": len(self.cache["titles"]),
-            "summaries": len(self.cache["summaries"]),
-            "team_tags": len(self.cache["team_tags"]),
-            "total": sum(len(section) for section in self.cache.values()),
-        }
+__all__ = ["AICache"]
