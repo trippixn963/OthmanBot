@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from src.core.logger import logger
-from src.services.base_scraper import BaseScraper, Article
+from src.services.scrapers.base import BaseScraper, Article
 
 
 class SoccerScraper(BaseScraper):

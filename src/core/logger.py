@@ -1,6 +1,6 @@
 """
 Othman Discord Bot - Logger Module
-===============================
+===================================
 
 Custom logging system with EST timezone support and tree-style formatting.
 Provides structured logging for Discord bot events with visual formatting
@@ -21,13 +21,23 @@ Server: discord.gg/syria
 
 import uuid
 import os
-from datetime import datetime, timezone, timedelta
+import traceback
+from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple, Optional
+from zoneinfo import ZoneInfo
 
+
+# =============================================================================
+# MiniTreeLogger
+# =============================================================================
 
 class MiniTreeLogger:
     """Custom logger with tree-style formatting and EST timezone support."""
+
+    # =========================================================================
+    # Initialization
+    # =========================================================================
 
     def __init__(self) -> None:
         """Initialize the logger with unique run ID and daily log file rotation."""
@@ -54,11 +64,18 @@ class MiniTreeLogger:
         # DESIGN: Write session header to log file
         # Visually separates bot restarts in logs
         # Run ID helps correlate logs from same session
-        with open(self.log_file, "a", encoding="utf-8") as f:
-            f.write(f"\n{'='*60}\n")
-            f.write(f"NEW SESSION STARTED - RUN ID: {self.run_id}\n")
-            f.write(f"{self._get_timestamp()}\n")
-            f.write(f"{'='*60}\n\n")
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(f"\n{'='*60}\n")
+                f.write(f"NEW SESSION STARTED - RUN ID: {self.run_id}\n")
+                f.write(f"{self._get_timestamp()}\n")
+                f.write(f"{'='*60}\n\n")
+        except (OSError, IOError) as e:
+            print(f"[LOG WRITE ERROR] Failed to write session header: {e}")
+
+    # =========================================================================
+    # Private Methods
+    # =========================================================================
 
     def _cleanup_old_logs(self) -> None:
         """Clean up log files older than configured retention days."""
@@ -87,14 +104,12 @@ class MiniTreeLogger:
 
     def _get_timestamp(self) -> str:
         """Get current timestamp in Eastern timezone (auto EST/EDT)."""
-        # DESIGN: Simple EST/EDT detection based on month
-        # March-November = EDT (daylight saving)
-        # December-February = EST (standard time)
-        # Approximation works for most cases, doesn't handle exact DST transition dates
-        current_time: datetime = datetime.now()
-        tz_name: str = (
-            "EDT" if current_time.month >= 3 and current_time.month <= 11 else "EST"
-        )
+        # DESIGN: Use zoneinfo for accurate DST handling
+        # America/New_York automatically handles EST/EDT transitions
+        eastern = ZoneInfo("America/New_York")
+        current_time = datetime.now(eastern)
+        # Get timezone abbreviation (EST or EDT) from the timezone-aware datetime
+        tz_name = current_time.strftime("%Z")
         return current_time.strftime(f"[%I:%M:%S %p {tz_name}]")
 
     def _write(
@@ -117,14 +132,28 @@ class MiniTreeLogger:
         # File for persistent debugging and audit trail
         print(full_message)
 
-        with open(self.log_file, "a", encoding="utf-8") as f:
-            f.write(f"{full_message}\n")
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(f"{full_message}\n")
+        except (OSError, IOError) as e:
+            # File write failed (disk full, permissions, etc.)
+            # Print to console only - don't crash the bot
+            print(f"[LOG WRITE ERROR] Failed to write to log file: {e}")
+
+    # =========================================================================
+    # Public Methods - Tree Formatting
+    # =========================================================================
 
     def tree(self, title: str, items: List[Tuple[str, str]], emoji: str = "📦") -> None:
         """Log structured data in tree format."""
         # DESIGN: Add blank line before tree for visual separation
-        with open(self.log_file, "a", encoding="utf-8") as f:
-            f.write("\n")
+        # Improves readability by spacing out tree structures in logs
+        # Makes it easier to scan through log files
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write("\n")
+        except (OSError, IOError) as e:
+            print(f"[LOG WRITE ERROR] Failed to write to log file: {e}")
 
         # DESIGN: Tree-style formatting for structured data
         # Title with timestamp and emoji
@@ -137,8 +166,39 @@ class MiniTreeLogger:
             self._write(f"  {prefix} {key}: {value}", include_timestamp=False)
 
         # DESIGN: Add blank line after tree for visual separation
-        with open(self.log_file, "a", encoding="utf-8") as f:
-            f.write("\n")
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write("\n")
+        except (OSError, IOError) as e:
+            print(f"[LOG WRITE ERROR] Failed to write to log file: {e}")
+
+    def error_tree(
+        self,
+        title: str,
+        error: Exception,
+        context: Optional[List[Tuple[str, str]]] = None
+    ) -> None:
+        """
+        Log an error in tree format with context.
+
+        Args:
+            title: Error title/description
+            error: The exception that occurred
+            context: Additional context as (key, value) tuples
+        """
+        items: List[Tuple[str, str]] = []
+        items.append(("Error Type", type(error).__name__))
+        items.append(("Message", str(error)))
+
+        if context:
+            for key, value in context:
+                items.append((key, str(value)))
+
+        self.tree(title, items, emoji="❌")
+
+    # =========================================================================
+    # Public Methods - Log Levels
+    # =========================================================================
 
     def info(self, msg: str) -> None:
         """Log an informational message."""
@@ -156,5 +216,31 @@ class MiniTreeLogger:
         """Log a warning message."""
         self._write(msg, "⚠️")
 
+    def debug(self, msg: str) -> None:
+        """Log a debug message (only if DEBUG env var is set)."""
+        if os.getenv("DEBUG", "").lower() in ("1", "true", "yes"):
+            self._write(msg, "🔍")
+
+    def critical(self, msg: str) -> None:
+        """Log a critical/fatal error message."""
+        self._write(msg, "🚨")
+
+    def exception(self, msg: str) -> None:
+        """Log an exception with traceback."""
+        self._write(msg, "💥")
+        # DESIGN: Write traceback to file only (not console - too verbose)
+        # Keeps console output clean while preserving full error details in log file
+        # Essential for debugging production issues without cluttering terminal
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(traceback.format_exc())
+                f.write("\n")
+        except (OSError, IOError) as e:
+            print(f"[LOG WRITE ERROR] Failed to write traceback to log file: {e}")
+
+
+# =============================================================================
+# Module Export
+# =============================================================================
 
 logger = MiniTreeLogger()

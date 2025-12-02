@@ -26,7 +26,8 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from src.core.logger import logger
-from src.services.base_scraper import BaseScraper, Article
+from src.core.config import NEWS_FORUM_TAGS
+from src.services.scrapers.base import BaseScraper, Article
 
 
 class NewsScraper(BaseScraper):
@@ -44,15 +45,7 @@ class NewsScraper(BaseScraper):
     }
 
     # DESIGN: Discord forum tag IDs for automatic categorization
-    CATEGORY_TAGS: dict[str, int] = {
-        "military": 1382114547996954664,
-        "breaking_news": 1382114954165092565,
-        "politics": 1382115092077871174,
-        "economy": 1382115132317892619,
-        "health": 1382115182184235088,
-        "international": 1382115248814690354,
-        "social": 1382115306842882118,
-    }
+    CATEGORY_TAGS: dict[str, int] = NEWS_FORUM_TAGS
 
     def __init__(self) -> None:
         """Initialize the news scraper."""
@@ -194,7 +187,7 @@ class NewsScraper(BaseScraper):
                     logger.info(f"🔄 Cache miss: Generated summary for article {article_id}")
 
                 # Categorize article
-                category_tag_id = self._categorize_article(ai_title, full_content)
+                category_tag_id = await self._categorize_article(ai_title, full_content)
 
                 article = Article(
                     title=ai_title,
@@ -376,7 +369,7 @@ class NewsScraper(BaseScraper):
             from urllib.parse import urljoin
             return urljoin(base_url, url_str)
 
-    def _categorize_article(self, title: str, content: str) -> Optional[int]:
+    async def _categorize_article(self, title: str, content: str) -> Optional[int]:
         """
         Categorize article and return Discord forum tag ID.
 
@@ -388,23 +381,21 @@ class NewsScraper(BaseScraper):
         try:
             import asyncio
 
-            response = asyncio.get_event_loop().run_until_complete(
-                asyncio.to_thread(
-                    self.openai_client.chat.completions.create,
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "You are a news categorizer for Syrian news articles. Analyze the article and choose the MOST appropriate category from this list:\n\n- military: Military operations, armed conflicts, security forces\n- breaking_news: Urgent breaking news, major developments\n- politics: Political developments, government, diplomacy\n- economy: Economic news, trade, business, finance\n- health: Health care, medical news, diseases\n- international: International relations, foreign affairs\n- social: Society, culture, humanitarian issues\n\nRespond with ONLY the category name (one word), nothing else."
-                        },
-                        {
-                            "role": "user",
-                            "content": f"Categorize this Syrian news article.\n\nTitle: {title}\n\nContent: {content[:800]}\n\nCategory:"
-                        }
-                    ],
-                    max_tokens=10,
-                    temperature=0.3,
-                )
+            response = await asyncio.to_thread(
+                self.openai_client.chat.completions.create,
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a news categorizer for Syrian news articles. Analyze the article and choose the MOST appropriate category from this list:\n\n- military: Military operations, armed conflicts, security forces\n- breaking_news: Urgent breaking news, major developments\n- politics: Political developments, government, diplomacy\n- economy: Economic news, trade, business, finance\n- health: Health care, medical news, diseases\n- international: International relations, foreign affairs\n- social: Society, culture, humanitarian issues\n\nRespond with ONLY the category name (one word), nothing else."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Categorize this Syrian news article.\n\nTitle: {title}\n\nContent: {content[:800]}\n\nCategory:"
+                    }
+                ],
+                max_tokens=10,
+                temperature=0.3,
             )
 
             category = response.choices[0].message.content.strip().lower()

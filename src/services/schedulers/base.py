@@ -1,0 +1,251 @@
+"""
+Othman Discord Bot - Base Scheduler Service
+============================================
+
+Base class for all content schedulers (news, soccer, gaming).
+
+Features:
+- Hourly scheduling at configurable minute offset
+- Background async task
+- Start/stop controls
+- State persistence across restarts
+- Next post time tracking
+
+Author: حَـــــنَّـــــا
+Server: discord.gg/syria
+"""
+
+import asyncio
+import json
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional, Callable, Any
+
+from src.core.logger import logger
+
+
+# =============================================================================
+# Base Scheduler Class
+# =============================================================================
+
+class BaseScheduler:
+    """Base class for automated content posting schedulers."""
+
+    def __init__(
+        self,
+        post_callback: Callable[[], Any],
+        state_filename: str,
+        content_type: str,
+        log_emoji: str,
+        post_minute: int = 0,
+        error_retry_seconds: int = 300,
+    ) -> None:
+        """
+        Initialize the base scheduler.
+
+        Args:
+            post_callback: Async function to call when posting
+            state_filename: JSON file for state persistence (e.g., "scheduler_state.json")
+            content_type: Type of content for logging (e.g., "news", "soccer", "gaming")
+            log_emoji: Emoji for log messages (e.g., "📰", "⚽", "🎮")
+            post_minute: Minute of each hour to post (0, 20, 40)
+            error_retry_seconds: Seconds to wait before retry on error
+        """
+        self.post_callback: Callable[[], Any] = post_callback
+        self.content_type: str = content_type
+        self.log_emoji: str = log_emoji
+        self.post_minute: int = post_minute
+        self.error_retry_seconds: int = error_retry_seconds
+
+        self.is_running: bool = False
+        self.task: Optional[asyncio.Task] = None
+        self.state_file: Path = Path(f"data/{state_filename}")
+        self.state_file.parent.mkdir(exist_ok=True)
+
+        self._load_state()
+
+    # -------------------------------------------------------------------------
+    # State Management
+    # -------------------------------------------------------------------------
+
+    def _load_state(self) -> None:
+        """Load scheduler state from file."""
+        try:
+            if self.state_file.exists():
+                with open(self.state_file, "r") as f:
+                    data: dict[str, Any] = json.load(f)
+                    self.is_running = data.get("is_running", False)
+                    logger.info(
+                        f"{self.log_emoji} Loaded {self.content_type} scheduler state: "
+                        f"{'RUNNING' if self.is_running else 'STOPPED'}"
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to load {self.content_type} scheduler state: {e}")
+            self.is_running = False
+
+    def _save_state(self) -> None:
+        """Save scheduler state to file."""
+        try:
+            with open(self.state_file, "w") as f:
+                json.dump({"is_running": self.is_running}, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to save {self.content_type} scheduler state: {e}")
+
+    # -------------------------------------------------------------------------
+    # Start/Stop Controls
+    # -------------------------------------------------------------------------
+
+    async def start(self, post_immediately: bool = False) -> bool:
+        """
+        Start the automated posting schedule.
+
+        Args:
+            post_immediately: If True, post immediately then start hourly schedule
+
+        Returns:
+            True if started successfully, False if already running
+        """
+        if post_immediately:
+            logger.info(f"{self.log_emoji} Posting {self.content_type} immediately (test mode)")
+            await self.post_callback()
+
+        if self.task and not self.task.done():
+            logger.warning(f"{self.content_type.capitalize()} scheduler task is already running")
+            return False
+
+        self.is_running = True
+        self._save_state()
+
+        self.task = asyncio.create_task(self._schedule_loop())
+
+        next_post: datetime = self._calculate_next_post_time()
+        logger.success(
+            f"{self.log_emoji} {self.content_type.capitalize()} scheduler started - "
+            f"Next post at {next_post.strftime('%I:%M %p')}"
+        )
+        return True
+
+    async def stop(self) -> bool:
+        """
+        Stop the automated posting schedule.
+
+        Returns:
+            True if stopped successfully, False if not running
+        """
+        if not self.is_running:
+            logger.warning(f"{self.content_type.capitalize()} scheduler is not running")
+            return False
+
+        self.is_running = False
+        self._save_state()
+
+        if self.task and not self.task.done():
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
+
+        logger.success(f"{self.log_emoji} {self.content_type.capitalize()} scheduler stopped")
+        return True
+
+    # -------------------------------------------------------------------------
+    # Scheduling Loop
+    # -------------------------------------------------------------------------
+
+    async def _schedule_loop(self) -> None:
+        """
+        Main scheduling loop - runs every hour at configured minute.
+
+        DESIGN: Posts content every hour at the configured minute offset
+        Calculates wait time dynamically to maintain consistent intervals
+        Handles errors gracefully to keep scheduler running
+        """
+        while self.is_running:
+            try:
+                next_post_time: datetime = self._calculate_next_post_time()
+                wait_seconds: float = (next_post_time - datetime.now()).total_seconds()
+
+                if wait_seconds > 0:
+                    logger.info(
+                        f"{self.log_emoji} Next {self.content_type} post scheduled for "
+                        f"{next_post_time.strftime('%I:%M %p')} (in {wait_seconds / 60:.1f} minutes)"
+                    )
+                    await asyncio.sleep(wait_seconds)
+
+                if self.is_running:
+                    logger.info(f"{self.log_emoji}⏰ Hourly {self.content_type} post triggered")
+                    try:
+                        await self.post_callback()
+                    except Exception as e:
+                        logger.error(f"Failed to post {self.content_type}: {e}")
+
+            except asyncio.CancelledError:
+                logger.info(f"{self.content_type.capitalize()} scheduler loop cancelled")
+                break
+            except Exception as e:
+                logger.error(f"{self.content_type.capitalize()} scheduler loop error: {e}")
+                await asyncio.sleep(self.error_retry_seconds)
+
+    def _calculate_next_post_time(self) -> datetime:
+        """
+        Calculate the next hourly post time.
+
+        Returns:
+            datetime object for next post time
+        """
+        now: datetime = datetime.now()
+
+        if now.minute < self.post_minute:
+            next_post: datetime = now.replace(
+                minute=self.post_minute, second=0, microsecond=0
+            )
+        else:
+            next_post: datetime = (now + timedelta(hours=1)).replace(
+                minute=self.post_minute, second=0, microsecond=0
+            )
+
+        return next_post
+
+    # -------------------------------------------------------------------------
+    # Status Methods
+    # -------------------------------------------------------------------------
+
+    def get_next_post_time(self) -> Optional[datetime]:
+        """
+        Get the next scheduled post time.
+
+        Returns:
+            datetime of next post, or None if scheduler not running
+        """
+        if not self.is_running:
+            return None
+        return self._calculate_next_post_time()
+
+    def get_status(self) -> dict[str, Any]:
+        """
+        Get current scheduler status.
+
+        Returns:
+            Dictionary with status information
+        """
+        next_post: Optional[datetime] = self.get_next_post_time()
+
+        return {
+            "is_running": self.is_running,
+            "next_post_time": (
+                next_post.strftime("%I:%M %p") if next_post else "N/A"
+            ),
+            "next_post_in_minutes": (
+                int((next_post - datetime.now()).total_seconds() / 60)
+                if next_post
+                else None
+            ),
+        }
+
+
+# =============================================================================
+# Module Export
+# =============================================================================
+
+__all__ = ["BaseScheduler"]
