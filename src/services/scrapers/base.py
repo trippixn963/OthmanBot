@@ -331,12 +331,24 @@ class BaseScraper:
             ])
             return create_fallback_summaries()
 
+        # Log input content info
+        logger.info("🤖 Generating Bilingual Summary", [
+            ("Content Length", f"{len(content)} chars"),
+            ("Content Preview", content[:100].replace('\n', ' ') + "..."),
+            ("Min Length", str(min_length)),
+            ("Max Length", str(max_length)),
+        ])
+
         # Check cache first
         cache_key: str = f"summary_{content[:200]}"
         cached: Optional[str] = self.ai_cache.get(cache_key)
         if cached and isinstance(cached, str):
             parts = cached.split("|||")
             if len(parts) == 2:
+                logger.info("🤖 Cache Hit - Bilingual Summary", [
+                    ("Arabic Length", str(len(parts[0]))),
+                    ("English Length", str(len(parts[1]))),
+                ])
                 return (parts[0], parts[1])
 
         try:
@@ -363,11 +375,35 @@ The English summary should be a direct translation of the Arabic summary to main
                 arabic: str = parts[0].strip()
                 english: str = parts[1].strip()
 
+                # Validate summaries - reject if too short (likely just author name or garbage)
+                if len(arabic) < min_length or len(english) < min_length:
+                    logger.warning("🤖 AI Summary Too Short - Rejected", [
+                        ("Arabic Len", str(len(arabic))),
+                        ("Arabic Preview", arabic[:50] if arabic else "empty"),
+                        ("English Len", str(len(english))),
+                        ("English Preview", english[:50] if english else "empty"),
+                        ("Min Required", str(min_length)),
+                        ("Action", "Using fallback"),
+                    ])
+                    return create_fallback_summaries()
+
                 # Safety truncation
+                truncated_arabic = False
+                truncated_english = False
                 if len(arabic) > max_length:
                     arabic = arabic[: max_length - 3] + "..."
+                    truncated_arabic = True
                 if len(english) > max_length:
                     english = english[: max_length - 3] + "..."
+                    truncated_english = True
+
+                # Log successful generation
+                logger.success("🤖 Bilingual Summary Generated", [
+                    ("Arabic Len", str(len(arabic))),
+                    ("English Len", str(len(english))),
+                    ("Arabic Truncated", str(truncated_arabic)),
+                    ("English Truncated", str(truncated_english)),
+                ])
 
                 # Cache the result
                 self.ai_cache.set(cache_key, f"{arabic}|||{english}")
