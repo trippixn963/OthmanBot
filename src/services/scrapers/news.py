@@ -360,7 +360,50 @@ class NewsScraper(BaseScraper):
                     article_div = soup.find("div", class_="entry-content")
                     if article_div:
                         paragraphs = article_div.find_all("p")
-                        content_text = "\n\n".join([p.get_text().strip() for p in paragraphs if p.get_text().strip()])
+                        total_paragraphs = len(paragraphs)
+                        skipped_empty = 0
+                        skipped_short = 0
+                        skipped_byline = 0
+
+                        # Filter out short paragraphs (likely bylines/author names)
+                        filtered_paragraphs = []
+                        for p in paragraphs:
+                            text = p.get_text().strip()
+                            # Skip empty paragraphs
+                            if not text:
+                                skipped_empty += 1
+                                continue
+                            # Skip very short paragraphs (likely author bylines)
+                            if len(text) < 50 and text.count(' ') < 5:
+                                skipped_short += 1
+                                logger.info("📰 Skipped Short Paragraph", [
+                                    ("Text", text[:50]),
+                                    ("Length", str(len(text))),
+                                    ("Reason", "Too short, likely byline"),
+                                ])
+                                continue
+                            # Skip paragraphs that are just a name (no punctuation, short)
+                            if len(text) < 30 and not any(c in text for c in '.،:؛!?'):
+                                skipped_byline += 1
+                                logger.info("📰 Skipped Byline Paragraph", [
+                                    ("Text", text[:50]),
+                                    ("Length", str(len(text))),
+                                    ("Reason", "No punctuation, likely author name"),
+                                ])
+                                continue
+                            filtered_paragraphs.append(text)
+
+                        content_text = "\n\n".join(filtered_paragraphs)
+
+                        # Log filtering summary
+                        logger.info("📰 Content Filtering Complete", [
+                            ("Total Paragraphs", str(total_paragraphs)),
+                            ("Kept", str(len(filtered_paragraphs))),
+                            ("Skipped Empty", str(skipped_empty)),
+                            ("Skipped Short", str(skipped_short)),
+                            ("Skipped Byline", str(skipped_byline)),
+                            ("Content Length", f"{len(content_text)} chars"),
+                        ])
 
                 # Fallback
                 if not content_text:
