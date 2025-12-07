@@ -9,7 +9,17 @@ Server: discord.gg/syria
 from .retry import exponential_backoff
 from .ai_cache import AICache
 from .translate import translate_to_english
-from .helpers import get_developer_avatar
+from .helpers import (
+    get_developer_avatar,
+    safe_fetch_message,
+    safe_fetch_member,
+    safe_fetch_user,
+)
+from .language import (
+    is_primarily_arabic,
+    get_min_message_length,
+    is_english_only,
+)
 from .discord_rate_limit import (
     RateLimitConfig,
     with_rate_limit_retry,
@@ -26,6 +36,14 @@ __all__ = [
     "AICache",
     "translate_to_english",
     "get_developer_avatar",
+    # Safe fetch helpers
+    "safe_fetch_message",
+    "safe_fetch_member",
+    "safe_fetch_user",
+    # Language utilities
+    "is_primarily_arabic",
+    "get_min_message_length",
+    "is_english_only",
     # Discord rate limit utilities
     "RateLimitConfig",
     "with_rate_limit_retry",

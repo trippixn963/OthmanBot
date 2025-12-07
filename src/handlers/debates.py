@@ -24,11 +24,24 @@ from src.utils import (
     edit_thread_with_retry,
     delete_message_safe,
     remove_reaction_safe,
+    safe_fetch_message,
+    is_primarily_arabic,
+    get_min_message_length,
+    is_english_only,
 )
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
-from src.core.config import DEBATES_FORUM_ID, MODERATOR_ROLE_ID, DEVELOPER_ID
+from src.core.config import (
+    DEBATES_FORUM_ID,
+    MODERATOR_ROLE_ID,
+    DEVELOPER_ID,
+    MIN_MESSAGE_LENGTH,
+    MIN_MESSAGE_LENGTH_ARABIC,
+    ANALYTICS_UPDATE_COOLDOWN,
+    ANALYTICS_CACHE_MAX_SIZE,
+    ANALYTICS_CACHE_CLEANUP_AGE,
+)
 from src.services.debates.analytics import (
     calculate_debate_analytics,
     generate_analytics_embed,
@@ -63,30 +76,11 @@ def _is_bot_ready(bot: "OthmanBot") -> bool:
     return True
 DOWNVOTE_EMOJI = "\u2b07\ufe0f"  # ⬇️
 PARTICIPATE_EMOJI = "✅"  # Checkmark for participation access control
-MIN_MESSAGE_LENGTH = 200  # Minimum characters for Latin/English replies
-MIN_MESSAGE_LENGTH_ARABIC = 400  # Minimum characters for Arabic replies (Arabic has denser words)
+# Language utilities (is_primarily_arabic, get_min_message_length, is_english_only) imported from src.utils
 
-
-def _is_primarily_arabic(text: str) -> bool:
-    """Check if text is primarily Arabic (>50% Arabic characters)."""
-    if not text:
-        return False
-    arabic_chars = sum(1 for c in text if '\u0600' <= c <= '\u06FF' or '\u0750' <= c <= '\u077F')
-    # Count only letters (not spaces/punctuation)
-    letter_chars = sum(1 for c in text if c.isalpha())
-    if letter_chars == 0:
-        return False
-    return arabic_chars / letter_chars > 0.5
-
-
-def _get_min_message_length(text: str) -> int:
-    """Get minimum message length based on language."""
-    return MIN_MESSAGE_LENGTH_ARABIC if _is_primarily_arabic(text) else MIN_MESSAGE_LENGTH
 DEBATE_COUNTER_FILE = Path("data/debate_counter.json")
 DEBATE_MANAGEMENT_ROLE_ID = MODERATOR_ROLE_ID  # Debate Management role - can post without reacting
-ANALYTICS_UPDATE_COOLDOWN = 30  # Seconds between analytics updates per thread
-ANALYTICS_CACHE_MAX_SIZE = 100  # Maximum entries in the throttle cache
-ANALYTICS_CACHE_CLEANUP_AGE = 3600  # Remove entries older than 1 hour
+# ANALYTICS_UPDATE_COOLDOWN, ANALYTICS_CACHE_MAX_SIZE, ANALYTICS_CACHE_CLEANUP_AGE now imported from config.py
 
 # In-memory cache for analytics update throttling with lock for thread safety
 _analytics_last_update: Dict[int, datetime] = {}  # thread_id -> last_update_time
@@ -175,10 +169,9 @@ async def update_analytics_embed(bot: "OthmanBot", thread: discord.Thread, force
             ])
             return
 
-        # Fetch the analytics message
-        try:
-            analytics_message = await thread.fetch_message(analytics_message_id)
-        except discord.NotFound:
+        # Fetch the analytics message using safe helper
+        analytics_message = await safe_fetch_message(thread, analytics_message_id)
+        if analytics_message is None:
             # Clear stale reference to prevent repeated warnings
             bot.debates_service.db.clear_analytics_message(thread.id)
             logger.info("📊 Cleared Stale Analytics Reference", [
@@ -189,10 +182,6 @@ async def update_analytics_embed(bot: "OthmanBot", thread: discord.Thread, force
 
         # Calculate updated analytics
         analytics = await calculate_debate_analytics(thread, bot.debates_service.db)
-
-        # Get hostility score if tracker is available
-        if hasattr(bot, 'hostility_tracker') and bot.hostility_tracker is not None:
-            analytics.hostility_score = bot.hostility_tracker.get_thread_score(thread.id)
 
         # Generate updated embed
         embed = await generate_analytics_embed(bot, analytics)
@@ -244,50 +233,6 @@ def get_next_debate_number() -> int:
         return 1
 
 
-def is_english_only(text: str) -> bool:
-    """
-    Check if text contains only English characters, numbers, and common punctuation.
-
-    Args:
-        text: The text to validate
-
-    Returns:
-        True if text is English-only, False otherwise
-
-    DESIGN: Allows English letters, numbers, spaces, and common punctuation
-    Rejects Arabic, Chinese, Cyrillic, and other non-Latin scripts
-    """
-    import unicodedata
-
-    for char in text:
-        # Allow English letters, numbers, spaces, and common punctuation
-        if char.isascii():
-            continue
-
-        # Check Unicode category - reject anything that's not Latin-based
-        category = unicodedata.category(char)
-        name = unicodedata.name(char, "")
-
-        # Reject Arabic, Chinese, Cyrillic, Hebrew, etc.
-        if any(script in name for script in [
-            "ARABIC",
-            "CHINESE",
-            "CJK",  # Chinese, Japanese, Korean
-            "CYRILLIC",
-            "HEBREW",
-            "DEVANAGARI",
-            "BENGALI",
-            "TAMIL",
-            "THAI",
-            "HANGUL",  # Korean
-            "HIRAGANA",  # Japanese
-            "KATAKANA",  # Japanese
-        ]):
-            return False
-
-    return True
-
-
 def is_debates_forum_message(channel) -> bool:
     """Check if channel is a thread in the debates forum."""
     if not isinstance(channel, discord.Thread):
@@ -322,6 +267,10 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
 
     ACCESS CONTROL: Checks if users have reacted with ✅ to the analytics embed before allowing them to post
     """
+    # Null safety checks for Discord API objects
+    if message is None or message.author is None or message.channel is None:
+        return
+
     # Wait for bot to be fully ready (prevents init race conditions)
     if not _is_bot_ready(bot):
         return
@@ -371,19 +320,6 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                     ("Error", str(e)),
                 ])
             return
-
-    # HOSTILITY CHECK: Process message for hostility detection
-    if hasattr(bot, 'hostility_tracker') and bot.hostility_tracker is not None:
-        try:
-            await bot.hostility_tracker.process_message(message, bot)
-        except discord.HTTPException as e:
-            logger.warning("🔥 Hostility Check Discord Error", [
-                ("Error", str(e)),
-            ])
-        except (ValueError, KeyError, AttributeError) as e:
-            logger.error("🔥 Hostility Check Data Error", [
-                ("Error", str(e)),
-            ])
 
     # ACCESS CONTROL BYPASS: Skip for Debate Management role and developer
     is_debate_manager = has_debate_management_role(message.author)
@@ -477,7 +413,7 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
 
     # For regular replies - only add vote reactions for long messages
     # Use language-aware minimum: 400 chars for Arabic, 200 chars for English/other
-    min_length = _get_min_message_length(message.content)
+    min_length = get_min_message_length(message.content)
     if len(message.content) >= min_length:
         # Add upvote and downvote reactions with rate limit handling
         try:
@@ -505,8 +441,12 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
             await bot.debates_service.db.increment_participation_async(
                 message.channel.id, message.author.id
             )
-        except Exception as e:
-            logger.warning("📊 Failed To Track Participation", [
+        except sqlite3.Error as e:
+            logger.warning("📊 Failed To Track Participation (DB Error)", [
+                ("Error", str(e)),
+            ])
+        except (asyncio.TimeoutError, asyncio.CancelledError) as e:
+            logger.warning("📊 Failed To Track Participation (Async Error)", [
                 ("Error", str(e)),
             ])
 
@@ -530,12 +470,16 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
     Renames thread to "N | Original Title" format
     Posts analytics embed with debate rules and ✅ reaction for participation access
     """
+    # Null safety checks for Discord API objects
+    if thread is None:
+        return
+
     # Wait for bot to be fully ready (prevents init race conditions)
     if not _is_bot_ready(bot):
         return
 
-    # Check if it's in debates forum
-    if thread.parent_id != DEBATES_FORUM_ID:
+    # Check if it's in debates forum (with null check for parent_id)
+    if thread.parent_id is None or thread.parent_id != DEBATES_FORUM_ID:
         return
 
     # Get the starter message
@@ -742,8 +686,12 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                     await bot.debates_service.db.set_debate_creator_async(
                         thread.id, starter_message.author.id
                     )
-                except Exception as e:
-                    logger.warning("📊 Failed To Track Debate Creator", [
+                except sqlite3.Error as e:
+                    logger.warning("📊 Failed To Track Debate Creator (DB Error)", [
+                        ("Error", str(e)),
+                    ])
+                except (asyncio.TimeoutError, asyncio.CancelledError) as e:
+                    logger.warning("📊 Failed To Track Debate Creator (Async Error)", [
                         ("Error", str(e)),
                     ])
 
@@ -985,7 +933,6 @@ async def on_member_remove_handler(bot: "OthmanBot", member: discord.Member) -> 
                     ("Votes Cast", str(deleted_data.get('votes_cast', 0))),
                     ("Votes Received", str(deleted_data.get('votes_received', 0))),
                     ("Bans", str(deleted_data.get('bans', 0))),
-                    ("Hostility Records", str(deleted_data.get('hostility', 0))),
                 ])
             except (sqlite3.Error, AttributeError) as e:
                 logger.error("🗄️ Failed To Delete Database Records", [
@@ -1214,7 +1161,7 @@ async def on_thread_delete_handler(bot: "OthmanBot", thread: discord.Thread) -> 
             logger.debug("🗄️ Thread Database Records Cleaned", [
                 ("Thread ID", str(thread.id)),
             ])
-        except Exception as e:
+        except sqlite3.Error as e:
             logger.warning("🗄️ Failed To Clean Thread Database", [
                 ("Error", str(e)),
             ])

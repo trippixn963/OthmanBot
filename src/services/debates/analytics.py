@@ -80,7 +80,6 @@ class DebateAnalytics:
         last_activity: datetime,
         top_contributor: Optional[tuple[str, int]] = None,  # (username, reply_count)
         activity_graph: str = "",
-        hostility_score: float = 0.0,
     ):
         """
         Initialize debate analytics container.
@@ -92,7 +91,6 @@ class DebateAnalytics:
             last_activity: Timestamp of the most recent message.
             top_contributor: Tuple of (username, reply_count) for top participant.
             activity_graph: ASCII representation of activity over time.
-            hostility_score: AI-calculated hostility score (0.0-1.0).
         """
         self.participants = participants
         self.total_replies = total_replies
@@ -100,7 +98,6 @@ class DebateAnalytics:
         self.last_activity = last_activity
         self.top_contributor = top_contributor
         self.activity_graph = activity_graph
-        self.hostility_score = hostility_score
 
 
 # =============================================================================

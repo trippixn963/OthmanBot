@@ -2,12 +2,61 @@
 Othman Discord Bot - Main Bot Class
 ===================================
 
-Core Discord client with modular architecture.
+Core Discord client with modular architecture for the Syria Discord server.
+
+ARCHITECTURE OVERVIEW:
+======================
+The bot follows a layered architecture with clear separation of concerns:
+
+┌─────────────────────────────────────────────────────────────────┐
+│                        BOT LAYER (bot.py)                        │
+│  - Discord client setup and event routing                       │
+│  - Service initialization and lifecycle management              │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        ▼                     ▼                     ▼
+┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+│   HANDLERS    │    │   SERVICES    │    │   COMMANDS    │
+│ - ready.py    │    │ - scrapers/   │    │ - debates.py  │
+│ - debates.py  │    │ - debates/    │    │   (slash cmds)│
+│ - reactions.py│    │ - schedulers/ │    └───────────────┘
+│ - shutdown.py │    └───────────────┘
+└───────────────┘              │
+                               ▼
+                    ┌───────────────────┐
+                    │     POSTING       │
+                    │ - news.py         │
+                    │ - soccer.py       │
+                    │ - gaming.py       │
+                    │ - debates.py      │
+                    └───────────────────┘
+
+KEY DESIGN DECISIONS:
+=====================
+1. CONTENT ROTATION: Posts rotate hourly (news → soccer → gaming)
+   to spread API costs and provide variety
+
+2. KARMA SYSTEM: Reddit-style upvote/downvote with ⬆️/⬇️ reactions
+   - Stored in SQLite for persistence
+   - Nightly reconciliation catches missed votes
+   - Self-voting is blocked
+
+3. HOT TAG MANAGEMENT: Automatic "Hot" tag based on activity thresholds
+   - 10+ messages in 1 hour = Hot
+   - No activity for 6+ hours = Remove Hot
+
+4. GRACEFUL SHUTDOWN: All services properly cleaned up
+   - Database connections closed
+   - HTTP sessions terminated
+   - Background tasks cancelled
 
 Features:
 - Fully automated hourly news posting
-- Hot debates system
-- Clean separation of concerns
+- Hot debates system with karma tracking
+- Leaderboard with monthly/all-time stats
+- AI-powered content summarization (OpenAI)
+- Health check HTTP endpoint
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
@@ -39,7 +88,6 @@ from src.handlers.debates import (
     on_member_join_handler,
 )
 from src.services.debates import DebatesService
-from src.services.debates.hostility import HostilityTracker
 
 
 # =============================================================================
@@ -47,14 +95,43 @@ from src.services.debates.hostility import HostilityTracker
 # =============================================================================
 
 class OthmanBot(commands.Bot):
-    """Main Discord bot class for Othman News Bot."""
+    """
+    Main Discord bot class for Othman News Bot.
+
+    DESIGN: Central orchestrator that:
+    - Routes Discord events to appropriate handlers
+    - Holds references to all services for cross-service communication
+    - Manages bot lifecycle (startup, shutdown)
+
+    SERVICE INITIALIZATION ORDER (in on_ready):
+    1. Debates service (setup_hook)
+    2. Content scrapers (news, soccer, gaming)
+    3. Content rotation scheduler
+    4. Debates scheduler (hot debates every 3 hours)
+    5. Hot tag manager
+    6. Karma reconciliation (startup + nightly)
+    7. Leaderboard manager
+    8. Backup scheduler
+    9. Health check server
+
+    INTENTS REQUIRED:
+    - guilds: Access server info
+    - reactions: Track upvotes/downvotes
+    - members: Track user join/leave for leaderboard
+    - message_content: Read debate messages for karma tracking
+    """
 
     # =========================================================================
     # Initialization
     # =========================================================================
 
     def __init__(self) -> None:
-        """Initialize the Othman bot with necessary intents and configuration."""
+        """
+        Initialize the Othman bot with necessary intents and configuration.
+
+        DESIGN: Lazy initialization pattern - services are None until on_ready
+        This prevents issues with Discord API calls before connection is established
+        """
         intents = discord.Intents.default()
         intents.guilds = True
         intents.reactions = True
@@ -62,29 +139,42 @@ class OthmanBot(commands.Bot):
         intents.message_content = True
 
         super().__init__(
-            command_prefix="!",
+            command_prefix="!",  # Not used - bot uses slash commands only
             intents=intents,
             help_command=None,
         )
 
-        # Load channel configuration
+        # =================================================================
+        # Channel Configuration (loaded from environment)
+        # DESIGN: Optional channels - bot continues if not configured
+        # =================================================================
         self.news_channel_id: Optional[int] = load_news_channel_id()
         self.soccer_channel_id: Optional[int] = load_soccer_channel_id()
         self.gaming_channel_id: Optional[int] = load_gaming_channel_id()
 
-        # Track announcement messages for reaction blocking
+        # =================================================================
+        # Announcement Tracking
+        # DESIGN: Prevents users from adding reactions to news announcements
+        # Only the pre-set emoji reactions are allowed
+        # =================================================================
         self.announcement_messages: set[int] = set()
 
-        # Service placeholders (initialized in on_ready)
-        self.news_scraper = None
-        self.soccer_scraper = None
-        self.gaming_scraper = None
-        self.content_rotation_scheduler = None
-        self.debates_service = None
-        self.debates_scheduler = None
-        self.hostility_tracker = None
+        # =================================================================
+        # Service Placeholders
+        # DESIGN: Initialized in on_ready handler after Discord connection
+        # All services are Optional to handle partial initialization gracefully
+        # =================================================================
+        self.news_scraper = None      # NewsScraper - fetches Middle East news
+        self.soccer_scraper = None    # SoccerScraper - fetches Kooora soccer news
+        self.gaming_scraper = None    # GamingScraper - fetches gaming news
+        self.content_rotation_scheduler = None  # Rotates content hourly
+        self.debates_service = None   # Karma tracking and debate management
+        self.debates_scheduler = None # Posts hot debates every 3 hours
 
-        # Background task for presence updates
+        # =================================================================
+        # Background Tasks
+        # DESIGN: Tracked for proper cleanup on shutdown
+        # =================================================================
         self.presence_task: Optional[asyncio.Task] = None
 
     # =========================================================================
@@ -104,9 +194,6 @@ class OthmanBot(commands.Bot):
         """Setup hook called when bot is starting."""
         # Initialize debates service
         self.debates_service = DebatesService()
-
-        # Initialize hostility tracker (uses debates_service database)
-        self.hostility_tracker = HostilityTracker(self.debates_service.db)
 
         # Load debates cog
         await self.load_extension("src.commands.debates")

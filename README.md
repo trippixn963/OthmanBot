@@ -20,7 +20,7 @@
 
 A fully automated Discord bot that:
 - Posts hourly news updates from multiple sources with AI-generated bilingual summaries (Arabic/English)
-- Manages a debate forum with karma voting, hostility tracking, and analytics
+- Manages a debate forum with karma voting and analytics
 - Covers Syrian news, soccer/football, and gaming across separate channels
 
 **Custom-built for discord.gg/syria - No support provided**
@@ -40,7 +40,6 @@ A fully automated Discord bot that:
 
 ### Debates System
 - **Karma Voting** - Upvote/downvote system with persistent karma tracking
-- **Hostility Tracking** - AI-powered detection of hostile messages with warnings
 - **Auto-Tagging** - AI detects relevant topic tags for new debates
 - **Hot Tag Manager** - Dynamically adds/removes "Hot" tag based on activity
 - **Analytics** - Thread engagement metrics and participant tracking
@@ -174,9 +173,8 @@ OthmanBot/
 │   │   ├── schedulers/
 │   │   │   └── rotation.py             # Unified content rotation
 │   │   └── debates/
-│   │       ├── database.py             # SQLite karma/votes/hostility storage
+│   │       ├── database.py             # SQLite karma/votes storage
 │   │       ├── analytics.py            # Thread engagement metrics
-│   │       ├── hostility.py            # AI hostility detection
 │   │       ├── tags.py                 # AI auto-tagging
 │   │       ├── hot_tag_manager.py      # Dynamic "Hot" tag management
 │   │       ├── scheduler.py            # Hot debates scheduler
@@ -216,9 +214,8 @@ OthmanBot/
 1. **Thread Creation** - AI auto-tags new debate threads
 2. **Voting** - Bot adds reaction buttons, tracks votes in SQLite
 3. **Karma** - Accumulated per-user based on votes received
-4. **Hostility** - AI monitors for hostile messages, issues warnings
-5. **Hot Tags** - Threads with high activity get "Hot" tag
-6. **Reconciliation** - Nightly sync catches any missed votes
+4. **Hot Tags** - Threads with high activity get "Hot" tag
+5. **Reconciliation** - Nightly sync catches any missed votes
 
 ### Robustness Features
 - **Null Safety** - Defensive checks for Discord API objects (channels, threads, messages)

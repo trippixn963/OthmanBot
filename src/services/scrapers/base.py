@@ -334,7 +334,7 @@ class BaseScraper:
         # Check cache first
         cache_key: str = f"summary_{content[:200]}"
         cached: Optional[str] = self.ai_cache.get(cache_key)
-        if cached:
+        if cached and isinstance(cached, str):
             parts = cached.split("|||")
             if len(parts) == 2:
                 return (parts[0], parts[1])
