@@ -41,39 +41,47 @@ async def post_soccer_news(bot: "OthmanBot") -> None:
     Handles all errors gracefully to keep scheduler running
     """
     if not bot.soccer_channel_id:
-        logger.error("SOCCER_CHANNEL_ID not configured")
+        logger.error("⚽ SOCCER_CHANNEL_ID Not Configured")
         return
 
     if not bot.soccer_scraper:
-        logger.error("Soccer scraper not initialized")
+        logger.error("⚽ Soccer Scraper Not Initialized")
         return
 
     try:
-        logger.info("⚽ Fetching latest soccer news articles...")
+        logger.info("⚽ Fetching Latest Soccer News Articles")
         articles = await bot.soccer_scraper.fetch_latest_soccer_news(
             max_articles=1, hours_back=24
         )
 
         if not articles:
-            logger.warning("No new soccer articles found to post")
+            logger.warning("⚽ No New Soccer Articles Found To Post")
             return
 
         article = articles[0]
         channel = bot.get_channel(bot.soccer_channel_id)
         if not channel:
-            logger.error(f"Soccer channel {bot.soccer_channel_id} not found")
+            logger.error("⚽ Soccer Channel Not Found", [
+                ("Channel ID", str(bot.soccer_channel_id)),
+            ])
             return
 
         if isinstance(channel, discord.ForumChannel):
             await post_soccer_article_to_forum(bot, channel, article)
         else:
-            logger.error(f"Channel {bot.soccer_channel_id} is not a forum channel")
+            logger.error("⚽ Channel Is Not A Forum Channel", [
+                ("Channel ID", str(bot.soccer_channel_id)),
+            ])
             return
 
-        logger.success(f"✅ Posted 1 soccer article")
+        logger.success("⚽ Posted Soccer Article", [
+            ("Count", "1"),
+        ])
 
     except Exception as e:
-        logger.error(f"Failed to post soccer news: {e}")
+        logger.error("⚽ Failed To Post Soccer News", [
+            ("Error", str(e)),
+        ])
 
 
 # =============================================================================
@@ -106,7 +114,9 @@ async def post_soccer_article_to_forum(
             article.image_url, "soccer", hash(article.url)
         )
         if image_file:
-            logger.info(f"⚽ Downloaded image for: {article.title[:30]}")
+            logger.info("⚽ Downloaded Image", [
+                ("Title", article.title[:30]),
+            ])
 
     try:
         # Build message content
@@ -123,7 +133,10 @@ async def post_soccer_article_to_forum(
         if article.team_tag and article.team_tag in SOCCER_TEAM_TAG_IDS:
             tag_id = SOCCER_TEAM_TAG_IDS[article.team_tag]
             applied_tags.append(discord.Object(id=tag_id))
-            logger.info(f"⚽ Applying team tag: {article.team_tag} (ID: {tag_id})")
+            logger.info("⚽ Applying Team Tag", [
+                ("Team", article.team_tag),
+                ("Tag ID", str(tag_id)),
+            ])
 
         # Prepare files
         files = [image_file] if image_file else []
@@ -140,8 +153,12 @@ async def post_soccer_article_to_forum(
         article_id = bot.soccer_scraper._extract_article_id(article.url)
         bot.soccer_scraper.fetched_urls.add(article_id)
         bot.soccer_scraper._save_posted_urls()
-        logger.info(f"⚽ Marked soccer article ID as posted: {article_id}")
-        logger.info(f"⚽ Posted soccer forum thread: {article.title}")
+        logger.info("⚽ Marked Soccer Article As Posted", [
+            ("Article ID", article_id),
+        ])
+        logger.info("⚽ Posted Soccer Forum Thread", [
+            ("Title", article.title[:50]),
+        ])
 
         # Send announcement
         if bot.general_channel_id:
@@ -180,8 +197,9 @@ def _build_forum_content(article: SoccerArticle) -> str:
 
     max_summary_space = 2000 - len(footer) - 400
 
-    arabic_summary = article.arabic_summary
-    english_summary = article.english_summary
+    # Add null checks
+    arabic_summary = article.arabic_summary or "الملخص غير متوفر"
+    english_summary = article.english_summary or "Summary not available"
 
     combined_length = len(arabic_summary) + len(english_summary)
     if combined_length > max_summary_space:

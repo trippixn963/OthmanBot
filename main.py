@@ -26,14 +26,28 @@ Server: discord.gg/syria
 import os
 import sys
 import fcntl
+import signal
+import asyncio
 import tempfile
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, Optional
 
+# CRITICAL: Load environment variables BEFORE importing any local modules
+# that read from environment at import time (e.g., config.py)
 from dotenv import load_dotenv
+load_dotenv()
 
 from src.core.logger import logger
+from src.core.config import ConfigValidationError, validate_and_log_config
 from src.bot import OthmanBot
+
+
+# =============================================================================
+# Global State for Signal Handling
+# =============================================================================
+
+_bot_instance: Optional[OthmanBot] = None
+_shutdown_event: Optional[asyncio.Event] = None
 
 
 # =============================================================================
@@ -70,7 +84,10 @@ def acquire_lock() -> int:
         # Create or open lock file
         fd = os.open(str(LOCK_FILE_PATH), os.O_RDWR | os.O_CREAT, 0o644)
     except OSError as e:
-        logger.error(f"Failed to open lock file {LOCK_FILE_PATH}: {e}")
+        logger.error("Failed to Open Lock File", [
+            ("Path", str(LOCK_FILE_PATH)),
+            ("Error", str(e)),
+        ])
         sys.exit(1)
 
     try:
@@ -81,7 +98,9 @@ def acquire_lock() -> int:
         os.truncate(fd, 0)
         os.write(fd, str(os.getpid()).encode())
 
-        logger.info(f"Lock acquired successfully (PID: {os.getpid()})")
+        logger.info("🔒 Lock Acquired Successfully", [
+            ("PID", str(os.getpid())),
+        ])
         return fd
 
     except (IOError, OSError):
@@ -91,7 +110,9 @@ def acquire_lock() -> int:
             os.close(fd)
             try:
                 LOCK_FILE_PATH.unlink()
-                logger.warning("Removed stale lock file from dead process")
+                logger.warning("🔒 Removed Stale Lock File", [
+                    ("Reason", "Dead process"),
+                ])
                 return acquire_lock()  # Retry
             except OSError:
                 pass
@@ -141,15 +162,20 @@ def _report_existing_instance(fd: int) -> None:
         existing_pid = os.read(fd, 100).decode().strip()
 
         if existing_pid:
-            logger.error(
-                f"Another instance is already running (PID: {existing_pid}). "
-                f"Kill it with: kill {existing_pid}"
-            )
+            logger.error("🔒 Another Instance Already Running", [
+                ("Existing PID", existing_pid),
+                ("Kill Command", f"kill {existing_pid}"),
+            ])
         else:
-            logger.error("Another instance is already running (PID unknown)")
+            logger.error("🔒 Another Instance Already Running", [
+                ("PID", "Unknown"),
+            ])
 
     except (OSError, ValueError) as e:
-        logger.error(f"Another instance is already running (could not read PID: {e})")
+        logger.error("🔒 Another Instance Already Running", [
+            ("PID", "Could not read"),
+            ("Error", str(e)),
+        ])
 
 
 # =============================================================================
@@ -170,17 +196,103 @@ def load_configuration() -> str:
     """
     load_dotenv()
 
-    token = os.getenv("DISCORD_TOKEN")
-
-    if not token:
-        logger.error("DISCORD_TOKEN not found in environment variables")
-        logger.error("Please create a .env file with: DISCORD_TOKEN=your_token_here")
+    # Validate all environment variables
+    try:
+        validate_and_log_config()
+    except ConfigValidationError as e:
+        logger.error("Configuration Validation Failed", [
+            ("Error", str(e)),
+            ("Action", "Check your .env file"),
+        ])
         sys.exit(1)
 
-    # Log configuration status (without sensitive data)
-    logger.info("Configuration loaded successfully")
+    token = os.getenv("DISCORD_TOKEN")
+
+    # This should never happen after validation, but keep as safety check
+    if not token:
+        logger.error("Missing Configuration", [
+            ("Variable", "DISCORD_TOKEN"),
+            ("Action", "Create .env file with: DISCORD_TOKEN=your_token_here"),
+        ])
+        sys.exit(1)
 
     return token
+
+
+# =============================================================================
+# Signal Handlers
+# =============================================================================
+
+def _create_signal_handler(signum: int) -> None:
+    """
+    Create a thread-safe signal handler for the given signal.
+
+    This is called from the event loop via loop.add_signal_handler(),
+    ensuring thread-safety when accessing asyncio primitives.
+
+    Args:
+        signum: Signal number received
+    """
+    global _bot_instance
+
+    signal_name = signal.Signals(signum).name
+    logger.info("Signal Received", [
+        ("Signal", signal_name),
+        ("Action", "Initiating graceful shutdown"),
+    ])
+
+    if _bot_instance:
+        # Safe to create task since we're called from the event loop
+        asyncio.create_task(_bot_instance.close())
+
+
+def _setup_signal_handlers_sync() -> None:
+    """
+    Setup synchronous signal handlers (fallback for non-async context).
+
+    Used during startup before the event loop is running.
+    """
+    def handle_signal(signum: int, frame) -> None:
+        signal_name = signal.Signals(signum).name
+        logger.info("Signal Received (Pre-Loop)", [
+            ("Signal", signal_name),
+            ("Action", "Initiating shutdown"),
+        ])
+        sys.exit(0)
+
+    # Only setup on Unix-like systems
+    if hasattr(signal, 'SIGTERM'):
+        signal.signal(signal.SIGTERM, handle_signal)
+
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, handle_signal)
+
+
+def _setup_async_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
+    """
+    Setup async-safe signal handlers using loop.add_signal_handler().
+
+    This is the proper way to handle signals in asyncio applications,
+    ensuring handlers are called from the event loop thread.
+
+    Args:
+        loop: The asyncio event loop
+    """
+    # Only available on Unix-like systems
+    if not hasattr(loop, 'add_signal_handler'):
+        logger.debug("Async signal handlers not supported on this platform")
+        return
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            loop.add_signal_handler(sig, lambda s=sig: _create_signal_handler(s))
+            logger.debug(f"Registered async {sig.name} handler")
+        except (ValueError, OSError) as e:
+            logger.warning(f"Could not register {sig.name} handler", [
+                ("Error", str(e)),
+            ])
+
+    # Note: SIGINT is handled by discord.py's bot.run() which catches KeyboardInterrupt
 
 
 # =============================================================================
@@ -206,7 +318,11 @@ def main() -> NoReturn:
     # Step 2: Load configuration
     token = load_configuration()
 
-    # Step 3: Initialize and run bot
+    # Step 3: Setup synchronous signal handlers (for pre-loop phase)
+    _setup_signal_handlers_sync()
+
+    # Step 4: Initialize and run bot
+    global _bot_instance
     try:
         logger.tree(
             "Starting Othman News Bot",
@@ -220,14 +336,19 @@ def main() -> NoReturn:
         )
 
         bot = OthmanBot()
+        _bot_instance = bot  # Store for signal handler access
         bot.run(token)
 
     except KeyboardInterrupt:
-        logger.info("Shutdown requested by user (Ctrl+C)")
+        logger.info("🛑 Shutdown Requested", [
+            ("By", "User (Ctrl+C)"),
+        ])
         sys.exit(0)
 
     except Exception as e:
-        logger.error(f"Fatal error during bot execution: {e}")
+        logger.error("💥 Fatal Error During Bot Execution", [
+            ("Error", str(e)),
+        ])
         logger.exception("Full traceback:")
         sys.exit(1)
 
@@ -238,7 +359,7 @@ def main() -> NoReturn:
                 os.close(lock_fd)
             except OSError:
                 pass
-        logger.info("Bot shutdown complete")
+        logger.info("🛑 Bot Shutdown Complete")
 
 
 # =============================================================================

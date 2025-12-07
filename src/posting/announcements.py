@@ -47,7 +47,7 @@ async def send_general_announcement(
     """
     general_channel = bot.get_channel(bot.general_channel_id)
     if not general_channel or not isinstance(general_channel, discord.TextChannel):
-        logger.warning(f"General channel not found or invalid")
+        logger.warning("📣 General Channel Not Found Or Invalid")
         return
 
     try:
@@ -74,10 +74,14 @@ async def send_general_announcement(
 
         message = await general_channel.send(embed=embed, view=view)
         bot.announcement_messages.add(message.id)
-        logger.info(f"📣 Sent news announcement: {article.title[:50]}")
+        logger.info("📣 Sent News Announcement", [
+            ("Title", article.title[:50]),
+        ])
 
     except discord.HTTPException as e:
-        logger.error(f"Failed to send news announcement: {e}")
+        logger.error("📣 Failed To Send News Announcement", [
+            ("Error", str(e)),
+        ])
 
 
 # =============================================================================
@@ -105,7 +109,7 @@ async def send_soccer_announcement(
     """
     general_channel = bot.get_channel(bot.general_channel_id)
     if not general_channel or not isinstance(general_channel, discord.TextChannel):
-        logger.warning(f"General channel not found or invalid")
+        logger.warning("📣 General Channel Not Found Or Invalid (Soccer)")
         return
 
     try:
@@ -130,10 +134,14 @@ async def send_soccer_announcement(
 
         message = await general_channel.send(embed=embed, view=view)
         bot.announcement_messages.add(message.id)
-        logger.info(f"📣 Sent soccer announcement: {article.title[:50]}")
+        logger.info("📣 Sent Soccer Announcement", [
+            ("Title", article.title[:50]),
+        ])
 
     except discord.HTTPException as e:
-        logger.error(f"Failed to send soccer announcement: {e}")
+        logger.error("📣 Failed To Send Soccer Announcement", [
+            ("Error", str(e)),
+        ])
 
 
 # =============================================================================
@@ -159,7 +167,7 @@ async def send_gaming_announcement(
     """
     general_channel = bot.get_channel(bot.general_channel_id)
     if not general_channel or not isinstance(general_channel, discord.TextChannel):
-        logger.warning(f"General channel not found or invalid")
+        logger.warning("📣 General Channel Not Found Or Invalid (Gaming)")
         return
 
     try:
@@ -184,10 +192,14 @@ async def send_gaming_announcement(
 
         message = await general_channel.send(embed=embed, view=view)
         bot.announcement_messages.add(message.id)
-        logger.info(f"📣 Sent gaming announcement: {article.title[:50]}")
+        logger.info("📣 Sent Gaming Announcement", [
+            ("Title", article.title[:50]),
+        ])
 
     except discord.HTTPException as e:
-        logger.error(f"Failed to send gaming announcement: {e}")
+        logger.error("📣 Failed To Send Gaming Announcement", [
+            ("Error", str(e)),
+        ])
 
 
 # =============================================================================

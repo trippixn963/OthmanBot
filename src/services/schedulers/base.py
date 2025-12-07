@@ -75,12 +75,15 @@ class BaseScheduler:
                 with open(self.state_file, "r") as f:
                     data: dict[str, Any] = json.load(f)
                     self.is_running = data.get("is_running", False)
-                    logger.info(
-                        f"{self.log_emoji} Loaded {self.content_type} scheduler state: "
-                        f"{'RUNNING' if self.is_running else 'STOPPED'}"
-                    )
-        except Exception as e:
-            logger.warning(f"Failed to load {self.content_type} scheduler state: {e}")
+                    logger.info(f"{self.log_emoji} Loaded Scheduler State", [
+                        ("Type", self.content_type.capitalize()),
+                        ("Status", "RUNNING" if self.is_running else "STOPPED"),
+                    ])
+        except (json.JSONDecodeError, IOError, OSError) as e:
+            logger.warning(f"{self.log_emoji} Failed to Load Scheduler State", [
+                ("Type", self.content_type.capitalize()),
+                ("Error", str(e)),
+            ])
             self.is_running = False
 
     def _save_state(self) -> None:
@@ -88,8 +91,11 @@ class BaseScheduler:
         try:
             with open(self.state_file, "w") as f:
                 json.dump({"is_running": self.is_running}, f, indent=2)
-        except Exception as e:
-            logger.warning(f"Failed to save {self.content_type} scheduler state: {e}")
+        except (IOError, OSError) as e:
+            logger.warning(f"{self.log_emoji} Failed to Save Scheduler State", [
+                ("Type", self.content_type.capitalize()),
+                ("Error", str(e)),
+            ])
 
     # -------------------------------------------------------------------------
     # Start/Stop Controls
@@ -106,11 +112,16 @@ class BaseScheduler:
             True if started successfully, False if already running
         """
         if post_immediately:
-            logger.info(f"{self.log_emoji} Posting {self.content_type} immediately (test mode)")
+            logger.info(f"{self.log_emoji} Test Mode Triggered", [
+                ("Type", self.content_type.capitalize()),
+                ("Action", "Posting immediately"),
+            ])
             await self.post_callback()
 
         if self.task and not self.task.done():
-            logger.warning(f"{self.content_type.capitalize()} scheduler task is already running")
+            logger.warning(f"{self.log_emoji} Scheduler Already Running", [
+                ("Type", self.content_type.capitalize()),
+            ])
             return False
 
         self.is_running = True
@@ -119,10 +130,10 @@ class BaseScheduler:
         self.task = asyncio.create_task(self._schedule_loop())
 
         next_post: datetime = self._calculate_next_post_time()
-        logger.success(
-            f"{self.log_emoji} {self.content_type.capitalize()} scheduler started - "
-            f"Next post at {next_post.strftime('%I:%M %p')}"
-        )
+        logger.success(f"{self.log_emoji} Scheduler Started", [
+            ("Type", self.content_type.capitalize()),
+            ("Next Post", next_post.strftime('%I:%M %p')),
+        ])
         return True
 
     async def stop(self) -> bool:
@@ -133,7 +144,9 @@ class BaseScheduler:
             True if stopped successfully, False if not running
         """
         if not self.is_running:
-            logger.warning(f"{self.content_type.capitalize()} scheduler is not running")
+            logger.warning(f"{self.log_emoji} Scheduler Not Running", [
+                ("Type", self.content_type.capitalize()),
+            ])
             return False
 
         self.is_running = False
@@ -146,7 +159,9 @@ class BaseScheduler:
             except asyncio.CancelledError:
                 pass
 
-        logger.success(f"{self.log_emoji} {self.content_type.capitalize()} scheduler stopped")
+        logger.success(f"{self.log_emoji} Scheduler Stopped", [
+            ("Type", self.content_type.capitalize()),
+        ])
         return True
 
     # -------------------------------------------------------------------------
@@ -167,24 +182,35 @@ class BaseScheduler:
                 wait_seconds: float = (next_post_time - datetime.now()).total_seconds()
 
                 if wait_seconds > 0:
-                    logger.info(
-                        f"{self.log_emoji} Next {self.content_type} post scheduled for "
-                        f"{next_post_time.strftime('%I:%M %p')} (in {wait_seconds / 60:.1f} minutes)"
-                    )
+                    logger.info(f"{self.log_emoji} Next Post Scheduled", [
+                        ("Type", self.content_type.capitalize()),
+                        ("Time", next_post_time.strftime('%I:%M %p')),
+                        ("In", f"{wait_seconds / 60:.1f} minutes"),
+                    ])
                     await asyncio.sleep(wait_seconds)
 
                 if self.is_running:
-                    logger.info(f"{self.log_emoji}⏰ Hourly {self.content_type} post triggered")
+                    logger.info(f"{self.log_emoji} Hourly Post Triggered", [
+                        ("Type", self.content_type.capitalize()),
+                    ])
                     try:
                         await self.post_callback()
                     except Exception as e:
-                        logger.error(f"Failed to post {self.content_type}: {e}")
+                        logger.error(f"{self.log_emoji} Failed to Post", [
+                            ("Type", self.content_type.capitalize()),
+                            ("Error", str(e)),
+                        ])
 
             except asyncio.CancelledError:
-                logger.info(f"{self.content_type.capitalize()} scheduler loop cancelled")
+                logger.info(f"{self.log_emoji} Scheduler Loop Cancelled", [
+                    ("Type", self.content_type.capitalize()),
+                ])
                 break
             except Exception as e:
-                logger.error(f"{self.content_type.capitalize()} scheduler loop error: {e}")
+                logger.error(f"{self.log_emoji} Scheduler Loop Error", [
+                    ("Type", self.content_type.capitalize()),
+                    ("Error", str(e)),
+                ])
                 await asyncio.sleep(self.error_retry_seconds)
 
     def _calculate_next_post_time(self) -> datetime:

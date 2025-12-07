@@ -220,6 +220,16 @@ OthmanBot/
 5. **Hot Tags** - Threads with high activity get "Hot" tag
 6. **Reconciliation** - Nightly sync catches any missed votes
 
+### Robustness Features
+- **Null Safety** - Defensive checks for Discord API objects (channels, threads, messages)
+- **Temp File Cleanup** - Automatic cleanup of old temporary files on startup
+- **Thread Name Validation** - Length validation before Discord API calls
+- **Debate Number Validation** - Ensures debate numbers are positive integers
+- **Graceful Shutdown** - Proper cleanup of all services (schedulers, scrapers, database, health server)
+- **Rate Limit Handling** - Automatic retry with exponential backoff for Discord API
+- **Health Check Server** - HTTP endpoint for monitoring bot status
+- **Configuration Validation** - Startup validation of required/optional environment variables
+
 ---
 
 ## Slash Commands

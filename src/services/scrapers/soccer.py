@@ -127,10 +127,12 @@ class SoccerScraper(BaseScraper):
                 new_articles.append(article)
 
         if new_articles:
-            logger.info(f"✅ Found {len(new_articles)} NEW unposted soccer articles")
+            logger.info("⚽ Found New Unposted Soccer Articles", [
+                ("Count", str(len(new_articles))),
+            ])
             return new_articles[:max_articles]
         else:
-            logger.info(f"📭 No new soccer articles found")
+            logger.info("📭 No New Soccer Articles Found")
             return []
 
     async def _fetch_from_source(
@@ -146,7 +148,9 @@ class SoccerScraper(BaseScraper):
         feed = feedparser.parse(source_info["rss_url"])
 
         if not feed.entries:
-            logger.warning(f"No entries found in {source_info['name']} feed")
+            logger.warning("⚽ No Entries in Feed", [
+                ("Source", source_info['name']),
+            ])
             return articles
 
         for entry in feed.entries[: max_articles * 2]:
@@ -160,10 +164,17 @@ class SoccerScraper(BaseScraper):
                 image_url = await self._extract_image(entry)
 
                 # Get summary
+                content_field = entry.get("content", [{}])
+                content_value = ""
+                if isinstance(content_field, list) and content_field:
+                    content_value = content_field[0].get("value", "")
+                elif isinstance(content_field, dict):
+                    content_value = content_field.get("value", "")
+
                 summary = (
                     entry.get("summary", "")
                     or entry.get("description", "")
-                    or entry.get("content", [{}])[0].get("value", "")
+                    or content_value
                 )
                 summary = BeautifulSoup(summary, "html.parser").get_text()
                 summary = summary[:500] + "..." if len(summary) > 500 else summary
@@ -200,32 +211,44 @@ class SoccerScraper(BaseScraper):
                 cached_title = self.ai_cache.get_title(article_id)
                 if cached_title:
                     ai_title = cached_title["english_title"]
-                    logger.info(f"💾 Cache hit: Using cached title for article {article_id}")
+                    logger.info("💾 Cache Hit - Title", [
+                        ("Article ID", article_id),
+                    ])
                 else:
                     ai_title = await self._generate_soccer_title(original_title, full_content)
                     self.ai_cache.cache_title(article_id, original_title, ai_title)
-                    logger.info(f"🔄 Cache miss: Generated title for article {article_id}")
+                    logger.info("🔄 Cache Miss - Generated Title", [
+                        ("Article ID", article_id),
+                    ])
 
                 # Check cache for summaries
                 cached_summary = self.ai_cache.get_summary(article_id)
                 if cached_summary:
                     arabic_summary = cached_summary["arabic_summary"]
                     english_summary = cached_summary["english_summary"]
-                    logger.info(f"💾 Cache hit: Using cached summary for article {article_id}")
+                    logger.info("💾 Cache Hit - Summary", [
+                        ("Article ID", article_id),
+                    ])
                 else:
                     arabic_summary, english_summary = await self._generate_bilingual_summary(full_content)
                     self.ai_cache.cache_summary(article_id, arabic_summary, english_summary)
-                    logger.info(f"🔄 Cache miss: Generated summary for article {article_id}")
+                    logger.info("🔄 Cache Miss - Generated Summary", [
+                        ("Article ID", article_id),
+                    ])
 
                 # Check cache for team tag
                 cached_team = self.ai_cache.get_team_tag(article_id)
                 if cached_team:
                     team_tag = cached_team
-                    logger.info(f"💾 Cache hit: Using cached team tag for article {article_id}")
+                    logger.info("💾 Cache Hit - Team Tag", [
+                        ("Article ID", article_id),
+                    ])
                 else:
                     team_tag = await self._detect_team_tag(ai_title, full_content)
                     self.ai_cache.cache_team_tag(article_id, team_tag)
-                    logger.info(f"🔄 Cache miss: Generated team tag for article {article_id}")
+                    logger.info("🔄 Cache Miss - Generated Team Tag", [
+                        ("Article ID", article_id),
+                    ])
 
                 article = Article(
                     title=ai_title,
@@ -288,10 +311,17 @@ class SoccerScraper(BaseScraper):
                     return enclosure.get("href")
 
         # Try content
+        content_field = entry.get("content", [{}])
+        content_value = ""
+        if isinstance(content_field, list) and content_field:
+            content_value = content_field[0].get("value", "")
+        elif isinstance(content_field, dict):
+            content_value = content_field.get("value", "")
+
         content = (
             entry.get("summary", "")
             or entry.get("description", "")
-            or entry.get("content", [{}])[0].get("value", "")
+            or content_value
         )
 
         if content:
@@ -365,16 +395,24 @@ class SoccerScraper(BaseScraper):
 
                 if content_text:
                     content_text = "\n\n".join(line.strip() for line in content_text.split("\n") if line.strip())
-                    logger.info(f"⚽ Extracted from {url} - Image: {image_url[:50] if image_url else 'None'}")
+                    logger.info("⚽ Content Extracted", [
+                        ("URL", url[:50]),
+                        ("Image", image_url[:50] if image_url else "None"),
+                    ])
                     return (content_text, image_url)
                 else:
                     return ("Could not extract article text", image_url)
 
         except asyncio.TimeoutError:
-            logger.warning(f"Timeout fetching soccer article from {url}")
+            logger.warning("⚽ Timeout Fetching Soccer Article", [
+                ("URL", url[:50]),
+            ])
             return ("Article fetch timed out", None)
         except Exception as e:
-            logger.warning(f"Failed to extract soccer content from {url}: {str(e)[:100]}")
+            logger.warning("⚽ Content Extraction Failed", [
+                ("URL", url[:50]),
+                ("Error", str(e)[:100]),
+            ])
             return ("Content extraction failed", None)
 
     def _make_url_absolute(self, url_str: str, base_url: str) -> str:
@@ -415,11 +453,15 @@ class SoccerScraper(BaseScraper):
 
             ai_title = response.strip()
             if ai_title and 3 <= len(ai_title.split()) <= 7:
-                logger.info(f"⚽ AI generated soccer title: '{ai_title}'")
+                logger.info("⚽ AI Generated Soccer Title", [
+                    ("Title", ai_title),
+                ])
                 return ai_title
             return original_title
         except Exception as e:
-            logger.warning(f"Failed to generate AI soccer title: {str(e)[:100]}")
+            logger.warning("⚽ Failed to Generate AI Soccer Title", [
+                ("Error", str(e)[:100]),
+            ])
             return original_title
 
     async def _detect_team_tag(self, title: str, content: str) -> str:
@@ -448,12 +490,19 @@ class SoccerScraper(BaseScraper):
 
             detected_team = response.strip()
             if detected_team in self.TEAM_CATEGORIES:
-                logger.info(f"⚽ Detected team tag: '{detected_team}'")
+                logger.info("⚽ Detected Team Tag", [
+                    ("Team", detected_team),
+                ])
                 return detected_team
             else:
-                logger.warning(f"AI returned invalid team '{detected_team}' - using International")
+                logger.warning("⚽ Invalid Team Returned", [
+                    ("Team", detected_team),
+                    ("Fallback", "International"),
+                ])
                 return "International"
 
         except Exception as e:
-            logger.warning(f"Failed to detect team tag: {str(e)[:100]}")
+            logger.warning("⚽ Failed to Detect Team Tag", [
+                ("Error", str(e)[:100]),
+            ])
             return "International"

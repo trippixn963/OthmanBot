@@ -55,7 +55,7 @@ async def detect_debate_tags(title: str, description: str = "") -> List[int]:
             logger.error("OPENAI_API_KEY not found - cannot detect tags")
             return []
 
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key, timeout=30.0)
 
         # Build the tag options for the AI
         tag_options = "\n".join([
@@ -115,11 +115,17 @@ Tags:"""
         # Limit to 2 tags maximum
         tag_ids = tag_ids[:2]
 
-        logger.info(f"AI detected tags for '{title}': {tag_names} -> {tag_ids}")
+        logger.info("AI Detected Tags", [
+            ("Title", title[:50]),
+            ("Tags", ", ".join(tag_names)),
+            ("IDs", str(tag_ids)),
+        ])
         return tag_ids
 
     except Exception as e:
-        logger.error(f"Failed to detect debate tags: {e}")
+        logger.error("Failed To Detect Debate Tags", [
+            ("Error", str(e)),
+        ])
         return []
 
 

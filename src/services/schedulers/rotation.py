@@ -22,6 +22,7 @@ from typing import Optional, Callable, Any
 from enum import Enum
 
 from src.core.logger import logger
+from src.core.config import SCHEDULER_ERROR_RETRY
 
 
 # =============================================================================
@@ -117,17 +118,20 @@ class ContentRotationScheduler:
                     except ValueError:
                         self.next_content_type = ContentType.NEWS
 
-                    logger.info(
-                        f"🔄 Loaded content rotation state: "
-                        f"{'RUNNING' if self.is_running else 'STOPPED'}, "
-                        f"next={self.next_content_type.value}"
-                    )
+                    logger.info("🔄 Loaded Content Rotation State", [
+                        ("Status", "RUNNING" if self.is_running else "STOPPED"),
+                        ("Next Type", self.next_content_type.value),
+                    ])
             else:
                 # Default: start with news
                 self.next_content_type = ContentType.NEWS
-                logger.info("🔄 Starting fresh content rotation (beginning with news)")
-        except Exception as e:
-            logger.warning(f"Failed to load content rotation state: {e}")
+                logger.info("🔄 Starting Fresh Content Rotation", [
+                    ("Starting With", "news"),
+                ])
+        except (json.JSONDecodeError, IOError, OSError) as e:
+            logger.warning("🔄 Failed to Load Content Rotation State", [
+                ("Error", str(e)),
+            ])
             self.is_running = False
             self.next_content_type = ContentType.NEWS
 
@@ -139,8 +143,10 @@ class ContentRotationScheduler:
                     "is_running": self.is_running,
                     "next_content_type": self.next_content_type.value,
                 }, f, indent=2)
-        except Exception as e:
-            logger.warning(f"Failed to save content rotation state: {e}")
+        except (IOError, OSError) as e:
+            logger.warning("🔄 Failed to Save Content Rotation State", [
+                ("Error", str(e)),
+            ])
 
     # -------------------------------------------------------------------------
     # Start/Stop Controls
@@ -157,11 +163,13 @@ class ContentRotationScheduler:
             True if started successfully, False if already running
         """
         if post_immediately:
-            logger.info("🔄 Posting content immediately (test mode)")
+            logger.info("🔄 Test Mode Triggered", [
+                ("Action", "Posting content immediately"),
+            ])
             await self._post_next_content()
 
         if self.task and not self.task.done():
-            logger.warning("Content rotation scheduler is already running")
+            logger.warning("🔄 Scheduler Already Running")
             return False
 
         self.is_running = True
@@ -170,10 +178,10 @@ class ContentRotationScheduler:
         self.task = asyncio.create_task(self._schedule_loop())
 
         next_post: datetime = self._calculate_next_post_time()
-        logger.success(
-            f"🔄 Content rotation scheduler started - "
-            f"Next post at {next_post.strftime('%I:%M %p')} ({self.next_content_type.value})"
-        )
+        logger.success("🔄 Content Rotation Scheduler Started", [
+            ("Next Post", next_post.strftime('%I:%M %p')),
+            ("Content Type", self.next_content_type.value),
+        ])
         return True
 
     async def stop(self) -> bool:
@@ -184,7 +192,7 @@ class ContentRotationScheduler:
             True if stopped successfully, False if not running
         """
         if not self.is_running:
-            logger.warning("Content rotation scheduler is not running")
+            logger.warning("🔄 Scheduler Not Running")
             return False
 
         self.is_running = False
@@ -197,7 +205,7 @@ class ContentRotationScheduler:
             except asyncio.CancelledError:
                 pass
 
-        logger.success("🔄 Content rotation scheduler stopped")
+        logger.success("🔄 Content Rotation Scheduler Stopped")
         return True
 
     # -------------------------------------------------------------------------
@@ -219,23 +227,28 @@ class ContentRotationScheduler:
 
                 if wait_seconds > 0:
                     emoji = self.emojis[self.next_content_type]
-                    logger.info(
-                        f"{emoji} Next content rotation post scheduled for "
-                        f"{next_post_time.strftime('%I:%M %p')} "
-                        f"({self.next_content_type.value}) "
-                        f"(in {wait_seconds / 60:.1f} minutes)"
-                    )
+                    logger.info(f"{emoji} Next Content Rotation Scheduled", [
+                        ("Content Type", self.next_content_type.value),
+                        ("Time", next_post_time.strftime('%I:%M %p')),
+                        ("In", f"{wait_seconds / 60:.1f} minutes"),
+                    ])
                     await asyncio.sleep(wait_seconds)
 
                 if self.is_running:
                     await self._post_next_content()
 
             except asyncio.CancelledError:
-                logger.info("Content rotation scheduler loop cancelled")
+                logger.info("🔄 Scheduler Loop Cancelled", [
+                    ("Type", "Content Rotation"),
+                ])
                 break
             except Exception as e:
-                logger.error(f"Content rotation scheduler loop error: {e}")
-                await asyncio.sleep(300)  # Retry after 5 minutes on error
+                logger.error("🔄 Scheduler Loop Error", [
+                    ("Type", "Content Rotation"),
+                    ("Error", str(e)),
+                    ("Retry In", "5 minutes"),
+                ])
+                await asyncio.sleep(SCHEDULER_ERROR_RETRY)
 
     async def _post_next_content(self) -> None:
         """
@@ -254,14 +267,18 @@ class ContentRotationScheduler:
             callback = self.callbacks[content_type]
             scraper = self.scrapers[content_type]
 
-            logger.info(f"{emoji}⏰ Hourly content rotation triggered: {content_type.value}")
+            logger.info(f"{emoji} Hourly Content Rotation Triggered", [
+                ("Content Type", content_type.value),
+            ])
 
             # Check if this content type has new unposted articles
             if scraper and await self._has_new_content(content_type, scraper):
                 # Post this content type
                 try:
                     await callback()
-                    logger.success(f"{emoji} Posted {content_type.value} content successfully")
+                    logger.success(f"{emoji} Content Posted Successfully", [
+                        ("Content Type", content_type.value),
+                    ])
 
                     # Move to next content type in rotation for next hour
                     self._rotate_to_next_type()
@@ -269,19 +286,28 @@ class ContentRotationScheduler:
                     return
 
                 except Exception as e:
-                    logger.error(f"Failed to post {content_type.value}: {e}")
+                    logger.error(f"{emoji} Failed to Post Content", [
+                        ("Content Type", content_type.value),
+                        ("Error", str(e)),
+                    ])
                     # Still rotate even if posting failed
                     self._rotate_to_next_type()
                     self._save_state()
                     return
             else:
                 # No new content for this type, try next type
-                logger.info(f"{emoji} No new {content_type.value} content available - skipping to next type")
+                logger.info(f"{emoji} No New Content Available", [
+                    ("Content Type", content_type.value),
+                    ("Action", "Skipping to next type"),
+                ])
                 self._rotate_to_next_type()
                 attempts += 1
 
         # All content types exhausted - log and wait for next hour
-        logger.warning("🔄 No new content available from any source - skipping this hour")
+        logger.warning("🔄 No Content Available", [
+            ("Sources Checked", "All (news, soccer, gaming)"),
+            ("Action", "Skipping this hour"),
+        ])
 
     async def _has_new_content(self, content_type: ContentType, scraper: Any) -> bool:
         """
@@ -308,7 +334,10 @@ class ContentRotationScheduler:
             return bool(articles)
 
         except Exception as e:
-            logger.error(f"Error checking for new {content_type.value} content: {e}")
+            logger.error("🔄 Content Check Error", [
+                ("Content Type", content_type.value),
+                ("Error", str(e)),
+            ])
             return False
 
     def _rotate_to_next_type(self) -> None:

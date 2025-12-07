@@ -16,10 +16,24 @@ Server: discord.gg/syria
 """
 
 import asyncio
+import aiohttp
+import random
 from functools import wraps
 from typing import Callable, Any, Optional
 
+import discord
+
 from src.core.logger import logger
+
+
+# Specific exceptions that should be retried (transient errors)
+RETRYABLE_EXCEPTIONS = (
+    aiohttp.ClientError,
+    discord.HTTPException,
+    asyncio.TimeoutError,
+    ConnectionError,
+    TimeoutError,
+)
 
 
 def exponential_backoff(
@@ -49,8 +63,10 @@ def exponential_backoff(
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        """Wrap async function with exponential backoff retry logic."""
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            """Execute wrapped function with automatic retry on failure."""
             last_exception: Optional[Exception] = None
 
             for attempt in range(max_retries):
@@ -60,7 +76,8 @@ def exponential_backoff(
                     # Subsequent attempts happen after backoff delay
                     return await func(*args, **kwargs)
 
-                except Exception as e:
+                except RETRYABLE_EXCEPTIONS as e:
+                    # Only retry transient/network errors
                     last_exception = e
 
                     # DESIGN: If this was the last attempt, re-raise exception
@@ -71,17 +88,23 @@ def exponential_backoff(
                         )
                         raise
 
-                    # DESIGN: Calculate exponential backoff delay
+                    # DESIGN: Calculate exponential backoff delay with jitter
                     # attempt=0: delay = 10s
                     # attempt=1: delay = 20s
                     # attempt=2: delay = 40s
                     # Capped at max_delay to prevent excessive waits
                     delay: float = min(base_delay * (2**attempt), max_delay)
+                    # Add jitter (0-10% of delay) to prevent thundering herd
+                    delay += random.uniform(0, delay * 0.1)
 
-                    logger.warning(
-                        f"⚠️ {func.__name__} attempt {attempt + 1}/{max_retries} failed: {e}"
-                    )
-                    logger.info(f"🔄 Retrying in {delay}s...")
+                    logger.warning("⚠️ Retry Attempt Failed", [
+                        ("Function", func.__name__),
+                        ("Attempt", f"{attempt + 1}/{max_retries}"),
+                        ("Error", str(e)),
+                    ])
+                    logger.info("🔄 Retrying", [
+                        ("Delay", f"{delay:.1f}s"),
+                    ])
 
                     # DESIGN: Wait before retrying
                     # asyncio.sleep is non-blocking, allows other tasks to run

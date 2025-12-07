@@ -8,13 +8,26 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import asyncio
 import json
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional, TYPE_CHECKING
 import discord
 
 from src.core.logger import logger
+from src.utils import (
+    add_reactions_with_delay,
+    send_message_with_retry,
+    edit_message_with_retry,
+    edit_thread_with_retry,
+    delete_message_safe,
+    remove_reaction_safe,
+)
+
+if TYPE_CHECKING:
+    from src.bot import OthmanBot
 from src.core.config import DEBATES_FORUM_ID, MODERATOR_ROLE_ID, DEVELOPER_ID
 from src.services.debates.analytics import (
     calculate_debate_analytics,
@@ -28,6 +41,26 @@ from src.services.debates.tags import detect_debate_tags
 # =============================================================================
 
 UPVOTE_EMOJI = "\u2b06\ufe0f"  # ⬆️
+
+
+def _is_bot_ready(bot: "OthmanBot") -> bool:
+    """
+    Check if the bot is fully ready to handle events.
+
+    This prevents race conditions where events fire before on_ready() completes
+    and services are initialized.
+
+    Args:
+        bot: The OthmanBot instance
+
+    Returns:
+        True if bot is ready and has debates_service initialized
+    """
+    if not bot.is_ready():
+        return False
+    if not hasattr(bot, 'debates_service') or bot.debates_service is None:
+        return False
+    return True
 DOWNVOTE_EMOJI = "\u2b07\ufe0f"  # ⬇️
 PARTICIPATE_EMOJI = "✅"  # Checkmark for participation access control
 MIN_MESSAGE_LENGTH = 200  # Minimum characters for Latin/English replies
@@ -52,16 +85,57 @@ def _get_min_message_length(text: str) -> int:
 DEBATE_COUNTER_FILE = Path("data/debate_counter.json")
 DEBATE_MANAGEMENT_ROLE_ID = MODERATOR_ROLE_ID  # Debate Management role - can post without reacting
 ANALYTICS_UPDATE_COOLDOWN = 30  # Seconds between analytics updates per thread
+ANALYTICS_CACHE_MAX_SIZE = 100  # Maximum entries in the throttle cache
+ANALYTICS_CACHE_CLEANUP_AGE = 3600  # Remove entries older than 1 hour
 
-# In-memory cache for analytics update throttling
+# In-memory cache for analytics update throttling with lock for thread safety
 _analytics_last_update: Dict[int, datetime] = {}  # thread_id -> last_update_time
+_analytics_lock: asyncio.Lock = asyncio.Lock()  # Protect concurrent access
+
+
+async def _cleanup_analytics_cache() -> None:
+    """
+    Remove stale entries from the analytics throttle cache to prevent memory leaks.
+
+    IMPORTANT: Must be called from within async with _analytics_lock to prevent race conditions.
+    This function modifies the global cache dict and must be protected by the lock.
+    """
+    global _analytics_last_update
+
+    now = datetime.now()
+    # Always remove entries older than ANALYTICS_CACHE_CLEANUP_AGE seconds (even below max)
+    stale_threshold = now - timedelta(seconds=ANALYTICS_CACHE_CLEANUP_AGE)
+
+    # Create list of keys to remove (avoid modifying dict during iteration)
+    stale_keys = [
+        thread_id for thread_id, last_update in list(_analytics_last_update.items())
+        if last_update < stale_threshold
+    ]
+
+    for key in stale_keys:
+        del _analytics_last_update[key]
+
+    # If still over max, remove oldest entries
+    if len(_analytics_last_update) > ANALYTICS_CACHE_MAX_SIZE:
+        # Sort by timestamp and remove oldest entries to get back under limit
+        sorted_entries = sorted(list(_analytics_last_update.items()), key=lambda x: x[1])
+        entries_to_remove = len(_analytics_last_update) - ANALYTICS_CACHE_MAX_SIZE
+        for thread_id, _ in sorted_entries[:entries_to_remove]:
+            del _analytics_last_update[thread_id]
+            stale_keys.append(thread_id)
+
+    if stale_keys:
+        logger.debug("🧹 Cleaned Analytics Cache", [
+            ("Removed", str(len(stale_keys))),
+            ("Remaining", str(len(_analytics_last_update))),
+        ])
 
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
 
-async def update_analytics_embed(bot, thread: discord.Thread, force: bool = False) -> None:
+async def update_analytics_embed(bot: "OthmanBot", thread: discord.Thread, force: bool = False) -> None:
     """
     Update the analytics embed for a debate thread.
 
@@ -72,32 +146,45 @@ async def update_analytics_embed(bot, thread: discord.Thread, force: bool = Fals
 
     DESIGN: Updates analytics embed in-place without reposting
     Throttled to 30 seconds per thread to avoid rate limits
+    Uses asyncio.Lock for thread-safe cache access
     """
     # Check if debates service is available
     if not hasattr(bot, 'debates_service') or bot.debates_service is None:
         return
 
-    # Throttle check - skip if updated recently (unless forced)
-    if not force:
-        last_update = _analytics_last_update.get(thread.id)
-        if last_update:
-            elapsed = (datetime.now() - last_update).total_seconds()
-            if elapsed < ANALYTICS_UPDATE_COOLDOWN:
-                logger.debug(f"⏳ Throttled analytics update for thread {thread.id} ({elapsed:.0f}s < {ANALYTICS_UPDATE_COOLDOWN}s)")
-                return
+    # Throttle check with lock - skip if updated recently (unless forced)
+    async with _analytics_lock:
+        if not force:
+            last_update = _analytics_last_update.get(thread.id)
+            if last_update:
+                elapsed = (datetime.now() - last_update).total_seconds()
+                if elapsed < ANALYTICS_UPDATE_COOLDOWN:
+                    logger.debug("⏳ Throttled Analytics Update", [
+                        ("Thread ID", str(thread.id)),
+                        ("Elapsed", f"{elapsed:.0f}s"),
+                        ("Cooldown", f"{ANALYTICS_UPDATE_COOLDOWN}s"),
+                    ])
+                    return
 
     try:
         # Get analytics message ID from database
         analytics_message_id = bot.debates_service.db.get_analytics_message(thread.id)
         if not analytics_message_id:
-            logger.debug(f"No analytics message found for thread {thread.id}")
+            logger.debug("📊 No Analytics Message Found", [
+                ("Thread ID", str(thread.id)),
+            ])
             return
 
         # Fetch the analytics message
         try:
             analytics_message = await thread.fetch_message(analytics_message_id)
         except discord.NotFound:
-            logger.warning(f"Analytics message {analytics_message_id} not found in thread {thread.id}")
+            # Clear stale reference to prevent repeated warnings
+            bot.debates_service.db.clear_analytics_message(thread.id)
+            logger.info("📊 Cleared Stale Analytics Reference", [
+                ("Message ID", str(analytics_message_id)),
+                ("Thread ID", str(thread.id)),
+            ])
             return
 
         # Calculate updated analytics
@@ -110,18 +197,26 @@ async def update_analytics_embed(bot, thread: discord.Thread, force: bool = Fals
         # Generate updated embed
         embed = await generate_analytics_embed(bot, analytics)
 
-        # Edit the message
-        await analytics_message.edit(embed=embed)
+        # Edit the message with rate limit handling
+        await edit_message_with_retry(analytics_message, embed=embed)
 
-        # Update throttle timestamp
-        _analytics_last_update[thread.id] = datetime.now()
+        # Update throttle timestamp and clean up old entries (with lock)
+        async with _analytics_lock:
+            _analytics_last_update[thread.id] = datetime.now()
+            await _cleanup_analytics_cache()
 
-        logger.debug(f"📊 Updated analytics embed for debate thread {thread.name}")
+        logger.debug("📊 Updated Analytics Embed", [
+            ("Thread", thread.name[:50]),
+        ])
 
     except discord.HTTPException as e:
-        logger.warning(f"Failed to update analytics embed: {e}")
-    except Exception as e:
-        logger.error(f"Error updating analytics embed: {e}")
+        logger.warning("📊 Failed To Update Analytics Embed", [
+            ("Error", str(e)),
+        ])
+    except (ValueError, KeyError, TypeError) as e:
+        logger.error("📊 Data Error Updating Analytics Embed", [
+            ("Error", str(e)),
+        ])
 
 
 def get_next_debate_number() -> int:
@@ -142,8 +237,10 @@ def get_next_debate_number() -> int:
             json.dump({"count": next_num}, f)
 
         return next_num
-    except Exception as e:
-        logger.warning(f"Failed to get debate number: {e}")
+    except (json.JSONDecodeError, IOError, OSError) as e:
+        logger.warning("🔢 Failed To Get Debate Number", [
+            ("Error", str(e)),
+        ])
         return 1
 
 
@@ -209,7 +306,7 @@ def has_debate_management_role(member) -> bool:
 # Message Handler
 # =============================================================================
 
-async def on_message_handler(bot, message: discord.Message) -> None:
+async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None:
     """
     Event handler for messages in the debates forum.
 
@@ -225,6 +322,10 @@ async def on_message_handler(bot, message: discord.Message) -> None:
 
     ACCESS CONTROL: Checks if users have reacted with ✅ to the analytics embed before allowing them to post
     """
+    # Wait for bot to be fully ready (prevents init race conditions)
+    if not _is_bot_ready(bot):
+        return
+
     # Ignore bot messages
     if message.author.bot:
         return
@@ -249,25 +350,40 @@ async def on_message_handler(bot, message: discord.Message) -> None:
         if is_banned:
             try:
                 await message.delete()
-                logger.info(f"🚫 Deleted message from banned user {message.author.name} in thread {message.channel.id}")
-                # Send ephemeral-style DM to user
+                logger.info("Banned User Message Deleted", [
+                    ("User", f"{message.author.name} ({message.author.id})"),
+                    ("Thread", f"{message.channel.name} ({message.channel.id})"),
+                    ("Content Preview", message.content[:50] + "..." if len(message.content) > 50 else message.content),
+                ])
+                # Send ephemeral-style DM to user with rate limit handling
                 try:
-                    await message.author.send(
-                        f"🚫 You are banned from posting in this debate thread.\n"
-                        f"Contact a moderator if you believe this is a mistake."
+                    await send_message_with_retry(
+                        message.author,
+                        content=(
+                            f"🚫 You are banned from posting in this debate thread.\n"
+                            f"Contact a moderator if you believe this is a mistake."
+                        )
                     )
                 except discord.Forbidden:
                     pass  # User has DMs disabled
             except discord.HTTPException as e:
-                logger.warning(f"Failed to delete banned user message: {e}")
+                logger.warning("🚫 Failed To Delete Banned User Message", [
+                    ("Error", str(e)),
+                ])
             return
 
     # HOSTILITY CHECK: Process message for hostility detection
     if hasattr(bot, 'hostility_tracker') and bot.hostility_tracker is not None:
         try:
             await bot.hostility_tracker.process_message(message, bot)
-        except Exception as e:
-            logger.error(f"Hostility check error: {e}")
+        except discord.HTTPException as e:
+            logger.warning("🔥 Hostility Check Discord Error", [
+                ("Error", str(e)),
+            ])
+        except (ValueError, KeyError, AttributeError) as e:
+            logger.error("🔥 Hostility Check Data Error", [
+                ("Error", str(e)),
+            ])
 
     # ACCESS CONTROL BYPASS: Skip for Debate Management role and developer
     is_debate_manager = has_debate_management_role(message.author)
@@ -275,7 +391,12 @@ async def on_message_handler(bot, message: discord.Message) -> None:
     skip_access_control = is_debate_manager or is_developer
 
     if skip_access_control:
-        logger.info(f"✅ Bypassing access control for {message.author.name} (manager={is_debate_manager}, dev={is_developer})")
+        logger.info("Access Control Bypassed", [
+            ("User", f"{message.author.name} ({message.author.id})"),
+            ("Thread", f"{message.channel.name} ({message.channel.id})"),
+            ("Is Manager", str(is_debate_manager)),
+            ("Is Developer", str(is_developer)),
+        ])
 
     # ACCESS CONTROL: Check if user has reacted to the analytics embed
     if not skip_access_control and hasattr(bot, 'debates_service') and bot.debates_service is not None:
@@ -305,52 +426,89 @@ async def on_message_handler(bot, message: discord.Message) -> None:
                             # Delete the user's message first
                             await message.delete()
 
-                            # Try to send a DM to the user
+                            # Try to send a DM to the user with rate limit handling
                             try:
-                                await message.author.send(
-                                    f"Hi {message.author.name},\n\n"
-                                    f"To participate in the debate **{message.channel.name}**, you need to react with ✅ to the analytics embed first.\n\n"
-                                    f"Please go back to the thread and react with ✅ to the analytics message to unlock posting access."
+                                await send_message_with_retry(
+                                    message.author,
+                                    content=(
+                                        f"Hi {message.author.name},\n\n"
+                                        f"To participate in the debate **{message.channel.name}**, you need to react with ✅ to the analytics embed first.\n\n"
+                                        f"Please go back to the thread and react with ✅ to the analytics message to unlock posting access."
+                                    )
                                 )
-                                logger.info(
-                                    f"🚫 Blocked {message.author.name} from posting - sent DM with instructions"
-                                )
+                                logger.info("User Blocked - No Participation React", [
+                                    ("User", f"{message.author.name} ({message.author.id})"),
+                                    ("Thread", f"{message.channel.name} ({message.channel.id})"),
+                                    ("Action", "DM sent with instructions"),
+                                ])
                             except discord.Forbidden:
                                 # User has DMs disabled, send a temporary message in the channel
-                                temp_msg = await message.channel.send(
-                                    f"{message.author.mention} You need to react with ✅ to the analytics embed above to participate in this debate.",
+                                await send_message_with_retry(
+                                    message.channel,
+                                    content=f"{message.author.mention} You need to react with ✅ to the analytics embed above to participate in this debate.",
                                     delete_after=8
                                 )
-                                logger.info(
-                                    f"🚫 Blocked {message.author.name} from posting - sent channel message (DMs disabled)"
-                                )
+                                logger.info("User Blocked - No Participation React", [
+                                    ("User", f"{message.author.name} ({message.author.id})"),
+                                    ("Thread", f"{message.channel.name} ({message.channel.id})"),
+                                    ("Action", "Channel message sent (DMs disabled)"),
+                                ])
                         except discord.HTTPException as e:
-                            logger.warning(f"Failed to enforce access control: {e}")
+                            logger.warning("🔐 Failed To Enforce Access Control", [
+                            ("Error", str(e)),
+                        ])
                         return
 
                 except discord.NotFound:
-                    logger.warning(f"Analytics message {analytics_message_id} not found in thread {message.channel.id}")
-        except Exception as e:
-            logger.error(f"Error checking access control: {e}")
+                    # Clear stale reference to prevent repeated warnings
+                    bot.debates_service.db.clear_analytics_message(message.channel.id)
+                    logger.info("🔐 Cleared Stale Analytics Reference (Access Control)", [
+                        ("Message ID", str(analytics_message_id)),
+                        ("Thread ID", str(message.channel.id)),
+                    ])
+        except discord.HTTPException as e:
+            logger.warning("🔐 Access Control HTTP Error", [
+                ("Error", str(e)),
+            ])
+        except (ValueError, AttributeError) as e:
+            logger.error("🔐 Error Checking Access Control", [
+                ("Error", str(e)),
+            ])
 
     # For regular replies - only add vote reactions for long messages
     # Use language-aware minimum: 400 chars for Arabic, 200 chars for English/other
     min_length = _get_min_message_length(message.content)
     if len(message.content) >= min_length:
-        # Add upvote and downvote reactions
+        # Add upvote and downvote reactions with rate limit handling
         try:
-            await message.add_reaction(UPVOTE_EMOJI)
-            await message.add_reaction(DOWNVOTE_EMOJI)
-            logger.info(
-                f"🗳️ Added vote reactions to {message.author.name}'s reply in debates"
-            )
+            await add_reactions_with_delay(message, [UPVOTE_EMOJI, DOWNVOTE_EMOJI])
+            logger.info("Vote Reactions Added to Reply", [
+                ("User", f"{message.author.name} ({message.author.id})"),
+                ("Thread", f"{message.channel.name} ({message.channel.id})"),
+                ("Message ID", str(message.id)),
+                ("Content Length", f"{len(message.content)} chars"),
+            ])
         except discord.HTTPException as e:
-            logger.warning(f"Failed to add vote reactions: {e}")
+            logger.warning("🗳️ Failed To Add Vote Reactions", [
+                ("Error", str(e)),
+            ])
     else:
-        logger.debug(
-            f"⏭️ Skipped reactions for {message.author.name}'s short message "
-            f"({len(message.content)} chars, min {min_length})"
-        )
+        logger.debug("⏭️ Skipped Reactions For Short Message", [
+            ("User", message.author.name),
+            ("Length", f"{len(message.content)} chars"),
+            ("Min Required", f"{min_length} chars"),
+        ])
+
+    # Track participation for leaderboard (count all messages in debate threads)
+    if hasattr(bot, 'debates_service') and bot.debates_service is not None:
+        try:
+            await bot.debates_service.db.increment_participation_async(
+                message.channel.id, message.author.id
+            )
+        except Exception as e:
+            logger.warning("📊 Failed To Track Participation", [
+                ("Error", str(e)),
+            ])
 
     # ALWAYS update analytics embed after any valid message
     await update_analytics_embed(bot, message.channel)
@@ -360,7 +518,7 @@ async def on_message_handler(bot, message: discord.Message) -> None:
 # Thread Create Handler
 # =============================================================================
 
-async def on_thread_create_handler(bot, thread: discord.Thread) -> None:
+async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> None:
     """
     Event handler for new thread creation in debates forum.
 
@@ -372,6 +530,10 @@ async def on_thread_create_handler(bot, thread: discord.Thread) -> None:
     Renames thread to "N | Original Title" format
     Posts analytics embed with debate rules and ✅ reaction for participation access
     """
+    # Wait for bot to be fully ready (prevents init race conditions)
+    if not _is_bot_ready(bot):
+        return
+
     # Check if it's in debates forum
     if thread.parent_id != DEBATES_FORUM_ID:
         return
@@ -402,7 +564,7 @@ async def on_thread_create_handler(bot, thread: discord.Thread) -> None:
                 break
 
         if starter_message is None:
-            logger.warning("Could not find starter message for debate thread")
+            logger.warning("🔍 Could Not Find Starter Message For Debate Thread")
             return
 
         # Skip if it's a bot message
@@ -410,17 +572,27 @@ async def on_thread_create_handler(bot, thread: discord.Thread) -> None:
             return
 
         # Add upvote and downvote reactions to the original post (always, regardless of language)
+        # Use rate-limited helper to prevent 429 errors
         try:
-            await starter_message.add_reaction(UPVOTE_EMOJI)
-            await starter_message.add_reaction(DOWNVOTE_EMOJI)
-            logger.info(f"🗳️ Added vote reactions to {starter_message.author.name}'s debate post")
+            await add_reactions_with_delay(starter_message, [UPVOTE_EMOJI, DOWNVOTE_EMOJI])
+            logger.info("Vote Reactions Added to Debate Post", [
+                ("Author", f"{starter_message.author.name} ({starter_message.author.id})"),
+                ("Thread", f"{thread.name} ({thread.id})"),
+                ("Content Length", f"{len(starter_message.content)} chars"),
+            ])
         except discord.HTTPException as e:
-            logger.warning(f"Failed to add vote reactions: {e}")
+            logger.warning("🗳️ Failed To Add Vote Reactions To Debate Post", [
+                ("Error", str(e)),
+            ])
 
         # VALIDATION: Check if title is English-only
         original_title = thread.name
         if not is_english_only(original_title):
-            logger.info(f"🚫 Non-English debate title detected: '{original_title}' by {starter_message.author.name}")
+            logger.warning("Non-English Debate Title Detected", [
+                ("Author", f"{starter_message.author.name} ({starter_message.author.id})"),
+                ("Title", original_title),
+                ("Thread ID", str(thread.id)),
+            ])
 
             try:
                 # Import translation utility
@@ -428,11 +600,18 @@ async def on_thread_create_handler(bot, thread: discord.Thread) -> None:
 
                 # Get AI translation suggestion
                 suggested_title = translate_to_english(original_title)
-                logger.info(f"💡 AI suggested English title: '{suggested_title}'")
+                logger.info("AI Translation Suggested", [
+                    ("Original", original_title),
+                    ("Suggested", suggested_title),
+                ])
 
-                # Lock and archive the thread
-                await thread.edit(locked=True, archived=True)
-                logger.info(f"🔒 Locked and archived non-English debate thread: '{original_title}'")
+                # Lock and archive the thread with rate limit handling
+                await edit_thread_with_retry(thread, locked=True, archived=True)
+                logger.info("Thread Locked for Non-English Title", [
+                    ("Thread", f"{original_title} ({thread.id})"),
+                    ("Author", f"{starter_message.author.name} ({starter_message.author.id})"),
+                    ("Action", "Locked and archived"),
+                ])
 
                 # Post moderation message in the thread
                 moderation_message = (
@@ -444,11 +623,20 @@ async def on_thread_create_handler(bot, thread: discord.Thread) -> None:
                     f"**📌 Moderators:** Please rename this thread to an appropriate English title and unlock it."
                 )
 
-                await thread.send(moderation_message)
-                logger.info(f"📨 Posted moderation message in locked thread '{original_title}'")
+                await send_message_with_retry(thread, content=moderation_message)
+                logger.info("Moderation Message Posted", [
+                    ("Thread", f"{original_title} ({thread.id})"),
+                    ("Reason", "Non-English title"),
+                ])
 
-            except Exception as e:
-                logger.error(f"Failed to handle non-English title: {e}")
+            except discord.HTTPException as e:
+                logger.error("🌐 Failed To Handle Non-English Title (Discord Error)", [
+                    ("Error", str(e)),
+                ])
+            except (ValueError, AttributeError) as e:
+                logger.error("🌐 Failed To Handle Non-English Title (Data Error)", [
+                    ("Error", str(e)),
+                ])
 
             return
 
@@ -458,13 +646,22 @@ async def on_thread_create_handler(bot, thread: discord.Thread) -> None:
         # Only add number if not already numbered
         if not original_title.split("|")[0].strip().isdigit():
             new_title = f"{debate_number} | {original_title}"
-            try:
-                await thread.edit(name=new_title)
-                logger.info(
-                    f"📝 Renamed debate #{debate_number}: '{original_title}' → '{new_title}'"
-                )
-            except discord.HTTPException as e:
-                logger.warning(f"Failed to rename debate thread: {e}")
+            # Truncate to Discord's 100 character limit
+            if len(new_title) > 100:
+                new_title = new_title[:97] + "..."
+            # Use rate limit wrapper for thread edit
+            success = await edit_thread_with_retry(thread, name=new_title)
+            if success:
+                logger.success("New Debate Thread Created", [
+                    ("Number", f"#{debate_number}"),
+                    ("Author", f"{starter_message.author.name} ({starter_message.author.id})"),
+                    ("Title", new_title),
+                    ("Thread ID", str(thread.id)),
+                ])
+            else:
+                logger.warning("🔢 Failed To Rename Debate Thread", [
+                    ("Thread ID", str(thread.id)),
+                ])
 
 
         # AUTO-TAG: Detect and apply AI-powered tags
@@ -491,12 +688,23 @@ async def on_thread_create_handler(bot, thread: discord.Thread) -> None:
                             tags_to_apply.append(available_tags[tag_id])
 
                     if tags_to_apply:
-                        # Apply tags to the thread
-                        await thread.edit(applied_tags=tags_to_apply)
-                        tag_names = [tag.name for tag in tags_to_apply]
-                        logger.info(f"🏷️ Auto-applied tags to debate #{debate_number}: {', '.join(tag_names)}")
-        except Exception as e:
-            logger.error(f"Failed to auto-tag debate thread: {e}")
+                        # Apply tags to the thread with rate limit handling
+                        success = await edit_thread_with_retry(thread, applied_tags=tags_to_apply)
+                        if success:
+                            tag_names = [tag.name for tag in tags_to_apply]
+                            logger.info("Auto-Tags Applied to Debate", [
+                                ("Debate", f"#{debate_number}"),
+                                ("Thread ID", str(thread.id)),
+                                ("Tags", ", ".join(tag_names)),
+                            ])
+        except discord.HTTPException as e:
+            logger.warning("🏷️ Failed To Auto-Tag Debate Thread (Discord Error)", [
+                ("Error", str(e)),
+            ])
+        except (ValueError, KeyError, AttributeError) as e:
+            logger.error("🏷️ Failed To Auto-Tag Debate Thread (Data Error)", [
+                ("Error", str(e)),
+            ])
 
         # Post analytics embed
         if hasattr(bot, 'debates_service') and bot.debates_service is not None:
@@ -504,36 +712,60 @@ async def on_thread_create_handler(bot, thread: discord.Thread) -> None:
                 # Calculate initial analytics
                 analytics = await calculate_debate_analytics(thread, bot.debates_service.db)
 
-                # Generate and send analytics embed
+                # Generate and send analytics embed with rate limit handling
                 embed = await generate_analytics_embed(bot, analytics)
-                analytics_message = await thread.send(embed=embed)
+                analytics_message = await send_message_with_retry(thread, embed=embed)
 
-                # Add participation reaction for access control
-                await analytics_message.add_reaction(PARTICIPATE_EMOJI)
+                if not analytics_message:
+                    logger.warning("📊 Failed to send analytics embed")
+                    return
+
+                # Add participation reaction for access control (with rate limit handling)
+                await add_reactions_with_delay(analytics_message, [PARTICIPATE_EMOJI])
 
                 # Pin the analytics message
                 await analytics_message.pin()
 
-                # Delete the "pinned a message" system message
+                # Delete the "pinned a message" system message using safe delete
                 await asyncio.sleep(0.5)  # Wait for Discord to create the system message
                 async for msg in thread.history(limit=5):
                     if msg.type == discord.MessageType.pins_add:
-                        try:
-                            await msg.delete()
-                            logger.debug("🗑️ Deleted 'pinned a message' system message")
-                        except discord.HTTPException:
-                            pass
+                        await delete_message_safe(msg)
+                        logger.debug("🗑️ Deleted 'pinned a message' system message")
                         break
 
                 # Store analytics message ID in database
                 bot.debates_service.db.set_analytics_message(thread.id, analytics_message.id)
 
-                logger.info(f"📊 Posted and pinned analytics embed for debate #{debate_number} with access control")
-            except Exception as e:
-                logger.error(f"Failed to post analytics embed for debate thread: {e}")
+                # Track debate creator for leaderboard
+                try:
+                    await bot.debates_service.db.set_debate_creator_async(
+                        thread.id, starter_message.author.id
+                    )
+                except Exception as e:
+                    logger.warning("📊 Failed To Track Debate Creator", [
+                        ("Error", str(e)),
+                    ])
+
+                logger.info("Analytics Embed Posted", [
+                    ("Debate", f"#{debate_number}"),
+                    ("Thread ID", str(thread.id)),
+                    ("Message ID", str(analytics_message.id)),
+                    ("Pinned", "Yes"),
+                ])
+            except discord.HTTPException as e:
+                logger.warning("📊 Failed To Post Analytics Embed For Debate Thread", [
+                    ("Error", str(e)),
+                ])
+            except (ValueError, KeyError) as e:
+                logger.error("📊 Analytics Embed Data Error", [
+                    ("Error", str(e)),
+                ])
 
     except discord.HTTPException as e:
-        logger.warning(f"Failed to process debate thread creation: {e}")
+        logger.warning("🧵 Failed To Process Debate Thread Creation", [
+            ("Error", str(e)),
+        ])
 
 
 # =============================================================================
@@ -541,7 +773,7 @@ async def on_thread_create_handler(bot, thread: discord.Thread) -> None:
 # =============================================================================
 
 async def on_debate_reaction_add(
-    bot,
+    bot: "OthmanBot",
     reaction: discord.Reaction,
     user: discord.User
 ) -> None:
@@ -553,6 +785,10 @@ async def on_debate_reaction_add(
         reaction: The reaction that was added
         user: The user who added the reaction
     """
+    # Wait for bot to be fully ready (prevents init race conditions)
+    if not _is_bot_ready(bot):
+        return
+
     # Ignore bot reactions
     if user.bot:
         return
@@ -578,25 +814,38 @@ async def on_debate_reaction_add(
     if voter_id == author_id:
         try:
             await reaction.remove(user)
-            logger.debug(
-                f"🚫 Prevented self-vote: {user.name} tried to vote on their own post"
-            )
+            logger.info("Self-Vote Prevented", [
+                ("User", f"{user.name} ({user.id})"),
+                ("Thread", f"{message.channel.name} ({message.channel.id})"),
+                ("Message ID", str(message.id)),
+            ])
         except discord.HTTPException as e:
-            logger.warning(f"Failed to remove self-vote reaction: {e}")
+            logger.warning("🗳️ Failed To Remove Self-Vote Reaction", [
+                ("Error", str(e)),
+            ])
         return
 
     # Record the vote
+    vote_type = "Upvote" if emoji == UPVOTE_EMOJI else "Downvote"
     if emoji == UPVOTE_EMOJI:
         bot.debates_service.record_upvote(voter_id, message.id, author_id)
     else:
         bot.debates_service.record_downvote(voter_id, message.id, author_id)
+
+    logger.info("Vote Recorded", [
+        ("Voter", f"{user.name} ({user.id})"),
+        ("Author", f"{message.author.name} ({author_id})"),
+        ("Type", vote_type),
+        ("Thread", f"{message.channel.name} ({message.channel.id})"),
+        ("Message ID", str(message.id)),
+    ])
 
     # Update analytics embed
     await update_analytics_embed(bot, reaction.message.channel)
 
 
 async def on_debate_reaction_remove(
-    bot,
+    bot: "OthmanBot",
     reaction: discord.Reaction,
     user: discord.User
 ) -> None:
@@ -608,6 +857,10 @@ async def on_debate_reaction_remove(
         reaction: The reaction that was removed
         user: The user who removed the reaction
     """
+    # Wait for bot to be fully ready (prevents init race conditions)
+    if not _is_bot_ready(bot):
+        return
+
     # Ignore bot reactions
     if user.bot:
         return
@@ -626,7 +879,16 @@ async def on_debate_reaction_remove(
         return
 
     # Remove the vote
+    vote_type = "Upvote" if emoji == UPVOTE_EMOJI else "Downvote"
     bot.debates_service.remove_vote(user.id, reaction.message.id)
+
+    logger.info("Vote Removed", [
+        ("Voter", f"{user.name} ({user.id})"),
+        ("Author", f"{reaction.message.author.name} ({reaction.message.author.id})"),
+        ("Type", vote_type),
+        ("Thread", f"{reaction.message.channel.name} ({reaction.message.channel.id})"),
+        ("Message ID", str(reaction.message.id)),
+    ])
 
     # Update analytics embed
     await update_analytics_embed(bot, reaction.message.channel)
@@ -636,7 +898,7 @@ async def on_debate_reaction_remove(
 # Member Leave Handler
 # =============================================================================
 
-async def on_member_remove_handler(bot, member: discord.Member) -> None:
+async def on_member_remove_handler(bot: "OthmanBot", member: discord.Member) -> None:
     """
     Event handler for member leaving the server.
 
@@ -673,13 +935,14 @@ async def on_member_remove_handler(bot, member: discord.Member) -> None:
 
                 if starter_message:
                     for reaction in starter_message.reactions:
-                        try:
-                            await reaction.remove(member)
+                        # Use safe remove with delay between reactions
+                        success = await remove_reaction_safe(reaction, member)
+                        if success:
                             reactions_removed += 1
-                        except discord.HTTPException:
-                            pass
+                        await asyncio.sleep(0.3)  # Rate limit delay between reaction removals
             except discord.HTTPException:
                 pass
+            await asyncio.sleep(0.5)  # Delay between threads
 
         for thread in all_threads:
             # If user owns the thread, delete the entire thread
@@ -687,63 +950,80 @@ async def on_member_remove_handler(bot, member: discord.Member) -> None:
                 try:
                     await thread.delete()
                     deleted_threads += 1
-                    logger.info(
-                        f"🗑️ Deleted debate thread '{thread.name}' "
-                        f"(created by {member.name} who left)"
-                    )
+                    logger.info("Debate Thread Deleted - User Left", [
+                        ("User", f"{member.name} ({member.id})"),
+                        ("Thread", f"{thread.name} ({thread.id})"),
+                    ])
                 except discord.HTTPException as e:
-                    logger.warning(f"Failed to delete thread '{thread.name}': {e}")
+                    logger.warning("🗑️ Failed To Delete Thread", [
+                        ("Thread", thread.name),
+                        ("Error", str(e)),
+                    ])
             else:
                 # Delete all messages by this user in threads they don't own
                 try:
                     async for message in thread.history(limit=500):
                         if message.author.id == member.id:
-                            try:
-                                await message.delete()
+                            # Use safe delete with delay between deletes
+                            success = await delete_message_safe(message)
+                            if success:
                                 deleted_messages += 1
-                            except discord.HTTPException:
-                                pass  # Message may already be deleted
+                            await asyncio.sleep(0.5)  # Rate limit delay between message deletes
                 except discord.HTTPException as e:
-                    logger.warning(f"Failed to scan thread '{thread.name}' for messages: {e}")
+                    logger.warning("🔍 Failed To Scan Thread For Messages", [
+                        ("Thread", thread.name),
+                        ("Error", str(e)),
+                    ])
 
         # Reset karma and delete all database records for this user
         if hasattr(bot, 'debates_service') and bot.debates_service is not None:
             try:
                 deleted_data = bot.debates_service.db.delete_user_data(member.id)
-                logger.info(
-                    f"🗑️ Deleted database records for {member.name}: "
-                    f"karma={deleted_data.get('karma', 0)}, "
-                    f"votes_cast={deleted_data.get('votes_cast', 0)}, "
-                    f"votes_received={deleted_data.get('votes_received', 0)}, "
-                    f"bans={deleted_data.get('bans', 0)}, "
-                    f"hostility={deleted_data.get('hostility', 0)}"
-                )
-            except Exception as e:
-                logger.error(f"Failed to delete database records for {member.name}: {e}")
+                logger.info("User Database Records Deleted", [
+                    ("User", f"{member.name} ({member.id})"),
+                    ("Karma", str(deleted_data.get('karma', 0))),
+                    ("Votes Cast", str(deleted_data.get('votes_cast', 0))),
+                    ("Votes Received", str(deleted_data.get('votes_received', 0))),
+                    ("Bans", str(deleted_data.get('bans', 0))),
+                    ("Hostility Records", str(deleted_data.get('hostility', 0))),
+                ])
+            except (sqlite3.Error, AttributeError) as e:
+                logger.error("🗄️ Failed To Delete Database Records", [
+                    ("User", member.name),
+                    ("Error", str(e)),
+                ])
 
         # Update leaderboard to mark user as left
         if hasattr(bot, 'leaderboard_manager') and bot.leaderboard_manager is not None:
             try:
                 await bot.leaderboard_manager.on_member_leave(member.id)
-            except Exception as e:
-                logger.error(f"Failed to update leaderboard for {member.name}: {e}")
+            except (discord.HTTPException, AttributeError) as e:
+                logger.error("📊 Failed To Update Leaderboard For Leaving Member", [
+                    ("User", member.name),
+                    ("Error", str(e)),
+                ])
 
         # Log summary
         if deleted_threads > 0 or deleted_messages > 0 or reactions_removed > 0:
-            logger.info(
-                f"✅ Cleaned up {deleted_threads} thread(s), {deleted_messages} message(s), "
-                f"and {reactions_removed} reaction(s) from {member.name} who left the server"
-            )
+            logger.success("Member Leave Cleanup Complete", [
+                ("User", f"{member.name} ({member.id})"),
+                ("Threads Deleted", str(deleted_threads)),
+                ("Messages Deleted", str(deleted_messages)),
+                ("Reactions Removed", str(reactions_removed)),
+            ])
 
-    except Exception as e:
-        logger.error(f"Error cleaning up debate data for {member.name}: {e}")
+    except discord.HTTPException as e:
+        logger.error("👋 Discord Error Cleaning Up Debate Data", [
+            ("User", member.name),
+            ("Error", str(e)),
+        ])
 
 
 # =============================================================================
 # Member Join Handler
 # =============================================================================
 
-async def on_member_join_handler(bot, member: discord.Member) -> None:
+async def on_member_join_handler(bot: "OthmanBot", member: discord.Member) -> None:
     """
     Event handler for member joining the server.
 
@@ -762,8 +1042,191 @@ async def on_member_join_handler(bot, member: discord.Member) -> None:
                 member.name,
                 member.display_name
             )
+        except (discord.HTTPException, AttributeError) as e:
+            logger.error("📊 Failed To Update Leaderboard For Rejoining Member", [
+                ("User", member.name),
+                ("Error", str(e)),
+            ])
+
+
+# =============================================================================
+# Thread Delete Handler - Auto Renumbering
+# =============================================================================
+
+def _extract_debate_number(thread_name: str) -> Optional[int]:
+    """
+    Extract debate number from thread name.
+
+    Args:
+        thread_name: Thread name in format "N | Title"
+
+    Returns:
+        Debate number or None if not numbered
+    """
+    parts = thread_name.split("|", 1)
+    if len(parts) >= 1:
+        try:
+            return int(parts[0].strip())
+        except ValueError:
+            return None
+    return None
+
+
+async def _renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int) -> int:
+    """
+    Renumber all debates with numbers higher than the deleted one.
+
+    When debate #5 is deleted, debates 6, 7, 8... become 5, 6, 7...
+
+    Args:
+        bot: The OthmanBot instance
+        deleted_number: The debate number that was deleted
+
+    Returns:
+        Number of threads renumbered
+    """
+    debates_forum = bot.get_channel(DEBATES_FORUM_ID)
+    if not debates_forum:
+        return 0
+
+    renumbered_count = 0
+    threads_to_renumber = []
+
+    try:
+        # Collect all threads (active + archived)
+        all_threads = list(debates_forum.threads)
+        async for archived_thread in debates_forum.archived_threads(limit=100):
+            all_threads.append(archived_thread)
+
+        # Find threads with numbers higher than deleted
+        for thread in all_threads:
+            thread_number = _extract_debate_number(thread.name)
+            if thread_number is not None and thread_number > deleted_number:
+                threads_to_renumber.append((thread, thread_number))
+
+        # Sort by number (ascending) to rename in order
+        threads_to_renumber.sort(key=lambda x: x[1])
+
+        # Rename each thread
+        for thread, old_number in threads_to_renumber:
+            new_number = old_number - 1
+            # Extract the title part after the number
+            parts = thread.name.split("|", 1)
+            if len(parts) == 2:
+                title_part = parts[1].strip()
+                new_name = f"{new_number} | {title_part}"
+            else:
+                # Fallback: just replace the number
+                new_name = thread.name.replace(str(old_number), str(new_number), 1)
+
+            try:
+                await edit_thread_with_retry(thread, name=new_name)
+                renumbered_count += 1
+                logger.info("🔢 Debate Renumbered", [
+                    ("Old Number", f"#{old_number}"),
+                    ("New Number", f"#{new_number}"),
+                    ("Thread", title_part if len(parts) == 2 else thread.name),
+                    ("Thread ID", str(thread.id)),
+                ])
+                await asyncio.sleep(0.5)  # Rate limit protection
+            except discord.HTTPException as e:
+                logger.warning("🔢 Failed To Renumber Debate", [
+                    ("Thread", thread.name),
+                    ("Error", str(e)),
+                ])
+
+        # Update the debate counter to reflect the new highest number
+        if threads_to_renumber:
+            # The new highest number is the old highest minus 1
+            highest_after_renumber = max(t[1] for t in threads_to_renumber) - 1
+            # But we need to account for all threads, not just renumbered ones
+            # Find the actual highest number now
+            max_number = 0
+            for thread in all_threads:
+                if thread.id in [t[0].id for t in threads_to_renumber]:
+                    # This thread was renumbered
+                    old_num = next(t[1] for t in threads_to_renumber if t[0].id == thread.id)
+                    max_number = max(max_number, old_num - 1)
+                else:
+                    num = _extract_debate_number(thread.name)
+                    if num is not None:
+                        max_number = max(max_number, num)
+
+            # Update the counter file
+            try:
+                with open(DEBATE_COUNTER_FILE, "w") as f:
+                    json.dump({"count": max_number}, f)
+                logger.info("🔢 Debate Counter Updated", [
+                    ("New Count", str(max_number)),
+                ])
+            except (IOError, OSError) as e:
+                logger.warning("🔢 Failed To Update Debate Counter", [
+                    ("Error", str(e)),
+                ])
+
+    except discord.HTTPException as e:
+        logger.error("🔢 Discord Error During Renumbering", [
+            ("Error", str(e)),
+        ])
+
+    return renumbered_count
+
+
+async def on_thread_delete_handler(bot: "OthmanBot", thread: discord.Thread) -> None:
+    """
+    Event handler for thread deletion in debates forum.
+
+    Args:
+        bot: The OthmanBot instance
+        thread: The thread that was deleted
+
+    DESIGN: When a debate thread is deleted:
+    1. Extract the deleted debate's number
+    2. Renumber all debates with higher numbers to fill the gap
+    3. Update the debate counter
+
+    Example: If #5 is deleted, #6 becomes #5, #7 becomes #6, etc.
+    """
+    # Check if it was in debates forum
+    if thread.parent_id != DEBATES_FORUM_ID:
+        return
+
+    # Extract the debate number from the deleted thread
+    deleted_number = _extract_debate_number(thread.name)
+
+    if deleted_number is None:
+        logger.debug("🗑️ Non-Numbered Debate Thread Deleted", [
+            ("Thread", thread.name),
+            ("Thread ID", str(thread.id)),
+        ])
+        return
+
+    logger.info("🗑️ Debate Thread Deleted", [
+        ("Number", f"#{deleted_number}"),
+        ("Thread", thread.name),
+        ("Thread ID", str(thread.id)),
+    ])
+
+    # Clean up database records for this thread
+    if hasattr(bot, 'debates_service') and bot.debates_service is not None:
+        try:
+            bot.debates_service.db.delete_thread_data(thread.id)
+            logger.debug("🗄️ Thread Database Records Cleaned", [
+                ("Thread ID", str(thread.id)),
+            ])
         except Exception as e:
-            logger.error(f"Failed to update leaderboard for rejoining member {member.name}: {e}")
+            logger.warning("🗄️ Failed To Clean Thread Database", [
+                ("Error", str(e)),
+            ])
+
+    # Renumber remaining debates
+    renumbered = await _renumber_debates_after_deletion(bot, deleted_number)
+
+    if renumbered > 0:
+        logger.success("🔢 Debate Renumbering Complete", [
+            ("Deleted", f"#{deleted_number}"),
+            ("Renumbered", str(renumbered)),
+        ])
 
 
 # =============================================================================
@@ -777,4 +1240,5 @@ __all__ = [
     "on_debate_reaction_remove",
     "on_member_remove_handler",
     "on_member_join_handler",
+    "on_thread_delete_handler",
 ]

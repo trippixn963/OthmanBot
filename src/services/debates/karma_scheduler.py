@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Callable, Awaitable
 from zoneinfo import ZoneInfo
 
 from src.core.logger import logger
+from src.core.config import SECONDS_PER_HOUR
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -60,7 +61,9 @@ class KarmaReconciliationScheduler:
 
         self._running = True
         self._task = asyncio.create_task(self._scheduler_loop())
-        logger.info(f"🔄 Karma reconciliation scheduler started - runs nightly at 00:30 EST")
+        logger.info("🔄 Karma Reconciliation Scheduler Started", [
+            ("Schedule", "nightly at 00:30 EST"),
+        ])
 
     async def stop(self) -> None:
         """Stop the scheduler."""
@@ -93,10 +96,10 @@ class KarmaReconciliationScheduler:
 
                 wait_seconds = (target_time - now).total_seconds()
 
-                logger.info(
-                    f"🔄 Next karma reconciliation at {target_time.strftime('%Y-%m-%d %H:%M %Z')} "
-                    f"({wait_seconds / 3600:.1f} hours)"
-                )
+                logger.info("🔄 Next Karma Reconciliation Scheduled", [
+                    ("Time", target_time.strftime('%Y-%m-%d %H:%M %Z')),
+                    ("Wait", f"{wait_seconds / 3600:.1f} hours"),
+                ])
 
                 # Wait until target time
                 await asyncio.sleep(wait_seconds)
@@ -106,20 +109,23 @@ class KarmaReconciliationScheduler:
                     logger.info("🔄 Starting nightly karma reconciliation...")
                     try:
                         stats = await self.callback()
-                        logger.success(
-                            f"✅ Nightly karma reconciliation complete: "
-                            f"+{stats.get('votes_added', 0)} added, "
-                            f"-{stats.get('votes_removed', 0)} removed"
-                        )
+                        logger.success("✅ Nightly Karma Reconciliation Complete", [
+                            ("Added", f"+{stats.get('votes_added', 0)}"),
+                            ("Removed", f"-{stats.get('votes_removed', 0)}"),
+                        ])
                     except Exception as e:
-                        logger.error(f"Nightly karma reconciliation failed: {e}")
+                        logger.error("Nightly Karma Reconciliation Failed", [
+                            ("Error", str(e)),
+                        ])
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error in karma reconciliation scheduler: {e}")
+                logger.error("Error In Karma Reconciliation Scheduler", [
+                    ("Error", str(e)),
+                ])
                 # Wait 1 hour before retrying on error
-                await asyncio.sleep(3600)
+                await asyncio.sleep(SECONDS_PER_HOUR)
 
 
 # =============================================================================

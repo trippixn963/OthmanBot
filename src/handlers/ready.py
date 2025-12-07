@@ -9,13 +9,16 @@ Server: discord.gg/syria
 """
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
 import discord
 
 from src.core.logger import logger
 from src.core.config import SYRIA_GUILD_ID
+from src.core.health import HealthCheckServer
 from src.core.presence import update_presence, presence_update_loop
+from src.core.backup import BackupScheduler
+from src.posting.poster import cleanup_old_temp_files
 from src.services import (
     NewsScraper,
     SoccerScraper,
@@ -26,7 +29,16 @@ from src.services.debates.scheduler import DebatesScheduler
 from src.services.debates.hot_tag_manager import HotTagManager
 from src.services.debates.reconciliation import reconcile_karma
 from src.services.debates.karma_scheduler import KarmaReconciliationScheduler
+from src.services.debates.numbering_scheduler import (
+    NumberingReconciliationScheduler,
+    reconcile_debate_numbering,
+)
 from src.services.debates.leaderboard import LeaderboardManager
+from src.services.debates.backfill import (
+    backfill_debate_stats,
+    reconcile_debate_stats,
+    StatsReconciliationScheduler,
+)
 from src.posting.news import post_news
 from src.posting.soccer import post_soccer_news
 from src.posting.gaming import post_gaming_news
@@ -51,6 +63,9 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
     Bot automatically begins posting news on startup
     Sets up presence updates and live score tracking
     """
+    # Leave unauthorized guilds first
+    await _leave_unauthorized_guilds(bot)
+
     logger.tree(
         f"Bot Ready: {bot.user.name}",
         [
@@ -79,15 +94,31 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
     # Run startup karma reconciliation and start nightly scheduler
     await _init_karma_reconciliation(bot)
 
+    # Initialize nightly numbering reconciliation scheduler
+    await _init_numbering_reconciliation(bot)
+
     # Initialize leaderboard manager
     await _init_leaderboard(bot)
+
+    # Initialize database backup scheduler
+    await _init_backup_scheduler(bot)
 
     # Set initial presence
     await update_presence(bot)
 
     # Start presence update loop
     bot.presence_task = asyncio.create_task(presence_update_loop(bot))
-    logger.info("🔄 Started presence update loop (updates every 60 seconds)")
+    logger.info("🔄 Started Presence Update Loop", [
+        ("Interval", "60 seconds"),
+    ])
+
+    # Clean up old temp files from previous sessions
+    cleanup_old_temp_files()
+    logger.info("🧹 Cleaned Up Old Temp Files")
+
+    # Start health check HTTP server
+    bot.health_server = HealthCheckServer(bot)
+    await bot.health_server.start()
 
 
 # =============================================================================
@@ -124,7 +155,10 @@ async def _init_content_rotation(bot: "OthmanBot") -> None:
 
     # Start the rotation scheduler
     await bot.content_rotation_scheduler.start(post_immediately=False)
-    logger.success("🔄 Content rotation scheduler started - posting hourly (news → soccer → gaming)")
+    logger.tree("Content Rotation Scheduler Started", [
+        ("Rotation", "news → soccer → gaming"),
+        ("Interval", "hourly"),
+    ], emoji="🔄")
 
 
 
@@ -137,12 +171,14 @@ async def _init_debates_scheduler(bot: "OthmanBot") -> None:
     Posts to general channel with formatted announcement
     """
     if not bot.general_channel_id:
-        logger.info("🔥 General channel not configured - skipping debates scheduler")
+        logger.info("🔥 General Channel Not Configured - Skipping Debates Scheduler")
         return
 
     bot.debates_scheduler = DebatesScheduler(lambda: post_hot_debate(bot))
     await bot.debates_scheduler.start(post_immediately=False)
-    logger.success("🔥 Automated hot debates started - posting every 3 hours")
+    logger.tree("Automated Hot Debates Started", [
+        ("Interval", "every 3 hours"),
+    ], emoji="🔥")
 
 
 async def _init_hot_tag_manager(bot: "OthmanBot") -> None:
@@ -154,7 +190,9 @@ async def _init_hot_tag_manager(bot: "OthmanBot") -> None:
     """
     bot.hot_tag_manager = HotTagManager(bot)
     await bot.hot_tag_manager.start()
-    logger.success("🔥 Hot tag manager started - checking threads every 10 minutes")
+    logger.tree("Hot Tag Manager Started", [
+        ("Check Interval", "every 10 minutes"),
+    ], emoji="🏷️")
 
 
 async def _init_karma_reconciliation(bot: "OthmanBot") -> None:
@@ -165,7 +203,12 @@ async def _init_karma_reconciliation(bot: "OthmanBot") -> None:
     - Schedules nightly sync at 00:30 EST for ongoing accuracy
     """
     # Run startup reconciliation in background (don't block bot startup)
-    asyncio.create_task(_run_startup_reconciliation(bot))
+    # Track the task for proper cleanup on shutdown
+    reconciliation_task = asyncio.create_task(_run_startup_reconciliation(bot))
+    reconciliation_task.add_done_callback(_handle_task_exception)
+    if not hasattr(bot, '_background_tasks'):
+        bot._background_tasks: List[asyncio.Task] = []
+    bot._background_tasks.append(reconciliation_task)
 
     # Start nightly scheduler
     bot.karma_reconciliation_scheduler = KarmaReconciliationScheduler(
@@ -174,20 +217,63 @@ async def _init_karma_reconciliation(bot: "OthmanBot") -> None:
     await bot.karma_reconciliation_scheduler.start()
 
 
+def _handle_task_exception(task: asyncio.Task) -> None:
+    """Handle exceptions from background tasks to prevent silent failures."""
+    try:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error("Background Task Failed", [
+                ("Task", task.get_name()),
+                ("Error", str(exc)),
+            ])
+    except asyncio.CancelledError:
+        pass
+
+
 async def _run_startup_reconciliation(bot: "OthmanBot") -> None:
     """Run startup karma reconciliation after a short delay."""
     # Wait a bit for bot to fully initialize
     await asyncio.sleep(10)
 
-    logger.info("🔄 Running startup karma reconciliation...")
+    logger.info("🔄 Running Startup Karma Reconciliation")
     try:
         stats = await reconcile_karma(bot, days_back=7)
-        logger.success(
-            f"✅ Startup reconciliation: {stats['threads_scanned']} threads, "
-            f"+{stats['votes_added']} added, -{stats['votes_removed']} removed"
-        )
+        logger.tree("Startup Reconciliation Complete", [
+            ("Threads Scanned", str(stats['threads_scanned'])),
+            ("Votes Added", f"+{stats['votes_added']}"),
+            ("Votes Removed", f"-{stats['votes_removed']}"),
+        ], emoji="🔄")
     except Exception as e:
-        logger.error(f"Startup karma reconciliation failed: {e}")
+        logger.error("🔄 Startup Karma Reconciliation Failed", [
+            ("Error", str(e)),
+        ])
+
+
+async def _init_numbering_reconciliation(bot: "OthmanBot") -> None:
+    """Initialize nightly debate numbering reconciliation scheduler.
+
+    DESIGN: Runs at 00:00 EST every night to fix any gaps in debate numbering
+    - Scans all non-deprecated debates
+    - Renumbers threads to fill any gaps
+    - Updates the counter file
+    """
+    bot.numbering_reconciliation_scheduler = NumberingReconciliationScheduler(
+        lambda: reconcile_debate_numbering(bot)
+    )
+    await bot.numbering_reconciliation_scheduler.start()
+
+
+async def _init_backup_scheduler(bot: "OthmanBot") -> None:
+    """Initialize database backup scheduler.
+
+    DESIGN: Runs daily at 3:00 AM EST
+    Creates backup on startup, then schedules daily backups
+    Automatically cleans up backups older than 7 days
+    """
+    bot.backup_scheduler = BackupScheduler()
+    await bot.backup_scheduler.start(run_immediately=True)
 
 
 async def _init_leaderboard(bot: "OthmanBot") -> None:
@@ -198,14 +284,54 @@ async def _init_leaderboard(bot: "OthmanBot") -> None:
     Handles user leave/rejoin by showing "(left)" suffix
     """
     if not hasattr(bot, 'debates_service') or not bot.debates_service:
-        logger.info("📊 Debates service not initialized - skipping leaderboard")
+        logger.info("📊 Debates Service Not Initialized - Skipping Leaderboard")
         return
 
     try:
+        # Run one-time backfill for debate stats (if tables are empty)
+        await backfill_debate_stats(bot)
+
         bot.leaderboard_manager = LeaderboardManager(bot, bot.debates_service.db)
         await bot.leaderboard_manager.start()
+
+        # Start nightly stats reconciliation scheduler (00:30 EST)
+        bot.stats_reconciliation_scheduler = StatsReconciliationScheduler(
+            lambda: reconcile_debate_stats(bot)
+        )
+        await bot.stats_reconciliation_scheduler.start()
     except Exception as e:
-        logger.error(f"Failed to initialize leaderboard: {e}")
+        logger.error("📊 Failed To Initialize Leaderboard", [
+            ("Error", str(e)),
+        ])
+
+
+async def _leave_unauthorized_guilds(bot: "OthmanBot") -> None:
+    """Leave any guilds that aren't the authorized SYRIA_GUILD_ID.
+
+    DESIGN: Ensures bot only operates in the configured guild
+    Runs at startup to automatically remove bot from unauthorized servers
+    """
+    unauthorized_guilds = [g for g in bot.guilds if g.id != SYRIA_GUILD_ID]
+
+    if not unauthorized_guilds:
+        return
+
+    for guild in unauthorized_guilds:
+        try:
+            logger.warning("Leaving Unauthorized Guild", [
+                ("Guild", guild.name),
+                ("ID", str(guild.id)),
+                ("Members", str(guild.member_count)),
+            ])
+            await guild.leave()
+            logger.info("Left Unauthorized Guild", [
+                ("Guild", guild.name),
+            ])
+        except Exception as e:
+            logger.error("Failed To Leave Guild", [
+                ("Guild", guild.name),
+                ("Error", str(e)),
+            ])
 
 
 async def _sync_commands(bot: "OthmanBot") -> None:
@@ -219,9 +345,13 @@ async def _sync_commands(bot: "OthmanBot") -> None:
         # Copy global commands (from Cog) to the guild, then sync
         bot.tree.copy_global_to(guild=guild)
         synced = await bot.tree.sync(guild=guild)
-        logger.success(f"⚡ Synced {len(synced)} commands to Syria guild")
+        logger.tree("Synced Commands To Syria Guild", [
+            ("Commands", str(len(synced))),
+        ], emoji="⚡")
     except Exception as e:
-        logger.error(f"Failed to sync commands: {e}")
+        logger.error("⚡ Failed To Sync Commands", [
+            ("Error", str(e)),
+        ])
 
 
 # =============================================================================

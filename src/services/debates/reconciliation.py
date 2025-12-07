@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import discord
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID
+from src.core.config import DEBATES_FORUM_ID, DISCORD_ARCHIVED_THREADS_LIMIT
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -60,17 +60,23 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int = 7) -> dict:
         # Collect all active threads
         threads_to_scan = []
 
-        # Active threads
+        # Active threads (skip deprecated)
         for thread in debates_forum.threads:
+            if thread.name.startswith("[DEPRECATED]"):
+                continue
             if thread.created_at and thread.created_at > cutoff_time:
                 threads_to_scan.append(thread)
 
-        # Recently archived threads
-        async for thread in debates_forum.archived_threads(limit=50):
+        # Recently archived threads (skip deprecated)
+        async for thread in debates_forum.archived_threads(limit=DISCORD_ARCHIVED_THREADS_LIMIT):
+            if thread.name.startswith("[DEPRECATED]"):
+                continue
             if thread.created_at and thread.created_at > cutoff_time:
                 threads_to_scan.append(thread)
 
-        logger.info(f"🔄 Reconciling karma for {len(threads_to_scan)} threads...")
+        logger.info("🔄 Reconciling Karma", [
+            ("Threads", str(len(threads_to_scan))),
+        ])
 
         for thread in threads_to_scan:
             try:
@@ -79,19 +85,23 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int = 7) -> dict:
                 # Small delay to avoid rate limits
                 await asyncio.sleep(0.5)
             except Exception as e:
-                logger.error(f"Error reconciling thread {thread.id}: {e}")
+                logger.error("Error Reconciling Thread", [
+                    ("Thread ID", str(thread.id)),
+                    ("Error", str(e)),
+                ])
                 stats["errors"] += 1
 
-        logger.success(
-            f"✅ Karma reconciliation complete: "
-            f"{stats['threads_scanned']} threads, "
-            f"{stats['messages_scanned']} messages, "
-            f"+{stats['votes_added']} votes added, "
-            f"-{stats['votes_removed']} votes removed"
-        )
+        logger.success("✅ Karma Reconciliation Complete", [
+            ("Threads", str(stats['threads_scanned'])),
+            ("Messages", str(stats['messages_scanned'])),
+            ("Added", f"+{stats['votes_added']}"),
+            ("Removed", f"-{stats['votes_removed']}"),
+        ])
 
     except Exception as e:
-        logger.error(f"Failed to reconcile karma: {e}")
+        logger.error("Failed To Reconcile Karma", [
+            ("Error", str(e)),
+        ])
         stats["errors"] += 1
 
     return stats
@@ -140,7 +150,10 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
                 # Add missing upvote
                 if db.add_vote(voter_id, message.id, author_id, 1):
                     stats["votes_added"] += 1
-                    logger.debug(f"Added missing upvote: {voter_id} -> {message.id}")
+                    logger.debug("Added Missing Upvote", [
+                        ("Voter", str(voter_id)),
+                        ("Message", str(message.id)),
+                    ])
 
         # Find missing downvotes (in Discord but not in DB)
         for voter_id in actual_downvoters:
@@ -148,7 +161,10 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
                 # Add missing downvote
                 if db.add_vote(voter_id, message.id, author_id, -1):
                     stats["votes_added"] += 1
-                    logger.debug(f"Added missing downvote: {voter_id} -> {message.id}")
+                    logger.debug("Added Missing Downvote", [
+                        ("Voter", str(voter_id)),
+                        ("Message", str(message.id)),
+                    ])
 
         # Find stale votes (in DB but not in Discord)
         all_actual_voters = actual_upvoters | actual_downvoters
@@ -157,7 +173,10 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
                 # Remove stale vote
                 if db.remove_vote(voter_id, message.id):
                     stats["votes_removed"] += 1
-                    logger.debug(f"Removed stale vote: {voter_id} -> {message.id}")
+                    logger.debug("Removed Stale Vote", [
+                        ("Voter", str(voter_id)),
+                        ("Message", str(message.id)),
+                    ])
 
 
 # =============================================================================

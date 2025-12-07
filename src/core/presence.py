@@ -44,7 +44,9 @@ async def presence_update_loop(bot: "OthmanBot") -> None:
             logger.info("Presence update loop cancelled")
             break
         except Exception as e:
-            logger.warning(f"Failed to update presence: {e}")
+            logger.warning("Failed To Update Presence", [
+                ("Error", str(e)),
+            ])
 
 
 # =============================================================================

@@ -2,21 +2,28 @@
 Othman Discord Bot - Debates Commands
 ======================================
 
-Slash commands for karma viewing, leaderboard, and moderation.
+Slash commands for karma viewing and moderation.
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
-from typing import List, Optional
+import asyncio
+from typing import List, Optional, TYPE_CHECKING
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID
-from src.utils import get_developer_avatar
+from src.core.config import DEBATES_FORUM_ID, DISCORD_AUTOCOMPLETE_LIMIT
+from src.utils import get_developer_avatar, remove_reaction_safe, edit_thread_with_retry, send_message_with_retry, add_reactions_with_delay, delete_message_safe
+from src.handlers.debates import get_next_debate_number, is_english_only, PARTICIPATE_EMOJI
+from src.services.debates.tags import detect_debate_tags
+from src.services.debates.analytics import calculate_debate_analytics, generate_analytics_embed
+
+if TYPE_CHECKING:
+    from src.bot import OthmanBot
 
 
 # =============================================================================
@@ -37,7 +44,7 @@ async def banned_user_autocomplete(
     banned_ids = bot.debates_service.db.get_all_banned_users()
 
     choices = []
-    for user_id in banned_ids[:25]:  # Discord limits to 25 choices
+    for user_id in banned_ids[:DISCORD_AUTOCOMPLETE_LIMIT]:
         # Try to get the member from the guild
         member = interaction.guild.get_member(user_id)
         if member:
@@ -56,7 +63,7 @@ async def banned_user_autocomplete(
                     value=str(user_id)
                 ))
 
-    return choices[:25]
+    return choices[:DISCORD_AUTOCOMPLETE_LIMIT]
 
 
 # =============================================================================
@@ -66,7 +73,13 @@ async def banned_user_autocomplete(
 class DebatesCog(commands.Cog):
     """Cog for debate karma commands."""
 
-    def __init__(self, bot) -> None:
+    def __init__(self, bot: "OthmanBot") -> None:
+        """
+        Initialize the DebatesCog.
+
+        Args:
+            bot: The OthmanBot instance to attach commands to.
+        """
         self.bot = bot
 
     @app_commands.command(name="karma", description="Check karma points for yourself or another user")
@@ -77,7 +90,18 @@ class DebatesCog(commands.Cog):
         user: discord.Member = None
     ) -> None:
         """View karma for a user."""
+        # Log command invocation
+        logger.info("/karma Command Invoked", [
+            ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
+            ("Target User", f"{user.name} ({user.id})" if user else "Self"),
+        ])
+
         if not hasattr(self.bot, 'debates_service') or self.bot.debates_service is None:
+            logger.warning("/karma Command Failed - Service Unavailable", [
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Reason", "Debates service not initialized"),
+            ])
             await interaction.response.send_message(
                 "Karma system is not available.",
                 ephemeral=True
@@ -95,66 +119,31 @@ class DebatesCog(commands.Cog):
         embed.set_thumbnail(url=target.display_avatar.url)
         embed.add_field(
             name="Total Karma",
-            value=f"**{karma_data.total_karma:,}**",
+            value=f"`{karma_data.total_karma:,}`",
             inline=True
         )
         embed.add_field(
             name="Rank",
-            value=f"#{rank}",
+            value=f"`#{rank}`",
             inline=True
         )
         embed.add_field(
             name="Votes Received",
-            value=f"⬆️ {karma_data.upvotes_received:,} | ⬇️ {karma_data.downvotes_received:,}",
+            value=f"⬆️ `{karma_data.upvotes_received:,}` | ⬇️ `{karma_data.downvotes_received:,}`",
             inline=False
         )
 
         developer_avatar_url = await get_developer_avatar(self.bot)
         embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
 
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(name="leaderboard", description="Show top users by karma")
-    async def leaderboard(self, interaction: discord.Interaction) -> None:
-        """Show karma leaderboard."""
-        if not hasattr(self.bot, 'debates_service') or self.bot.debates_service is None:
-            await interaction.response.send_message(
-                "Karma system is not available.",
-                ephemeral=True
-            )
-            return
-
-        top_users = self.bot.debates_service.get_leaderboard(10)
-
-        if not top_users:
-            await interaction.response.send_message(
-                "No karma data yet. Start voting in debates!",
-                ephemeral=True
-            )
-            return
-
-        embed = discord.Embed(
-            title="🏆 Debates Karma Leaderboard",
-            description="Top 10 users by karma points",
-            color=discord.Color.gold()
-        )
-
-        leaderboard_text = []
-        medals = ["🥇", "🥈", "🥉"]
-
-        for i, karma_data in enumerate(top_users):
-            # Use Discord mention format for usernames
-            user_mention = f"<@{karma_data.user_id}>"
-
-            medal = medals[i] if i < 3 else f"**{i + 1}.**"
-            leaderboard_text.append(
-                f"{medal} {user_mention} — **{karma_data.total_karma:,}** karma"
-            )
-
-        embed.description = "\n".join(leaderboard_text)
-
-        developer_avatar_url = await get_developer_avatar(self.bot)
-        embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
+        logger.success("/karma Command Completed", [
+            ("Requested By", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Target User", f"{target.name} ({target.id})"),
+            ("Karma", str(karma_data.total_karma)),
+            ("Rank", f"#{rank}"),
+            ("Upvotes", str(karma_data.upvotes_received)),
+            ("Downvotes", str(karma_data.downvotes_received)),
+        ])
 
         await interaction.response.send_message(embed=embed)
 
@@ -171,7 +160,19 @@ class DebatesCog(commands.Cog):
         thread_id: str
     ) -> None:
         """Ban a user from a specific debate thread or all debates."""
+        # Log command invocation
+        logger.info("/disallow Command Invoked", [
+            ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
+            ("Target User", f"{user.name} ({user.id})"),
+            ("Thread ID Param", thread_id),
+        ])
+
         if not hasattr(self.bot, 'debates_service') or self.bot.debates_service is None:
+            logger.warning("/disallow Command Failed - Service Unavailable", [
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Reason", "Debates service not initialized"),
+            ])
             await interaction.response.send_message(
                 "Debates system is not available.",
                 ephemeral=True
@@ -180,6 +181,10 @@ class DebatesCog(commands.Cog):
 
         # Prevent self-ban
         if user.id == interaction.user.id:
+            logger.warning("/disallow Command Rejected - Self-Ban Attempt", [
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Reason", "User attempted to ban themselves"),
+            ])
             await interaction.response.send_message(
                 "You cannot ban yourself from debates.",
                 ephemeral=True
@@ -195,6 +200,11 @@ class DebatesCog(commands.Cog):
                 target_thread_id = int(thread_id)
                 scope = f"thread `{target_thread_id}`"
             except ValueError:
+                logger.warning("/disallow Command Failed - Invalid Thread ID", [
+                    ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                    ("Invalid Thread ID", thread_id),
+                    ("Reason", "Could not parse thread ID as integer"),
+                ])
                 await interaction.response.send_message(
                     "Invalid thread ID. Use a number or 'all'.",
                     ephemeral=True
@@ -209,7 +219,12 @@ class DebatesCog(commands.Cog):
         )
 
         if success:
-            logger.info(f"🚫 {interaction.user.name} banned {user.name} from {scope}")
+            logger.success("/disallow Command Completed - User Banned", [
+                ("Banned User", f"{user.name} ({user.id})"),
+                ("Banned By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Scope", scope),
+                ("Thread ID", str(target_thread_id) if target_thread_id else "Global"),
+            ])
 
             # Remove user's reactions from debate threads (so they must re-acknowledge rules when unbanned)
             reactions_removed = 0
@@ -239,18 +254,23 @@ class DebatesCog(commands.Cog):
 
                             if starter_message:
                                 for reaction in starter_message.reactions:
-                                    try:
-                                        await reaction.remove(user)
+                                    success = await remove_reaction_safe(reaction, user)
+                                    if success:
                                         reactions_removed += 1
-                                    except discord.HTTPException:
-                                        pass
+                                    await asyncio.sleep(0.3)  # Rate limit delay between reaction removals
+                            await asyncio.sleep(0.5)  # Rate limit delay between threads
                         except discord.HTTPException:
                             pass
 
                 if reactions_removed > 0:
-                    logger.info(f"🗑️ Removed {reactions_removed} reaction(s) from {user.name}")
+                    logger.info("Ban Reactions Cleanup", [
+                        ("User", f"{user.name} ({user.id})"),
+                        ("Reactions Removed", str(reactions_removed)),
+                    ])
             except Exception as e:
-                logger.warning(f"Failed to remove reactions for banned user: {e}")
+                logger.warning("Failed To Remove Reactions For Banned User", [
+                    ("Error", str(e)),
+                ])
 
             # Create public embed for the ban
             embed = discord.Embed(
@@ -270,6 +290,11 @@ class DebatesCog(commands.Cog):
 
             await interaction.response.send_message(embed=embed)
         else:
+            logger.info("/disallow Command - User Already Banned", [
+                ("Target User", f"{user.name} ({user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Scope", scope),
+            ])
             await interaction.response.send_message(
                 f"**{user.display_name}** is already banned from {scope}.",
                 ephemeral=True
@@ -289,7 +314,19 @@ class DebatesCog(commands.Cog):
         thread_id: str = None
     ) -> None:
         """Unban a user from a specific debate thread or all debates."""
+        # Log command invocation
+        logger.info("/allow Command Invoked", [
+            ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
+            ("User Param", user),
+            ("Thread ID Param", thread_id if thread_id else "None (list bans)"),
+        ])
+
         if not hasattr(self.bot, 'debates_service') or self.bot.debates_service is None:
+            logger.warning("/allow Command Failed - Service Unavailable", [
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Reason", "Debates service not initialized"),
+            ])
             await interaction.response.send_message(
                 "Debates system is not available.",
                 ephemeral=True
@@ -300,6 +337,11 @@ class DebatesCog(commands.Cog):
         try:
             user_id = int(user)
         except ValueError:
+            logger.warning("/allow Command Failed - Invalid User ID", [
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invalid User Param", user),
+                ("Reason", "Could not parse user as integer"),
+            ])
             await interaction.response.send_message(
                 "Invalid user. Please select a user from the autocomplete list.",
                 ephemeral=True
@@ -316,6 +358,10 @@ class DebatesCog(commands.Cog):
         # If no thread_id provided, show list of bans
         if thread_id is None:
             if not bans:
+                logger.info("/allow Command - User Has No Bans", [
+                    ("Target User", f"{display_name} ({user_id})"),
+                    ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ])
                 await interaction.response.send_message(
                     f"**{display_name}** has no active debate bans.",
                     ephemeral=True
@@ -330,6 +376,11 @@ class DebatesCog(commands.Cog):
                 else:
                     ban_list.append(f"• Thread `{ban['thread_id']}`")
 
+            logger.info("/allow Command - Listing User Bans", [
+                ("Target User", f"{display_name} ({user_id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Active Bans", str(len(bans))),
+            ])
             await interaction.response.send_message(
                 f"**{display_name}** is banned from:\n" + "\n".join(ban_list) +
                 f"\n\nUse `/allow {display_name} <thread_id>` or `/allow {display_name} all` to unban.",
@@ -346,6 +397,11 @@ class DebatesCog(commands.Cog):
                 target_thread_id = int(thread_id)
                 scope = f"thread `{target_thread_id}`"
             except ValueError:
+                logger.warning("/allow Command Failed - Invalid Thread ID", [
+                    ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                    ("Invalid Thread ID", thread_id),
+                    ("Reason", "Could not parse thread ID as integer"),
+                ])
                 await interaction.response.send_message(
                     "Invalid thread ID. Use a number or 'all'.",
                     ephemeral=True
@@ -359,7 +415,12 @@ class DebatesCog(commands.Cog):
         )
 
         if success:
-            logger.info(f"✅ {interaction.user.name} unbanned {display_name} from {scope}")
+            logger.success("/allow Command Completed - User Unbanned", [
+                ("Unbanned User", f"{display_name} ({user_id})"),
+                ("Unbanned By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Scope", scope),
+                ("Thread ID", str(target_thread_id) if target_thread_id else "Global"),
+            ])
 
             # Create user mention (works even if user left server)
             user_mention = f"<@{user_id}>"
@@ -384,8 +445,269 @@ class DebatesCog(commands.Cog):
 
             await interaction.response.send_message(embed=embed)
         else:
+            logger.info("/allow Command - User Was Not Banned", [
+                ("Target User", f"{display_name} ({user_id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Scope", scope),
+            ])
             await interaction.response.send_message(
                 f"**{display_name}** was not banned from {scope}.",
+                ephemeral=True
+            )
+
+
+    @app_commands.command(name="rename", description="Rename a locked debate thread with proper numbering")
+    @app_commands.describe(
+        title="New English title for the debate (leave empty to use suggested title from bot message)"
+    )
+    @app_commands.default_permissions(manage_messages=True)
+    async def rename(
+        self,
+        interaction: discord.Interaction,
+        title: str = None
+    ) -> None:
+        """
+        Rename a locked debate thread with proper numbering.
+
+        This command is designed for moderators to properly rename threads
+        that were locked due to non-English titles. It:
+        1. Gets the next debate number from the counter
+        2. Renames the thread with the format "{number} | {title}"
+        3. Unlocks and unarchives the thread
+        4. Applies auto-tags
+        5. Adds analytics embed
+        """
+        # Log command invocation
+        logger.info("/rename Command Invoked", [
+            ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
+            ("Title Param", title if title else "Auto-detect from suggested"),
+        ])
+
+        # Must be used in a thread
+        if not isinstance(interaction.channel, discord.Thread):
+            logger.warning("/rename Command Failed - Not In Thread", [
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Channel Type", type(interaction.channel).__name__),
+                ("Reason", "Command must be used inside a debate thread"),
+            ])
+            await interaction.response.send_message(
+                "This command must be used inside a debate thread.",
+                ephemeral=True
+            )
+            return
+
+        thread = interaction.channel
+
+        # Check if thread is in the debates forum
+        if thread.parent_id != DEBATES_FORUM_ID:
+            logger.warning("/rename Command Failed - Wrong Forum", [
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Thread", f"{thread.name} ({thread.id})"),
+                ("Parent ID", str(thread.parent_id)),
+                ("Expected Forum ID", str(DEBATES_FORUM_ID)),
+                ("Reason", "Thread not in debates forum"),
+            ])
+            await interaction.response.send_message(
+                "This command can only be used in debate threads.",
+                ephemeral=True
+            )
+            return
+
+        # If no title provided, try to extract suggested title from bot's moderation message
+        if title is None:
+            async for message in thread.history(limit=50):
+                if message.author.id == self.bot.user.id and "Suggested Title:" in message.content:
+                    # Extract suggested title from message using more robust parsing
+                    lines = message.content.split("\n")
+                    for line in lines:
+                        # Handle various formatting: "**Suggested Title:**", "Suggested Title:", etc.
+                        if "Suggested Title:" in line:
+                            # Remove markdown formatting and extract title
+                            title = line.replace("**Suggested Title:**", "").replace("Suggested Title:", "").strip()
+                            break
+                    break
+
+        if title is None:
+            logger.warning("/rename Command Failed - No Title Found", [
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Thread", f"{thread.name} ({thread.id})"),
+                ("Reason", "No title provided and no suggested title in thread"),
+            ])
+            await interaction.response.send_message(
+                "No title provided and couldn't find a suggested title in this thread.\n"
+                "Please provide a title: `/rename title:Your English Title Here`",
+                ephemeral=True
+            )
+            return
+
+        # Validate title is English-only
+        if not is_english_only(title):
+            logger.warning("/rename Command Failed - Non-English Title", [
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Thread", f"{thread.name} ({thread.id})"),
+                ("Provided Title", title),
+                ("Reason", "Title contains non-English characters"),
+            ])
+            await interaction.response.send_message(
+                "The title must be in English only. Please provide an English title.",
+                ephemeral=True
+            )
+            return
+
+        # Defer response since this might take a moment
+        await interaction.response.defer()
+
+        try:
+            # Get next debate number
+            debate_number = get_next_debate_number()
+
+            # Create new title with number prefix
+            new_title = f"{debate_number} | {title}"
+
+            # Rename, unlock, and unarchive the thread
+            success = await edit_thread_with_retry(
+                thread,
+                name=new_title,
+                locked=False,
+                archived=False
+            )
+
+            if not success:
+                logger.error("/rename Command Failed - Thread Edit Failed", [
+                    ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                    ("Thread", f"{thread.name} ({thread.id})"),
+                    ("Attempted Title", new_title),
+                    ("Reason", "edit_thread_with_retry returned False"),
+                ])
+                await interaction.followup.send(
+                    "Failed to rename the thread. Please try again.",
+                    ephemeral=True
+                )
+                return
+
+            # Get thread owner for logging
+            thread_owner = thread.owner
+            owner_info = f"{thread_owner.name} ({thread_owner.id})" if thread_owner else "Unknown"
+
+            logger.success("Debate Thread Renamed via /rename", [
+                ("Number", f"#{debate_number}"),
+                ("Original Title", thread.name),
+                ("New Title", new_title),
+                ("Thread Owner", owner_info),
+                ("Renamed By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Thread ID", str(thread.id)),
+            ])
+
+            # Try to apply auto-tags
+            try:
+                # Get first message for description
+                starter_message = None
+                async for msg in thread.history(oldest_first=True, limit=1):
+                    starter_message = msg
+                    break
+
+                thread_description = starter_message.content if starter_message and starter_message.content else ""
+                tag_ids = await detect_debate_tags(title, thread_description)
+
+                if tag_ids:
+                    parent_forum = self.bot.get_channel(DEBATES_FORUM_ID)
+                    if parent_forum and hasattr(parent_forum, 'available_tags'):
+                        available_tags = {tag.id: tag for tag in parent_forum.available_tags}
+                        tags_to_apply = [available_tags[tid] for tid in tag_ids if tid in available_tags]
+
+                        if tags_to_apply:
+                            await edit_thread_with_retry(thread, applied_tags=tags_to_apply)
+                            logger.info("Auto-Tags Applied to Renamed Debate", [
+                                ("Debate", f"#{debate_number}"),
+                                ("Tags", ", ".join(t.name for t in tags_to_apply)),
+                            ])
+            except Exception as e:
+                logger.warning("Failed to auto-tag renamed debate", [("Error", str(e))])
+
+            # Delete ALL messages except the original post (first message / thread starter)
+            # This cleans up bot warnings, system messages (including "pinned a message"), and any other clutter
+            deleted_count = 0
+            messages_to_delete = []
+
+            # First, find the original post (oldest message in the thread)
+            original_post_id = None
+            async for message in thread.history(limit=1, oldest_first=True):
+                original_post_id = message.id
+                break
+
+            async for message in thread.history(limit=100):
+                # Skip the original post (the oldest message, which is the thread starter)
+                if message.id == original_post_id:
+                    continue
+                # Delete everything else (bot messages, system messages like pins_add, etc.)
+                messages_to_delete.append(message)
+
+            for msg in messages_to_delete:
+                await delete_message_safe(msg)
+                deleted_count += 1
+                await asyncio.sleep(0.3)  # Small delay to avoid rate limits
+
+            if deleted_count > 0:
+                logger.info("🧹 Thread Cleanup Complete", [
+                    ("Debate", f"#{debate_number}"),
+                    ("Thread ID", str(thread.id)),
+                    ("Messages Deleted", str(deleted_count)),
+                    ("Original Post Preserved", "Yes"),
+                ])
+
+            # Post analytics embed if service available (matching normal flow)
+            if hasattr(self.bot, 'debates_service') and self.bot.debates_service is not None:
+                try:
+                    # Calculate initial analytics
+                    analytics = await calculate_debate_analytics(thread, self.bot.debates_service.db)
+
+                    # Generate and send analytics embed
+                    embed = await generate_analytics_embed(self.bot, analytics)
+                    analytics_message = await send_message_with_retry(thread, embed=embed)
+
+                    if analytics_message:
+                        # Add participation reaction for access control
+                        await add_reactions_with_delay(analytics_message, [PARTICIPATE_EMOJI])
+
+                        # Pin the analytics message
+                        await analytics_message.pin()
+
+                        # Delete the "pinned a message" system message
+                        await asyncio.sleep(1.0)  # Wait longer for Discord to create the system message
+                        async for msg in thread.history(limit=10):
+                            if msg.type == discord.MessageType.pins_add:
+                                await delete_message_safe(msg)
+                                logger.debug("Deleted 'pinned a message' system message")
+                                break
+
+                        # Store analytics message ID in database
+                        self.bot.debates_service.db.set_analytics_message(thread.id, analytics_message.id)
+
+                        logger.success("📊 Analytics Embed Posted For Renamed Debate", [
+                            ("Debate", f"#{debate_number}"),
+                            ("Thread ID", str(thread.id)),
+                            ("Message ID", str(analytics_message.id)),
+                            ("Participation Emoji", PARTICIPATE_EMOJI),
+                            ("Pinned", "Yes"),
+                            ("Stored in DB", "Yes"),
+                        ])
+                except Exception as e:
+                    logger.warning("Failed to post analytics for renamed debate", [("Error", str(e))])
+
+            # Send success message
+            await interaction.followup.send(
+                f"Thread renamed to **{new_title}** and unlocked.",
+                ephemeral=False
+            )
+
+        except Exception as e:
+            logger.error("Failed to rename debate thread", [
+                ("Error", str(e)),
+                ("Thread ID", str(thread.id)),
+            ])
+            await interaction.followup.send(
+                f"An error occurred while renaming the thread: {e}",
                 ephemeral=True
             )
 
@@ -394,7 +716,7 @@ class DebatesCog(commands.Cog):
 # Setup Function
 # =============================================================================
 
-async def setup(bot) -> None:
+async def setup(bot: "OthmanBot") -> None:
     """Add cog to bot."""
     await bot.add_cog(DebatesCog(bot))
     logger.info("🗳️ Debates commands cog loaded")

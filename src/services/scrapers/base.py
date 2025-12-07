@@ -17,15 +17,29 @@ Server: discord.gg/syria
 import os
 import re
 import json
+import asyncio
 import aiohttp
 from pathlib import Path
-from typing import Optional, Any
+from types import TracebackType
+from typing import Optional, Type
 from dataclasses import dataclass
 from datetime import datetime
-from openai import OpenAI
+from openai import OpenAI, APIError, RateLimitError, APIConnectionError, AuthenticationError
 
 from src.core.logger import logger
 from src.utils import AICache
+
+
+# =============================================================================
+# OpenAI Error Handling
+# =============================================================================
+
+class OpenAIRetryConfig:
+    """Configuration for OpenAI API retry behavior."""
+    MAX_RETRIES: int = 3
+    BASE_DELAY: float = 1.0  # seconds
+    MAX_DELAY: float = 60.0  # seconds
+    EXPONENTIAL_BASE: float = 2.0
 
 
 # =============================================================================
@@ -104,7 +118,7 @@ class BaseScraper:
 
         # DESIGN: Initialize OpenAI client for title/summary generation
         api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
-        self.openai_client: Optional[OpenAI] = OpenAI(api_key=api_key) if api_key else None
+        self.openai_client: Optional[OpenAI] = OpenAI(api_key=api_key, timeout=30.0) if api_key else None
 
         # DESIGN: Initialize AI response cache to reduce OpenAI API costs
         self.ai_cache: AICache = AICache(ai_cache_filename)
@@ -117,7 +131,12 @@ class BaseScraper:
             self.session = aiohttp.ClientSession()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
         """Async context manager exit."""
         if self.session:
             await self.session.close()
@@ -167,13 +186,20 @@ class BaseScraper:
                     data: dict[str, list[str]] = json.load(f)
                     url_list: list[str] = data.get("posted_urls", [])
                     self.fetched_urls = set(self._extract_article_id(url) for url in url_list)
-                    logger.info(
-                        f"{self.log_emoji} Loaded {len(self.fetched_urls)} posted {self.content_type} article IDs from cache"
-                    )
+                    logger.info(f"{self.log_emoji} Loaded Posted Article IDs", [
+                        ("Type", self.content_type.capitalize()),
+                        ("Count", str(len(self.fetched_urls))),
+                    ])
             else:
-                logger.info(f"No posted {self.content_type} article IDs cache found - starting fresh")
-        except Exception as e:
-            logger.warning(f"Failed to load posted {self.content_type} article IDs: {e}")
+                logger.info(f"{self.log_emoji} No Cache Found", [
+                    ("Type", self.content_type.capitalize()),
+                    ("Action", "Starting fresh"),
+                ])
+        except (json.JSONDecodeError, IOError, OSError) as e:
+            logger.warning(f"{self.log_emoji} Failed to Load Posted Article IDs", [
+                ("Type", self.content_type.capitalize()),
+                ("Error", str(e)),
+            ])
             self.fetched_urls = set()
 
     def _save_posted_urls(self) -> None:
@@ -190,9 +216,15 @@ class BaseScraper:
             with open(self.posted_urls_file, "w", encoding="utf-8") as f:
                 json.dump({"posted_urls": ids_to_save}, f, indent=2, ensure_ascii=False)
 
-            logger.info(f"💾 Saved {len(ids_to_save)} posted {self.content_type} article IDs to cache")
-        except Exception as e:
-            logger.warning(f"Failed to save posted {self.content_type} article IDs: {e}")
+            logger.info("💾 Saved Posted Article IDs", [
+                ("Type", self.content_type.capitalize()),
+                ("Count", str(len(ids_to_save))),
+            ])
+        except (IOError, OSError) as e:
+            logger.warning(f"{self.log_emoji} Failed to Save Posted Article IDs", [
+                ("Type", self.content_type.capitalize()),
+                ("Error", str(e)),
+            ])
 
     def add_posted_url(self, url: str) -> None:
         """
@@ -253,7 +285,9 @@ class BaseScraper:
             self.ai_cache.set(cache_key, title)
             return title
         except Exception as e:
-            logger.warning(f"Failed to generate title: {e}")
+            logger.warning("🤖 Failed to Generate Title", [
+                ("Error", str(e)),
+            ])
             return original_title
 
     async def _generate_bilingual_summary(
@@ -285,11 +319,16 @@ class BaseScraper:
             else:
                 fallback = clean_content
 
-            logger.info(f"Using fallback summary (AI unavailable) - {len(fallback)} chars")
+            logger.info("🤖 Using Fallback Summary", [
+                ("Reason", "AI unavailable"),
+                ("Length", f"{len(fallback)} chars"),
+            ])
             return (fallback, fallback)  # Return same content for both languages
 
         if not self.openai_client:
-            logger.warning("OpenAI client not initialized - using fallback summaries")
+            logger.warning("🤖 OpenAI Client Not Initialized", [
+                ("Action", "Using fallback summaries"),
+            ])
             return create_fallback_summaries()
 
         # Check cache first
@@ -335,11 +374,16 @@ The English summary should be a direct translation of the Arabic summary to main
                 return (arabic, english)
 
             # AI returned invalid format - use fallback
-            logger.warning("AI returned invalid summary format - using fallback")
+            logger.warning("🤖 Invalid AI Summary Format", [
+                ("Action", "Using fallback"),
+            ])
             return create_fallback_summaries()
 
         except Exception as e:
-            logger.warning(f"Failed to generate summaries: {e} - using fallback")
+            logger.warning("🤖 Failed to Generate Summaries", [
+                ("Error", str(e)),
+                ("Action", "Using fallback"),
+            ])
             return create_fallback_summaries()
 
     async def _call_openai(
@@ -350,7 +394,7 @@ The English summary should be a direct translation of the Arabic summary to main
         temperature: float = 0.7,
     ) -> str:
         """
-        Make an OpenAI API call.
+        Make an OpenAI API call with exponential backoff retry.
 
         Args:
             system_prompt: System message for context
@@ -360,25 +404,99 @@ The English summary should be a direct translation of the Arabic summary to main
 
         Returns:
             AI response text
+
+        Raises:
+            AuthenticationError: Invalid API key (no retry)
+            APIError: After all retries exhausted
         """
         if not self.openai_client:
             return ""
 
-        import asyncio
+        last_exception: Optional[Exception] = None
 
-        # DESIGN: Use asyncio.to_thread to make synchronous OpenAI call non-blocking
-        response = await asyncio.to_thread(
-            self.openai_client.chat.completions.create,
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        for attempt in range(OpenAIRetryConfig.MAX_RETRIES):
+            try:
+                # Use asyncio.to_thread to make synchronous OpenAI call non-blocking
+                response = await asyncio.to_thread(
+                    self.openai_client.chat.completions.create,
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                return response.choices[0].message.content.strip()
 
-        return response.choices[0].message.content.strip()
+            except AuthenticationError as e:
+                # Invalid API key - don't retry
+                logger.error("OpenAI Authentication Failed", [
+                    ("Error", "Invalid API key"),
+                    ("Action", "Check OPENAI_API_KEY environment variable"),
+                ])
+                raise
+
+            except RateLimitError as e:
+                # Rate limited - retry with exponential backoff
+                delay = min(
+                    OpenAIRetryConfig.BASE_DELAY * (OpenAIRetryConfig.EXPONENTIAL_BASE ** attempt),
+                    OpenAIRetryConfig.MAX_DELAY
+                )
+                logger.warning("OpenAI Rate Limited", [
+                    ("Attempt", f"{attempt + 1}/{OpenAIRetryConfig.MAX_RETRIES}"),
+                    ("Retry In", f"{delay:.1f}s"),
+                ])
+                last_exception = e
+                await asyncio.sleep(delay)
+
+            except APIConnectionError as e:
+                # Network error - retry with backoff
+                delay = min(
+                    OpenAIRetryConfig.BASE_DELAY * (OpenAIRetryConfig.EXPONENTIAL_BASE ** attempt),
+                    OpenAIRetryConfig.MAX_DELAY
+                )
+                logger.warning("OpenAI Connection Error", [
+                    ("Attempt", f"{attempt + 1}/{OpenAIRetryConfig.MAX_RETRIES}"),
+                    ("Error", str(e)[:100]),
+                    ("Retry In", f"{delay:.1f}s"),
+                ])
+                last_exception = e
+                await asyncio.sleep(delay)
+
+            except APIError as e:
+                # Other API error - retry with backoff
+                delay = min(
+                    OpenAIRetryConfig.BASE_DELAY * (OpenAIRetryConfig.EXPONENTIAL_BASE ** attempt),
+                    OpenAIRetryConfig.MAX_DELAY
+                )
+                logger.warning("OpenAI API Error", [
+                    ("Attempt", f"{attempt + 1}/{OpenAIRetryConfig.MAX_RETRIES}"),
+                    ("Error", str(e)[:100]),
+                    ("Retry In", f"{delay:.1f}s"),
+                ])
+                last_exception = e
+                await asyncio.sleep(delay)
+
+            except TimeoutError as e:
+                # Timeout - retry with backoff
+                delay = min(
+                    OpenAIRetryConfig.BASE_DELAY * (OpenAIRetryConfig.EXPONENTIAL_BASE ** attempt),
+                    OpenAIRetryConfig.MAX_DELAY
+                )
+                logger.warning("OpenAI Timeout", [
+                    ("Attempt", f"{attempt + 1}/{OpenAIRetryConfig.MAX_RETRIES}"),
+                    ("Retry In", f"{delay:.1f}s"),
+                ])
+                last_exception = e
+                await asyncio.sleep(delay)
+
+        # All retries exhausted
+        logger.error("OpenAI API Failed After Retries", [
+            ("Retries", str(OpenAIRetryConfig.MAX_RETRIES)),
+            ("Last Error", str(last_exception)[:100] if last_exception else "Unknown"),
+        ])
+        return ""
 
 
 # =============================================================================
