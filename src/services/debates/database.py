@@ -1421,6 +1421,33 @@ class DebatesDatabase:
                 for row in cursor.fetchall()
             ]
 
+    def get_most_active_debates(self, limit: int = 3) -> list[dict]:
+        """
+        Get debates with highest message count (all-time).
+
+        Args:
+            limit: Number of debates to return
+
+        Returns:
+            List of dicts with thread_id, message_count
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            # Get threads with most messages from debate_participation
+            cursor.execute(
+                """SELECT thread_id, SUM(message_count) as total_messages
+                   FROM debate_participation
+                   GROUP BY thread_id
+                   ORDER BY total_messages DESC
+                   LIMIT ?""",
+                (limit,)
+            )
+            return [
+                {"thread_id": row[0], "message_count": row[1]}
+                for row in cursor.fetchall()
+            ]
+
     def get_top_debate_starters(self, limit: int = 3) -> list[dict]:
         """
         Get users who started the most debates (all-time).
