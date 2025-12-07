@@ -106,10 +106,12 @@ class NewsScraper(BaseScraper):
                 new_articles.append(article)
 
         if new_articles:
-            logger.info(f"✅ Found {len(new_articles)} NEW unposted articles")
+            logger.info("📰 Found New Unposted Articles", [
+                ("Count", str(len(new_articles))),
+            ])
             return new_articles[:max_articles]
         else:
-            logger.info(f"📭 No new articles found")
+            logger.info("📭 No New Articles Found")
             return []
 
     async def _fetch_from_source(
@@ -125,7 +127,9 @@ class NewsScraper(BaseScraper):
         feed = feedparser.parse(source_info["rss_url"])
 
         if not feed.entries:
-            logger.warning(f"No entries found in {source_info['name']} feed")
+            logger.warning("📰 No Entries in Feed", [
+                ("Source", source_info['name']),
+            ])
             return articles
 
         for entry in feed.entries[: max_articles * 2]:
@@ -138,11 +142,18 @@ class NewsScraper(BaseScraper):
                 # Extract image from RSS
                 image_url = await self._extract_image(entry)
 
-                # Get summary
+                # Get summary - handle content field which can be list or dict
+                content_field = entry.get("content", [{}])
+                content_value = ""
+                if isinstance(content_field, list) and content_field:
+                    content_value = content_field[0].get("value", "")
+                elif isinstance(content_field, dict):
+                    content_value = content_field.get("value", "")
+
                 summary = (
                     entry.get("summary", "")
                     or entry.get("description", "")
-                    or entry.get("content", [{}])[0].get("value", "")
+                    or content_value
                 )
                 summary = BeautifulSoup(summary, "html.parser").get_text()
                 summary = summary[:500] + "..." if len(summary) > 500 else summary
@@ -158,7 +169,9 @@ class NewsScraper(BaseScraper):
 
                 # Skip articles without media
                 if not image_url and not scraped_video:
-                    logger.info(f"Skipping article without media: {entry.get('title', 'Untitled')[:50]}")
+                    logger.info("📰 Skipping Article Without Media", [
+                        ("Title", entry.get('title', 'Untitled')[:50]),
+                    ])
                     continue
 
                 # Generate AI content
@@ -169,22 +182,30 @@ class NewsScraper(BaseScraper):
                 cached_title = self.ai_cache.get_title(article_id)
                 if cached_title:
                     ai_title = cached_title["english_title"]
-                    logger.info(f"💾 Cache hit: Using cached title for article {article_id}")
+                    logger.info("💾 Cache Hit - Title", [
+                        ("Article ID", article_id),
+                    ])
                 else:
                     ai_title = await self._generate_title(original_title, full_content)
                     self.ai_cache.cache_title(article_id, original_title, ai_title)
-                    logger.info(f"🔄 Cache miss: Generated title for article {article_id}")
+                    logger.info("🔄 Cache Miss - Generated Title", [
+                        ("Article ID", article_id),
+                    ])
 
                 # Check cache for summaries
                 cached_summary = self.ai_cache.get_summary(article_id)
                 if cached_summary:
                     arabic_summary = cached_summary["arabic_summary"]
                     english_summary = cached_summary["english_summary"]
-                    logger.info(f"💾 Cache hit: Using cached summary for article {article_id}")
+                    logger.info("💾 Cache Hit - Summary", [
+                        ("Article ID", article_id),
+                    ])
                 else:
                     arabic_summary, english_summary = await self._generate_bilingual_summary(full_content)
                     self.ai_cache.cache_summary(article_id, arabic_summary, english_summary)
-                    logger.info(f"🔄 Cache miss: Generated summary for article {article_id}")
+                    logger.info("🔄 Cache Miss - Generated Summary", [
+                        ("Article ID", article_id),
+                    ])
 
                 # Categorize article
                 category_tag_id = await self._categorize_article(ai_title, full_content)
@@ -250,11 +271,18 @@ class NewsScraper(BaseScraper):
                 if enclosure.get("type", "").startswith("image/"):
                     return enclosure.get("href")
 
-        # Try content
+        # Try content - handle content field which can be list or dict
+        content_field = entry.get("content", [{}])
+        content_value = ""
+        if isinstance(content_field, list) and content_field:
+            content_value = content_field[0].get("value", "")
+        elif isinstance(content_field, dict):
+            content_value = content_field.get("value", "")
+
         content = (
             entry.get("summary", "")
             or entry.get("description", "")
-            or entry.get("content", [{}])[0].get("value", "")
+            or content_value
         )
 
         if content:
@@ -343,16 +371,25 @@ class NewsScraper(BaseScraper):
 
                 if content_text:
                     content_text = "\n\n".join(line.strip() for line in content_text.split("\n") if line.strip())
-                    logger.info(f"Extracted from {url} - Image: {image_url[:50] if image_url else 'None'}, Video: {video_url[:50] if video_url else 'None'}")
+                    logger.info("📰 Content Extracted", [
+                        ("URL", url[:50]),
+                        ("Image", image_url[:50] if image_url else "None"),
+                        ("Video", video_url[:50] if video_url else "None"),
+                    ])
                     return (content_text, image_url, video_url)
                 else:
                     return ("Could not extract article text", image_url, video_url)
 
         except asyncio.TimeoutError:
-            logger.warning(f"Timeout fetching article content from {url}")
+            logger.warning("📰 Timeout Fetching Article", [
+                ("URL", url[:50]),
+            ])
             return ("Article fetch timed out", None, None)
         except Exception as e:
-            logger.warning(f"Failed to extract content from {url}: {str(e)[:100]}")
+            logger.warning("📰 Content Extraction Failed", [
+                ("URL", url[:50]),
+                ("Error", str(e)[:100]),
+            ])
             return ("Content extraction failed", None, None)
 
     def _make_url_absolute(self, url_str: str, base_url: str) -> str:
@@ -402,12 +439,20 @@ class NewsScraper(BaseScraper):
 
             if category in self.CATEGORY_TAGS:
                 tag_id = self.CATEGORY_TAGS[category]
-                logger.info(f"Article categorized as '{category}' (tag ID: {tag_id})")
+                logger.info("📰 Article Categorized", [
+                    ("Category", category),
+                    ("Tag ID", str(tag_id)),
+                ])
                 return tag_id
             else:
-                logger.warning(f"Invalid category '{category}' - using 'social' as fallback")
+                logger.warning("📰 Invalid Category", [
+                    ("Category", category),
+                    ("Fallback", "social"),
+                ])
                 return self.CATEGORY_TAGS["social"]
 
         except Exception as e:
-            logger.warning(f"Failed to categorize article: {str(e)[:100]}")
+            logger.warning("📰 Categorization Failed", [
+                ("Error", str(e)[:100]),
+            ])
             return None

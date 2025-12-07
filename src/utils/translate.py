@@ -32,7 +32,7 @@ def translate_to_english(text: str) -> str:
             logger.error("OPENAI_API_KEY not found in environment variables")
             return "Error: Translation service unavailable"
 
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key, timeout=30.0)
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",  # Fast and cheap model for translations
@@ -51,12 +51,17 @@ def translate_to_english(text: str) -> str:
         )
 
         translation = response.choices[0].message.content.strip()
-        logger.info(f"Translation: '{text}' → '{translation}'")
+        logger.info("Translation Complete", [
+            ("Original", text[:50]),
+            ("Result", translation[:50]),
+        ])
         return translation
 
     except Exception as e:
-        logger.error(f"Failed to translate text: {e}")
-        return f"Error: Could not translate title"
+        logger.error("Failed To Translate Text", [
+            ("Error", str(e)),
+        ])
+        return "Error: Could not translate title"
 
 
 __all__ = ["translate_to_english"]

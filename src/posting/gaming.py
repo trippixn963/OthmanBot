@@ -40,39 +40,47 @@ async def post_gaming_news(bot: "OthmanBot") -> None:
     Handles all errors gracefully to keep scheduler running
     """
     if not bot.gaming_channel_id:
-        logger.error("GAMING_CHANNEL_ID not configured")
+        logger.error("🎮 GAMING_CHANNEL_ID Not Configured")
         return
 
     if not bot.gaming_scraper:
-        logger.error("Gaming scraper not initialized")
+        logger.error("🎮 Gaming Scraper Not Initialized")
         return
 
     try:
-        logger.info("🎮 Fetching latest gaming news articles...")
+        logger.info("🎮 Fetching Latest Gaming News Articles")
         articles = await bot.gaming_scraper.fetch_latest_gaming_news(
             max_articles=1, hours_back=24
         )
 
         if not articles:
-            logger.warning("No new gaming articles found to post")
+            logger.warning("🎮 No New Gaming Articles Found To Post")
             return
 
         article = articles[0]
         channel = bot.get_channel(bot.gaming_channel_id)
         if not channel:
-            logger.error(f"Gaming channel {bot.gaming_channel_id} not found")
+            logger.error("🎮 Gaming Channel Not Found", [
+                ("Channel ID", str(bot.gaming_channel_id)),
+            ])
             return
 
         if isinstance(channel, discord.ForumChannel):
             await post_gaming_article_to_forum(bot, channel, article)
         else:
-            logger.error(f"Channel {bot.gaming_channel_id} is not a forum channel")
+            logger.error("🎮 Channel Is Not A Forum Channel", [
+                ("Channel ID", str(bot.gaming_channel_id)),
+            ])
             return
 
-        logger.success(f"✅ Posted 1 gaming article")
+        logger.success("🎮 Posted Gaming Article", [
+            ("Count", "1"),
+        ])
 
     except Exception as e:
-        logger.error(f"Failed to post gaming news: {e}")
+        logger.error("🎮 Failed To Post Gaming News", [
+            ("Error", str(e)),
+        ])
 
 
 # =============================================================================
@@ -105,7 +113,9 @@ async def post_gaming_article_to_forum(
             article.image_url, "gaming", hash(article.url)
         )
         if image_file:
-            logger.info(f"🎮 Downloaded image for: {article.title[:30]}")
+            logger.info("🎮 Downloaded Image", [
+                ("Title", article.title[:30]),
+            ])
 
     try:
         # Build message content
@@ -131,8 +141,12 @@ async def post_gaming_article_to_forum(
         article_id = bot.gaming_scraper._extract_article_id(article.url)
         bot.gaming_scraper.fetched_urls.add(article_id)
         bot.gaming_scraper._save_posted_urls()
-        logger.info(f"🎮 Marked gaming article ID as posted: {article_id}")
-        logger.info(f"🎮 Posted gaming forum thread: {article.title}")
+        logger.info("🎮 Marked Gaming Article As Posted", [
+            ("Article ID", article_id),
+        ])
+        logger.info("🎮 Posted Gaming Forum Thread", [
+            ("Title", article.title[:50]),
+        ])
 
         # Send announcement
         if bot.general_channel_id:
@@ -171,8 +185,9 @@ def _build_forum_content(article: GamingArticle) -> str:
 
     max_summary_space = 2000 - len(footer) - 400
 
-    arabic_summary = article.arabic_summary
-    english_summary = article.english_summary
+    # Add null checks
+    arabic_summary = article.arabic_summary or "الملخص غير متوفر"
+    english_summary = article.english_summary or "Summary not available"
 
     combined_length = len(arabic_summary) + len(english_summary)
     if combined_length > max_summary_space:

@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Optional
 import discord
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID
+from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR, SCHEDULER_ERROR_RETRY
+from src.utils import send_message_with_retry, edit_message_with_retry, edit_thread_with_retry
 from src.services.debates.database import DebatesDatabase, UserKarma
 
 if TYPE_CHECKING:
@@ -56,7 +57,9 @@ class LeaderboardManager:
         """Initialize leaderboard post and start hourly updates."""
         await self._ensure_leaderboard_post()
         self._task = asyncio.create_task(self._update_loop())
-        logger.success("📊 Leaderboard manager started - updating hourly")
+        logger.success("📊 Leaderboard Manager Started", [
+            ("Interval", "hourly"),
+        ])
 
     async def stop(self) -> None:
         """Stop the update loop."""
@@ -71,19 +74,75 @@ class LeaderboardManager:
     # Post Management
     # -------------------------------------------------------------------------
 
+    async def _ensure_thread_healthy(self) -> None:
+        """Ensure the leaderboard thread is pinned and not archived."""
+        if not self._thread:
+            return
+        try:
+            # Check if thread needs fixing
+            needs_edit = False
+            if hasattr(self._thread, 'archived') and self._thread.archived:
+                needs_edit = True
+            if hasattr(self._thread, 'pinned') and not self._thread.pinned:
+                needs_edit = True
+
+            if needs_edit:
+                await edit_thread_with_retry(self._thread, archived=False, pinned=True)
+                logger.info("📊 Fixed Leaderboard Thread State", [
+                    ("Action", "Unarchived/Pinned"),
+                ])
+        except Exception as e:
+            logger.warning("📊 Could Not Ensure Thread Health", [
+                ("Error", str(e)),
+            ])
+
     async def _ensure_leaderboard_post(self) -> None:
         """Create or find the leaderboard post in debates forum."""
         # Check if we have a saved thread
         saved_thread_id = self.db.get_leaderboard_thread()
 
         if saved_thread_id:
-            # Try to get the existing thread
+            # Try to get the existing thread (may be None if archived)
             self._thread = self.bot.get_channel(saved_thread_id)
+
+            # If not in cache, try to fetch it (handles archived threads)
+            if not self._thread:
+                try:
+                    self._thread = await self.bot.fetch_channel(saved_thread_id)
+                except discord.NotFound:
+                    logger.warning("📊 Saved Leaderboard Thread Not Found - Creating New One", [
+                        ("Thread ID", str(saved_thread_id)),
+                    ])
+                    self.db.clear_leaderboard_thread()
+                    self._thread = None
+                except Exception as e:
+                    logger.error("📊 Error Fetching Leaderboard Thread", [
+                        ("Error", str(e)),
+                    ])
+                    self._thread = None
+
             if self._thread:
-                logger.info(f"📊 Found existing leaderboard thread: {saved_thread_id}")
-                # Update the current month embed
-                await self._update_current_month()
-                return
+                # Unarchive if needed
+                if hasattr(self._thread, 'archived') and self._thread.archived:
+                    try:
+                        await edit_thread_with_retry(self._thread, archived=False)
+                        logger.info("📊 Unarchived Leaderboard Thread", [
+                            ("Thread ID", str(saved_thread_id)),
+                        ])
+                    except Exception as e:
+                        logger.error("📊 Failed To Unarchive Leaderboard Thread", [
+                            ("Error", str(e)),
+                        ])
+                        # Clear and recreate
+                        self.db.clear_leaderboard_thread()
+                        self._thread = None
+
+                if self._thread:
+                    logger.info("📊 Found Existing Leaderboard Thread", [
+                        ("Thread ID", str(saved_thread_id)),
+                    ])
+                    await self._update_current_month()
+                    return
 
         # Create new thread in debates forum
         await self._create_leaderboard_thread()
@@ -92,7 +151,9 @@ class LeaderboardManager:
         """Create a new leaderboard thread in the debates forum."""
         forum = self.bot.get_channel(DEBATES_FORUM_ID)
         if not forum or not isinstance(forum, discord.ForumChannel):
-            logger.error(f"Debates forum not found or invalid: {DEBATES_FORUM_ID}")
+            logger.error("📊 Debates Forum Not Found Or Invalid", [
+                ("Forum ID", str(DEBATES_FORUM_ID)),
+            ])
             return
 
         # Create initial content for current month
@@ -105,8 +166,8 @@ class LeaderboardManager:
             content=content,
         )
 
-        # Lock the thread so no one can reply
-        await thread.edit(locked=True)
+        # Lock and pin the thread so it stays at the top and can't be replied to
+        await edit_thread_with_retry(thread, locked=True, pinned=True, archived=False)
 
         # Save thread ID
         self.db.set_leaderboard_thread(thread.id)
@@ -115,7 +176,9 @@ class LeaderboardManager:
         self.db.set_month_embed(now.year, now.month, message.id)
 
         self._thread = thread
-        logger.success(f"📊 Created new leaderboard thread: {thread.id}")
+        logger.success("📊 Created New Leaderboard Thread", [
+            ("Thread ID", str(thread.id)),
+        ])
 
     # -------------------------------------------------------------------------
     # Update Loop
@@ -126,7 +189,10 @@ class LeaderboardManager:
         while True:
             try:
                 # Wait 1 hour
-                await asyncio.sleep(3600)
+                await asyncio.sleep(SECONDS_PER_HOUR)
+
+                # Ensure thread is healthy (pinned, not archived)
+                await self._ensure_thread_healthy()
 
                 # Update current month
                 await self._update_current_month()
@@ -134,14 +200,16 @@ class LeaderboardManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Leaderboard update error: {e}")
-                # Wait a bit before retrying
-                await asyncio.sleep(300)
+                logger.error("📊 Leaderboard Update Error", [
+                    ("Error", str(e)),
+                ])
+                # Wait before retrying
+                await asyncio.sleep(SCHEDULER_ERROR_RETRY)
 
     async def _update_current_month(self) -> None:
         """Update the current month's content (or create new one if month changed)."""
         if not self._thread:
-            logger.warning("Leaderboard thread not found - cannot update")
+            logger.warning("📊 Leaderboard Thread Not Found - Cannot Update")
             return
 
         now = datetime.now()
@@ -156,11 +224,33 @@ class LeaderboardManager:
                 message = await self._thread.fetch_message(message_id)
                 content = self._generate_month_content(year, month)
                 # Set embed=None to remove any existing embed
-                await message.edit(content=content, embed=None)
-                logger.debug(f"📊 Updated {MONTH_NAMES[month]} {year} leaderboard")
+                await edit_message_with_retry(message, content=content, embed=None)
+                logger.debug("📊 Updated Leaderboard", [
+                    ("Month", MONTH_NAMES[month]),
+                    ("Year", str(year)),
+                ])
             except discord.NotFound:
                 # Message was deleted, create new one
                 await self._post_new_month_message(year, month)
+            except discord.HTTPException as e:
+                if e.code == 50083:  # Thread is archived
+                    logger.warning("📊 Leaderboard Thread Is Archived - Attempting To Unarchive")
+                    try:
+                        await edit_thread_with_retry(self._thread, archived=False)
+                        # Retry after unarchiving
+                        message = await self._thread.fetch_message(message_id)
+                        content = self._generate_month_content(year, month)
+                        await edit_message_with_retry(message, content=content, embed=None)
+                        logger.info("📊 Successfully Unarchived And Updated Leaderboard")
+                    except Exception as unarchive_error:
+                        logger.error("📊 Failed To Recover Archived Thread", [
+                            ("Error", str(unarchive_error)),
+                        ])
+                        # Clear and let it recreate on next cycle
+                        self.db.clear_leaderboard_thread()
+                        self._thread = None
+                else:
+                    raise
         else:
             # New month, post new message
             await self._post_new_month_message(year, month)
@@ -171,9 +261,18 @@ class LeaderboardManager:
             return
 
         content = self._generate_month_content(year, month)
-        message = await self._thread.send(content=content)
+        message = await send_message_with_retry(self._thread, content=content)
+        if not message:
+            logger.warning("📊 Failed to post new month leaderboard", [
+                ("Month", MONTH_NAMES[month]),
+                ("Year", str(year)),
+            ])
+            return
         self.db.set_month_embed(year, month, message.id)
-        logger.info(f"📊 Posted new leaderboard for {MONTH_NAMES[month]} {year}")
+        logger.info("📊 Posted New Leaderboard", [
+            ("Month", MONTH_NAMES[month]),
+            ("Year", str(year)),
+        ])
 
     # -------------------------------------------------------------------------
     # Content Generation
@@ -390,8 +489,9 @@ class LeaderboardManager:
         cached = self.db.get_cached_user(user_id)
 
         if cached:
-            name = cached["display_name"] or cached["username"]
-            if not cached["is_member"]:
+            # Safely get display_name or username with fallback to avoid KeyError
+            name = cached.get("display_name") or cached.get("username") or f"User {user_id}"
+            if not cached.get("is_member", True):
                 return f"{name} (left)"
             return name
 
@@ -451,12 +551,32 @@ class LeaderboardManager:
             try:
                 message = await self._thread.fetch_message(embed_data["message_id"])
                 content = self._generate_month_content(embed_data["year"], embed_data["month"])
-                await message.edit(content=content, embed=None)
+                await edit_message_with_retry(message, content=content, embed=None)
+                await asyncio.sleep(0.5)  # Rate limit delay between edits
             except discord.NotFound:
-                # Message deleted, skip
-                pass
+                # Message deleted, remove from db
+                self.db.delete_month_embed(embed_data["year"], embed_data["month"])
+            except discord.HTTPException as e:
+                if e.code == 50083:  # Thread is archived
+                    try:
+                        await edit_thread_with_retry(self._thread, archived=False)
+                        message = await self._thread.fetch_message(embed_data["message_id"])
+                        content = self._generate_month_content(embed_data["year"], embed_data["month"])
+                        await edit_message_with_retry(message, content=content, embed=None)
+                    except Exception:
+                        logger.error("📊 Failed To Refresh Message (Archived Thread)", [
+                            ("Data", str(embed_data)),
+                        ])
+                else:
+                    logger.error("📊 Failed To Refresh Message", [
+                        ("Data", str(embed_data)),
+                        ("Error", str(e)),
+                    ])
             except Exception as e:
-                logger.error(f"Failed to refresh message {embed_data}: {e}")
+                logger.error("📊 Failed To Refresh Message", [
+                    ("Data", str(embed_data)),
+                    ("Error", str(e)),
+                ])
 
 
 # =============================================================================

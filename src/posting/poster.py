@@ -9,6 +9,7 @@ Server: discord.gg/syria
 """
 
 import os
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -24,6 +25,12 @@ from src.core.logger import logger
 
 TEMP_DIR: Path = Path("data/temp_media")
 """Temporary directory for downloaded media files."""
+
+TEMP_FILE_MAX_AGE_HOURS: int = 24
+"""Maximum age for temp files before cleanup (hours)."""
+
+DOWNLOAD_TIMEOUT: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=20, connect=10)
+"""Timeout settings for media download sessions."""
 
 
 # =============================================================================
@@ -57,8 +64,8 @@ async def download_media(
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=timeout) as response:
+        async with aiohttp.ClientSession(timeout=DOWNLOAD_TIMEOUT) as session:
+            async with session.get(url) as response:
                 if response.status != 200:
                     return None, None
 
@@ -81,7 +88,10 @@ async def download_media(
                 return discord_file, temp_path
 
     except Exception as e:
-        logger.warning(f"Failed to download media from {url[:50]}: {e}")
+        logger.warning("📥 Failed To Download Media", [
+            ("URL", url[:50]),
+            ("Error", str(e)),
+        ])
         return None, None
 
 
@@ -134,14 +144,16 @@ async def download_video(
     # Only download direct video files
     is_direct = any(ext in url.lower() for ext in [".mp4", ".webm", ".mov"])
     if not is_direct:
-        logger.info(f"Video is an embed (not downloadable): {url[:50]}")
+        logger.info("🎬 Video Is An Embed (Not Downloadable)", [
+            ("URL", url[:50]),
+        ])
         return None, None
 
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=30) as response:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30, connect=10)) as session:
+            async with session.get(url) as response:
                 if response.status != 200:
                     return None, None
 
@@ -149,7 +161,10 @@ async def download_video(
                 content_length = response.headers.get("Content-Length")
                 max_bytes = max_size_mb * 1024 * 1024
                 if content_length and int(content_length) > max_bytes:
-                    logger.warning(f"Video too large ({int(content_length)/1024/1024:.1f}MB)")
+                    logger.warning("🎬 Video Too Large", [
+                        ("Size", f"{int(content_length)/1024/1024:.1f}MB"),
+                        ("Limit", f"{max_size_mb}MB"),
+                    ])
                     return None, None
 
                 # Get extension
@@ -162,7 +177,10 @@ async def download_video(
                 # Download and check actual size
                 content: bytes = await response.read()
                 if len(content) > max_bytes:
-                    logger.warning(f"Video size ({len(content)/1024/1024:.1f}MB) exceeds limit")
+                    logger.warning("🎬 Video Size Exceeds Limit", [
+                        ("Size", f"{len(content)/1024/1024:.1f}MB"),
+                        ("Limit", f"{max_size_mb}MB"),
+                    ])
                     return None, None
 
                 # Save file
@@ -171,11 +189,15 @@ async def download_video(
                     f.write(content)
 
                 discord_file = discord.File(temp_path, filename=f"video{ext}")
-                logger.info(f"Downloaded video ({len(content)/1024/1024:.1f}MB)")
+                logger.info("🎬 Downloaded Video", [
+                    ("Size", f"{len(content)/1024/1024:.1f}MB"),
+                ])
                 return discord_file, temp_path
 
     except Exception as e:
-        logger.warning(f"Failed to download video: {e}")
+        logger.warning("🎬 Failed To Download Video", [
+            ("Error", str(e)),
+        ])
         return None, None
 
 
@@ -198,7 +220,55 @@ def cleanup_temp_file(path: Optional[str]) -> None:
         try:
             os.remove(path)
         except Exception as e:
-            logger.warning(f"Failed to delete temp file {path}: {e}")
+            logger.warning("🗑️ Failed To Delete Temp File", [
+                ("Path", path),
+                ("Error", str(e)),
+            ])
+
+
+def cleanup_old_temp_files() -> int:
+    """
+    Remove temporary files older than TEMP_FILE_MAX_AGE_HOURS.
+
+    Should be called periodically (e.g., on bot startup or hourly)
+    to prevent disk space bloat from orphaned temp files.
+
+    Returns:
+        Number of files removed
+    """
+    if not TEMP_DIR.exists():
+        return 0
+
+    removed_count = 0
+    max_age_seconds = TEMP_FILE_MAX_AGE_HOURS * 3600
+    current_time = time.time()
+
+    try:
+        for file_path in TEMP_DIR.iterdir():
+            if file_path.is_file():
+                try:
+                    file_age = current_time - file_path.stat().st_mtime
+                    if file_age > max_age_seconds:
+                        file_path.unlink()
+                        removed_count += 1
+                except (OSError, PermissionError) as e:
+                    logger.warning("🗑️ Failed To Remove Old Temp File", [
+                        ("Path", str(file_path)),
+                        ("Error", str(e)),
+                    ])
+
+        if removed_count > 0:
+            logger.info("🗑️ Cleaned Old Temp Files", [
+                ("Removed", str(removed_count)),
+                ("Max Age", f"{TEMP_FILE_MAX_AGE_HOURS}h"),
+            ])
+
+    except Exception as e:
+        logger.warning("🗑️ Failed To Clean Temp Directory", [
+            ("Error", str(e)),
+        ])
+
+    return removed_count
 
 
 # =============================================================================
@@ -210,5 +280,6 @@ __all__ = [
     "download_image",
     "download_video",
     "cleanup_temp_file",
+    "cleanup_old_temp_files",
     "TEMP_DIR",
 ]

@@ -121,7 +121,7 @@ class GamingScraper:
         # DESIGN: Initialize OpenAI client for title generation and summaries
         # Uses API key from environment variables
         api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
-        self.openai_client: Optional[OpenAI] = OpenAI(api_key=api_key) if api_key else None
+        self.openai_client: Optional[OpenAI] = OpenAI(api_key=api_key, timeout=30.0) if api_key else None
 
         # DESIGN: Initialize AI response cache to reduce OpenAI API costs
         # Caches titles and summaries for previously seen articles
@@ -202,11 +202,17 @@ class GamingScraper:
                     # DESIGN: Convert all entries (URLs or IDs) to article IDs
                     # Backward compatible with old URL-based cache
                     self.fetched_urls = set(self._extract_article_id(url) for url in url_list)
-                    logger.info(f"🎮 Loaded {len(self.fetched_urls)} posted gaming article IDs from cache")
+                    logger.info("🎮 Loaded Posted Gaming Article IDs", [
+                        ("Count", str(len(self.fetched_urls))),
+                    ])
             else:
-                logger.info("No posted gaming article IDs cache found - starting fresh")
-        except Exception as e:
-            logger.warning(f"Failed to load posted gaming article IDs: {e}")
+                logger.info("🎮 No Cache Found", [
+                    ("Action", "Starting fresh"),
+                ])
+        except (json.JSONDecodeError, IOError, OSError) as e:
+            logger.warning("🎮 Failed to Load Posted Article IDs", [
+                ("Error", str(e)),
+            ])
             self.fetched_urls = set()
 
     def _save_posted_urls(self) -> None:
@@ -225,9 +231,13 @@ class GamingScraper:
             with open(self.posted_urls_file, "w", encoding="utf-8") as f:
                 json.dump({"posted_urls": ids_to_save}, f, indent=2, ensure_ascii=False)
 
-            logger.info(f"🎮 Saved {len(ids_to_save)} posted gaming article IDs to cache")
-        except Exception as e:
-            logger.warning(f"Failed to save posted gaming article IDs: {e}")
+            logger.info("🎮 Saved Posted Gaming Article IDs", [
+                ("Count", str(len(ids_to_save))),
+            ])
+        except (IOError, OSError) as e:
+            logger.warning("🎮 Failed to Save Posted Article IDs", [
+                ("Error", str(e)),
+            ])
 
     # -------------------------------------------------------------------------
     # Public Methods
@@ -254,7 +264,9 @@ class GamingScraper:
         # DESIGN: Single source - This Week in Videogames
         source: dict[str, str] = self.GAMING_FEEDS[0]
 
-        logger.info(f"🎮 Fetching gaming news from {source['name']}")
+        logger.info("🎮 Fetching Gaming News", [
+            ("Source", source['name']),
+        ])
 
         try:
             articles: list[GamingArticle] = await self._fetch_from_source(
@@ -285,14 +297,19 @@ class GamingScraper:
 
             # DESIGN: Only return NEW articles that haven't been posted yet
             if new_articles:
-                logger.success(f"✅ Found {len(new_articles)} NEW gaming articles from TWIG")
+                logger.success("🎮 Found New Gaming Articles", [
+                    ("Count", str(len(new_articles))),
+                    ("Source", "TWIG"),
+                ])
                 return new_articles[:max_articles]
             else:
-                logger.info(f"📭 No new gaming articles found (all already posted)")
+                logger.info("📭 No New Gaming Articles Found")
                 return []
 
         except Exception as e:
-            logger.warning(f"Failed to fetch gaming news: {str(e)[:100]}")
+            logger.warning("🎮 Failed to Fetch Gaming News", [
+                ("Error", str(e)[:100]),
+            ])
             return []
 
     # -------------------------------------------------------------------------
@@ -324,7 +341,9 @@ class GamingScraper:
         feed: feedparser.FeedParserDict = feedparser.parse(source_info["rss_url"])
 
         if not feed.entries:
-            logger.warning(f"No entries found in {source_info['name']} feed")
+            logger.warning("🎮 No Entries in Feed", [
+                ("Source", source_info['name']),
+            ])
             return articles
 
         for entry in feed.entries[: max_articles * 2]:  # Fetch extra for filtering
@@ -343,7 +362,11 @@ class GamingScraper:
                 # This approach is faster and more reliable than fetching article pages
                 content_encoded: str = ""
                 if "content" in entry and entry.content:
-                    content_encoded = entry.content[0].get("value", "")
+                    # Handle both list and dict formats for content field
+                    if isinstance(entry.content, list) and entry.content:
+                        content_encoded = entry.content[0].get("value", "")
+                    elif isinstance(entry.content, dict):
+                        content_encoded = entry.content.get("value", "")
 
                 # DESIGN: Extract image URL from content:encoded <img> tag
                 # TWIG embeds images in the RSS content as <img src="...">
@@ -391,14 +414,18 @@ class GamingScraper:
                 cached_title = self.ai_cache.get_title(article_id)
                 if cached_title:
                     ai_title: str = cached_title["english_title"]
-                    logger.info(f"💾 Cache hit: Using cached title for article {article_id}")
+                    logger.info("💾 Cache Hit - Title", [
+                        ("Article ID", article_id),
+                    ])
                 else:
                     # DESIGN: Generate AI-powered 3-5 word English title
                     # Replaces original title (may be too long) with clean English title
                     # Uses OpenAI GPT-3.5-turbo to understand article and create concise title
                     ai_title: str = self._generate_ai_title(original_title, full_content)
                     self.ai_cache.cache_title(article_id, original_title, ai_title)
-                    logger.info(f"🔄 Cache miss: Generated and cached title for article {article_id}")
+                    logger.info("🔄 Cache Miss - Generated Title", [
+                        ("Article ID", article_id),
+                    ])
 
                 # DESIGN: Check AI cache for summaries before generating
                 # Summaries are expensive (long content = more tokens), cache saves significant cost
@@ -406,14 +433,18 @@ class GamingScraper:
                 if cached_summary:
                     arabic_summary: str = cached_summary["arabic_summary"]
                     english_summary: str = cached_summary["english_summary"]
-                    logger.info(f"💾 Cache hit: Using cached summary for article {article_id}")
+                    logger.info("💾 Cache Hit - Summary", [
+                        ("Article ID", article_id),
+                    ])
                 else:
                     # DESIGN: Generate bilingual summaries (Arabic + English)
                     # AI creates concise 3-4 sentence summaries in both languages
                     # Much better than truncated raw text
                     arabic_summary, english_summary = self._generate_bilingual_summary(full_content)
                     self.ai_cache.cache_summary(article_id, arabic_summary, english_summary)
-                    logger.info(f"🔄 Cache miss: Generated and cached summary for article {article_id}")
+                    logger.info("🔄 Cache Miss - Generated Summary", [
+                        ("Article ID", article_id),
+                    ])
 
                 # DESIGN: Detect game category for article categorization
                 # Note: Game category detection is not cached as it's cheap and rarely changes
@@ -439,9 +470,10 @@ class GamingScraper:
                     break
 
             except Exception as e:
-                logger.warning(
-                    f"Failed to parse gaming article from {source_info['name']}: {str(e)[:100]}"
-                )
+                logger.warning("🎮 Failed to Parse Gaming Article", [
+                    ("Source", source_info['name']),
+                    ("Error", str(e)[:100]),
+                ])
                 continue
 
         return articles
@@ -484,10 +516,17 @@ class GamingScraper:
                     return enclosure.get("href")
 
         # Try to extract first image from article content
+        content_field = entry.get("content", [{}])
+        content_value = ""
+        if isinstance(content_field, list) and content_field:
+            content_value = content_field[0].get("value", "")
+        elif isinstance(content_field, dict):
+            content_value = content_field.get("value", "")
+
         content: str = (
             entry.get("summary", "")
             or entry.get("description", "")
-            or entry.get("content", [{}])[0].get("value", "")
+            or content_value
         )
 
         if content:
@@ -592,16 +631,24 @@ class GamingScraper:
                 # Clean content
                 if content_text:
                     content_text = "\n\n".join(line.strip() for line in content_text.split("\n") if line.strip())
-                    logger.info(f"🎮 Extracted from {url} - Image: {image_url[:50] if image_url else 'None'}")
+                    logger.info("🎮 Content Extracted", [
+                        ("URL", url[:50]),
+                        ("Image", image_url[:50] if image_url else "None"),
+                    ])
                     return (content_text, image_url)
                 else:
                     return ("Could not extract article text", image_url)
 
         except asyncio.TimeoutError:
-            logger.warning(f"Timeout fetching gaming article from {url}")
+            logger.warning("🎮 Timeout Fetching Gaming Article", [
+                ("URL", url[:50]),
+            ])
             return ("Article fetch timed out", None)
         except Exception as e:
-            logger.warning(f"Failed to extract gaming content from {url}: {str(e)[:100]}")
+            logger.warning("🎮 Content Extraction Failed", [
+                ("URL", url[:50]),
+                ("Error", str(e)[:100]),
+            ])
             return ("Content extraction failed", None)
 
     # -------------------------------------------------------------------------
@@ -636,14 +683,21 @@ class GamingScraper:
             ai_title: str = response.choices[0].message.content.strip()
 
             if ai_title and 3 <= len(ai_title.split()) <= 7:
-                logger.info(f"🎮 AI generated gaming title: '{ai_title}' from '{original_title[:50]}'")
+                logger.info("🎮 AI Generated Gaming Title", [
+                    ("Title", ai_title),
+                ])
                 return ai_title
             else:
-                logger.warning(f"AI gaming title invalid: '{ai_title}' - using original")
+                logger.warning("🎮 AI Gaming Title Invalid", [
+                    ("Title", ai_title),
+                    ("Fallback", "Original title"),
+                ])
                 return original_title
 
         except Exception as e:
-            logger.warning(f"Failed to generate AI gaming title: {str(e)[:100]}")
+            logger.warning("🎮 Failed to Generate AI Gaming Title", [
+                ("Error", str(e)[:100]),
+            ])
             return original_title
 
     def _generate_bilingual_summary(self, content: str) -> tuple[str, str]:
@@ -692,12 +746,21 @@ class GamingScraper:
                 # 400 chars each = 800 chars for summaries, leaving plenty of room
                 if len(arabic_summary) > 400:
                     arabic_summary = arabic_summary[:397] + "..."
-                    logger.warning(f"🎮 Truncated Arabic gaming summary from {len(arabic_part)} to 400 chars")
+                    logger.warning("🎮 Truncated Arabic Gaming Summary", [
+                        ("Original", str(len(arabic_part))),
+                        ("Truncated To", "400"),
+                    ])
                 if len(english_summary) > 400:
                     english_summary = english_summary[:397] + "..."
-                    logger.warning(f"🎮 Truncated English gaming summary from {len(english_part)} to 400 chars")
+                    logger.warning("🎮 Truncated English Gaming Summary", [
+                        ("Original", str(len(english_part))),
+                        ("Truncated To", "400"),
+                    ])
 
-                logger.info(f"🎮 Generated bilingual gaming summaries (AR: {len(arabic_summary)} chars, EN: {len(english_summary)} chars)")
+                logger.info("🎮 Generated Bilingual Gaming Summaries", [
+                    ("Arabic", f"{len(arabic_summary)} chars"),
+                    ("English", f"{len(english_summary)} chars"),
+                ])
             else:
                 logger.warning("AI gaming summary format invalid - using truncated content")
                 truncated: str = content[:300] + "..." if len(content) > 300 else content
@@ -706,7 +769,9 @@ class GamingScraper:
             return (arabic_summary, english_summary)
 
         except Exception as e:
-            logger.warning(f"Failed to generate bilingual gaming summary: {str(e)[:100]}")
+            logger.warning("🎮 Failed to Generate Bilingual Summary", [
+                ("Error", str(e)[:100]),
+            ])
             truncated: str = content[:300] + "..." if len(content) > 300 else content
             return (truncated, truncated)
 
@@ -749,12 +814,21 @@ class GamingScraper:
 
             # DESIGN: Validate AI response against known categories
             if detected_category in self.GAME_CATEGORIES:
-                logger.info(f"🎮 Detected game category: '{detected_category}' for article '{title[:40]}'")
+                logger.info("🎮 Detected Game Category", [
+                    ("Category", detected_category),
+                    ("Title", title[:40]),
+                ])
                 return detected_category
             else:
-                logger.warning(f"AI returned invalid category '{detected_category}' - using General Gaming")
+                logger.warning("🎮 Invalid Category Returned", [
+                    ("Category", detected_category),
+                    ("Fallback", "General Gaming"),
+                ])
                 return "General Gaming"
 
         except Exception as e:
-            logger.warning(f"Failed to detect game category: {str(e)[:100]} - using General Gaming")
+            logger.warning("🎮 Failed to Detect Game Category", [
+                ("Error", str(e)[:100]),
+                ("Fallback", "General Gaming"),
+            ])
             return "General Gaming"

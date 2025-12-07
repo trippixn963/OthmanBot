@@ -39,25 +39,27 @@ async def post_hot_debate(bot: "OthmanBot") -> None:
     try:
         # Validate configuration
         if not bot.general_channel_id:
-            logger.warning("General channel not configured - skipping hot debate post")
+            logger.warning("🔥 General Channel Not Configured - Skipping Hot Debate Post")
             return
 
         if not bot.debates_service:
-            logger.warning("Debates service not initialized - skipping hot debate post")
+            logger.warning("🔥 Debates Service Not Initialized - Skipping Hot Debate Post")
             return
 
         # Get general channel
         general_channel = bot.get_channel(bot.general_channel_id)
         if not general_channel or not isinstance(general_channel, discord.TextChannel):
-            logger.warning(f"General channel {bot.general_channel_id} not found or invalid")
+            logger.warning("🔥 General Channel Not Found Or Invalid", [
+                ("Channel ID", str(bot.general_channel_id)),
+            ])
             return
 
         # Get hottest debate
-        logger.info("🔥 Fetching hottest debate...")
+        logger.info("🔥 Fetching Hottest Debate")
         hot_debate = await bot.debates_service.get_hottest_debate(bot, DEBATES_FORUM_ID)
 
         if not hot_debate:
-            logger.info("No hot debates found - skipping post")
+            logger.info("🔥 No Hot Debates Found - Skipping Post")
             return
 
         # Format the announcement
@@ -96,15 +98,19 @@ async def post_hot_debate(bot: "OthmanBot") -> None:
         # Send message with embed
         await general_channel.send(embed=embed, view=view)
 
-        logger.success(
-            f"🔥 Posted hot debate: {hot_debate.thread.name} "
-            f"(score: {hot_debate.hotness_score:.1f})"
-        )
+        logger.success("🔥 Posted Hot Debate", [
+            ("Title", hot_debate.thread.name[:50]),
+            ("Score", f"{hot_debate.hotness_score:.1f}"),
+        ])
 
     except discord.HTTPException as e:
-        logger.error(f"Failed to post hot debate (Discord API error): {e}")
+        logger.error("🔥 Failed To Post Hot Debate (Discord API Error)", [
+            ("Error", str(e)),
+        ])
     except Exception as e:
-        logger.error(f"Failed to post hot debate: {e}")
+        logger.error("🔥 Failed To Post Hot Debate", [
+            ("Error", str(e)),
+        ])
 
 
 # =============================================================================

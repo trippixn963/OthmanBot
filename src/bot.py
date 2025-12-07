@@ -32,6 +32,7 @@ from src.handlers.shutdown import shutdown_handler
 from src.handlers.debates import (
     on_message_handler,
     on_thread_create_handler,
+    on_thread_delete_handler,
     on_debate_reaction_add,
     on_debate_reaction_remove,
     on_member_remove_handler,
@@ -124,6 +125,10 @@ class OthmanBot(commands.Bot):
     async def on_thread_create(self, thread: discord.Thread) -> None:
         """Event handler for thread creation."""
         await on_thread_create_handler(self, thread)
+
+    async def on_thread_delete(self, thread: discord.Thread) -> None:
+        """Event handler for thread deletion - triggers auto-renumbering."""
+        await on_thread_delete_handler(self, thread)
 
     async def on_reaction_add(
         self,

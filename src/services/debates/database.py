@@ -4,11 +4,16 @@ Othman Discord Bot - Debates Database
 
 SQLite database operations for karma tracking.
 
+Uses a persistent connection with WAL mode for improved concurrency.
+Provides async wrappers via asyncio.to_thread() to avoid blocking the event loop.
+
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import asyncio
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
@@ -34,26 +39,95 @@ class UserKarma:
 # =============================================================================
 
 class DebatesDatabase:
-    """SQLite database for debate karma tracking."""
+    """
+    SQLite database for debate karma tracking.
+
+    Uses a persistent connection with WAL mode for better concurrency.
+    Thread-safe via a threading lock for all operations.
+    """
 
     def __init__(self, db_path: str = "data/debates.db") -> None:
         """
-        Initialize database connection.
+        Initialize database with persistent connection.
 
         Args:
             db_path: Path to SQLite database file
         """
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(exist_ok=True)
+
+        # Thread lock for connection access
+        self._lock = threading.Lock()
+
+        # Create persistent connection with optimized settings
+        self._connection: Optional[sqlite3.Connection] = None
+        self._connect()
         self._init_database()
 
+    def _connect(self) -> None:
+        """Create persistent connection with optimized settings."""
+        self._connection = sqlite3.connect(
+            self.db_path,
+            check_same_thread=False,  # Allow multi-thread access (protected by lock)
+            timeout=30.0,  # Wait up to 30s for locks
+        )
+
+        # Enable WAL mode for better concurrency (readers don't block writers)
+        self._connection.execute("PRAGMA journal_mode=WAL")
+        # Enable foreign keys
+        self._connection.execute("PRAGMA foreign_keys=ON")
+        # Synchronous NORMAL is safe with WAL and faster than FULL
+        self._connection.execute("PRAGMA synchronous=NORMAL")
+        # Use memory-mapped I/O for better read performance (64MB)
+        self._connection.execute("PRAGMA mmap_size=67108864")
+
+        logger.tree("Database Connection Established", [
+            ("Path", str(self.db_path)),
+            ("Mode", "WAL"),
+            ("Timeout", "30s"),
+            ("MMAP", "64MB"),
+        ], emoji="🗄️")
+
     def _get_connection(self) -> sqlite3.Connection:
-        """Get database connection."""
-        return sqlite3.connect(self.db_path)
+        """
+        Get the persistent database connection.
+
+        If connection is closed, reconnect automatically.
+
+        Returns:
+            Active database connection
+        """
+        if self._connection is None:
+            self._connect()
+        return self._connection
+
+    def close(self) -> None:
+        """
+        Close the database connection.
+
+        Should be called during graceful shutdown.
+        """
+        with self._lock:
+            if self._connection:
+                try:
+                    # Checkpoint WAL before closing
+                    self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    self._connection.close()
+                    logger.tree("Database Connection Closed", [
+                        ("WAL", "Checkpointed"),
+                        ("Status", "Clean"),
+                    ], emoji="🗄️")
+                except Exception as e:
+                    logger.warning("Error Closing Database", [
+                        ("Error", str(e)),
+                    ])
+                finally:
+                    self._connection = None
 
     def _init_database(self) -> None:
         """Create database tables if they don't exist."""
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
 
             # Users table - stores karma totals
@@ -184,8 +258,44 @@ class DebatesDatabase:
                 )
             """)
 
+            # Debate participation tracking (for accurate "Most Active Participants")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS debate_participation (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    thread_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    message_count INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(thread_id, user_id)
+                )
+            """)
+
+            # Index for participation lookups
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_participation_user
+                ON debate_participation(user_id)
+            """)
+
+            # Debate creators tracking (for accurate "Debate Starters")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS debate_creators (
+                    thread_id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Index for creator lookups
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_creators_user
+                ON debate_creators(user_id)
+            """)
+
             conn.commit()
-            logger.info("🗳️ Debates database initialized")
+            logger.tree("Debates Database Initialized", [
+                ("Tables", "8 created/verified"),
+                ("Indexes", "4 created/verified"),
+            ], emoji="🗳️")
 
     # -------------------------------------------------------------------------
     # Vote Operations
@@ -209,44 +319,76 @@ class DebatesDatabase:
 
         Returns:
             True if vote was added/updated, False if unchanged
+
+        DESIGN: Uses BEGIN IMMEDIATE to acquire write lock immediately,
+        preventing race conditions when multiple users vote concurrently.
         """
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                # BEGIN IMMEDIATE acquires write lock immediately to prevent race conditions
+                cursor.execute("BEGIN IMMEDIATE")
 
-            # Check existing vote
-            cursor.execute(
-                "SELECT vote_type FROM votes WHERE voter_id = ? AND message_id = ?",
-                (voter_id, message_id)
-            )
-            existing = cursor.fetchone()
-
-            if existing:
-                old_vote = existing[0]
-                if old_vote == vote_type:
-                    return False  # Same vote, no change
-
-                # Update vote
+                # Check existing vote
                 cursor.execute(
-                    "UPDATE votes SET vote_type = ? WHERE voter_id = ? AND message_id = ?",
-                    (vote_type, voter_id, message_id)
+                    "SELECT vote_type FROM votes WHERE voter_id = ? AND message_id = ?",
+                    (voter_id, message_id)
                 )
+                existing = cursor.fetchone()
 
-                # Update author karma (reverse old, apply new)
-                karma_change = vote_type - old_vote
-                self._update_user_karma(cursor, author_id, karma_change, vote_type)
-            else:
-                # Insert new vote
-                cursor.execute(
-                    """INSERT INTO votes (voter_id, message_id, author_id, vote_type)
-                       VALUES (?, ?, ?, ?)""",
-                    (voter_id, message_id, author_id, vote_type)
-                )
+                if existing:
+                    old_vote = existing[0]
+                    if old_vote == vote_type:
+                        conn.rollback()
+                        return False  # Same vote, no change
 
-                # Update author karma
-                self._update_user_karma(cursor, author_id, vote_type, vote_type)
+                    # Update vote
+                    cursor.execute(
+                        "UPDATE votes SET vote_type = ? WHERE voter_id = ? AND message_id = ?",
+                        (vote_type, voter_id, message_id)
+                    )
 
-            conn.commit()
-            return True
+                    # Update author karma (reverse old, apply new)
+                    karma_change = vote_type - old_vote
+                    self._update_user_karma(cursor, author_id, karma_change, vote_type)
+                else:
+                    # Insert new vote
+                    cursor.execute(
+                        """INSERT INTO votes (voter_id, message_id, author_id, vote_type)
+                           VALUES (?, ?, ?, ?)""",
+                        (voter_id, message_id, author_id, vote_type)
+                    )
+
+                    # Update author karma
+                    self._update_user_karma(cursor, author_id, vote_type, vote_type)
+
+                conn.commit()
+                return True
+            except sqlite3.OperationalError as e:
+                conn.rollback()
+                logger.warning("Vote Transaction Failed (Retryable)", [
+                    ("Error", str(e)),
+                ])
+                raise
+            except sqlite3.IntegrityError as e:
+                conn.rollback()
+                logger.warning("Vote Integrity Error", [
+                    ("Error", str(e)),
+                ])
+                return False
+
+    async def add_vote_async(
+        self,
+        voter_id: int,
+        message_id: int,
+        author_id: int,
+        vote_type: int
+    ) -> bool:
+        """Async wrapper for add_vote - runs in thread pool."""
+        return await asyncio.to_thread(
+            self.add_vote, voter_id, message_id, author_id, vote_type
+        )
 
     def remove_vote(
         self,
@@ -262,34 +404,56 @@ class DebatesDatabase:
 
         Returns:
             Author ID if vote was removed, None otherwise
+
+        DESIGN: Uses BEGIN IMMEDIATE to acquire write lock immediately,
+        preventing race conditions when multiple users vote concurrently.
         """
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                # BEGIN IMMEDIATE acquires write lock immediately to prevent race conditions
+                cursor.execute("BEGIN IMMEDIATE")
 
-            # Get existing vote
-            cursor.execute(
-                """SELECT author_id, vote_type FROM votes
-                   WHERE voter_id = ? AND message_id = ?""",
-                (voter_id, message_id)
-            )
-            existing = cursor.fetchone()
+                # Get existing vote
+                cursor.execute(
+                    """SELECT author_id, vote_type FROM votes
+                       WHERE voter_id = ? AND message_id = ?""",
+                    (voter_id, message_id)
+                )
+                existing = cursor.fetchone()
 
-            if not existing:
-                return None
+                if not existing:
+                    conn.rollback()
+                    return None
 
-            author_id, vote_type = existing
+                author_id, vote_type = existing
 
-            # Delete vote
-            cursor.execute(
-                "DELETE FROM votes WHERE voter_id = ? AND message_id = ?",
-                (voter_id, message_id)
-            )
+                # Delete vote
+                cursor.execute(
+                    "DELETE FROM votes WHERE voter_id = ? AND message_id = ?",
+                    (voter_id, message_id)
+                )
 
-            # Reverse karma and decrement vote counter
-            self._update_user_karma(cursor, author_id, -vote_type, vote_type, is_removal=True)
+                # Reverse karma and decrement vote counter
+                self._update_user_karma(cursor, author_id, -vote_type, vote_type, is_removal=True)
 
-            conn.commit()
-            return author_id
+                conn.commit()
+                return author_id
+            except sqlite3.OperationalError as e:
+                conn.rollback()
+                logger.warning("Remove Vote Transaction Failed (Retryable)", [
+                    ("Error", str(e)),
+                ])
+                raise
+
+    async def remove_vote_async(
+        self,
+        voter_id: int,
+        message_id: int
+    ) -> Optional[int]:
+        """Async wrapper for remove_vote - runs in thread pool."""
+        return await asyncio.to_thread(self.remove_vote, voter_id, message_id)
 
     def get_message_votes(self, message_id: int) -> dict[int, int]:
         """
@@ -301,13 +465,18 @@ class DebatesDatabase:
         Returns:
             Dict of voter_id -> vote_type (+1 or -1)
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT voter_id, vote_type FROM votes WHERE message_id = ?",
                 (message_id,)
             )
             return {row[0]: row[1] for row in cursor.fetchall()}
+
+    async def get_message_votes_async(self, message_id: int) -> dict[int, int]:
+        """Async wrapper for get_message_votes - runs in thread pool."""
+        return await asyncio.to_thread(self.get_message_votes, message_id)
 
     def _update_user_karma(
         self,
@@ -368,7 +537,8 @@ class DebatesDatabase:
         Returns:
             UserKarma data (defaults to 0 if not found)
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT user_id, total_karma, upvotes_received, downvotes_received
@@ -381,6 +551,10 @@ class DebatesDatabase:
                 return UserKarma(*row)
             return UserKarma(user_id, 0, 0, 0)
 
+    async def get_user_karma_async(self, user_id: int) -> UserKarma:
+        """Async wrapper for get_user_karma - runs in thread pool."""
+        return await asyncio.to_thread(self.get_user_karma, user_id)
+
     def get_leaderboard(self, limit: int = 10) -> list[UserKarma]:
         """
         Get top users by karma.
@@ -391,7 +565,8 @@ class DebatesDatabase:
         Returns:
             List of UserKarma sorted by total_karma desc
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT user_id, total_karma, upvotes_received, downvotes_received
@@ -401,6 +576,10 @@ class DebatesDatabase:
                 (limit,)
             )
             return [UserKarma(*row) for row in cursor.fetchall()]
+
+    async def get_leaderboard_async(self, limit: int = 10) -> list[UserKarma]:
+        """Async wrapper for get_leaderboard - runs in thread pool."""
+        return await asyncio.to_thread(self.get_leaderboard, limit)
 
     def get_user_rank(self, user_id: int) -> int:
         """
@@ -412,7 +591,8 @@ class DebatesDatabase:
         Returns:
             Rank (1-indexed), or 0 if not found
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT COUNT(*) + 1 FROM users
@@ -422,6 +602,10 @@ class DebatesDatabase:
                 (user_id,)
             )
             return cursor.fetchone()[0]
+
+    async def get_user_rank_async(self, user_id: int) -> int:
+        """Async wrapper for get_user_rank - runs in thread pool."""
+        return await asyncio.to_thread(self.get_user_rank, user_id)
 
     # -------------------------------------------------------------------------
     # Debate Thread Operations
@@ -435,7 +619,8 @@ class DebatesDatabase:
             thread_id: Discord thread ID
             message_id: Discord message ID of the analytics embed
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT OR REPLACE INTO debate_threads (thread_id, analytics_message_id)
@@ -443,6 +628,10 @@ class DebatesDatabase:
                 (thread_id, message_id)
             )
             conn.commit()
+
+    async def set_analytics_message_async(self, thread_id: int, message_id: int) -> None:
+        """Async wrapper for set_analytics_message - runs in thread pool."""
+        await asyncio.to_thread(self.set_analytics_message, thread_id, message_id)
 
     def get_analytics_message(self, thread_id: int) -> Optional[int]:
         """
@@ -454,7 +643,8 @@ class DebatesDatabase:
         Returns:
             Message ID if found, None otherwise
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT analytics_message_id FROM debate_threads WHERE thread_id = ?",
@@ -463,6 +653,32 @@ class DebatesDatabase:
             row = cursor.fetchone()
             return row[0] if row else None
 
+    async def get_analytics_message_async(self, thread_id: int) -> Optional[int]:
+        """Async wrapper for get_analytics_message - runs in thread pool."""
+        return await asyncio.to_thread(self.get_analytics_message, thread_id)
+
+    def clear_analytics_message(self, thread_id: int) -> None:
+        """
+        Clear the analytics message reference for a debate thread.
+
+        Used when the Discord message is deleted but our DB still has a reference.
+        This prevents repeated NotFound errors on future interactions.
+
+        Args:
+            thread_id: Discord thread ID
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE debate_threads SET analytics_message_id = NULL WHERE thread_id = ?",
+                (thread_id,)
+            )
+            conn.commit()
+
+    async def clear_analytics_message_async(self, thread_id: int) -> None:
+        """Async wrapper for clear_analytics_message - runs in thread pool."""
+        await asyncio.to_thread(self.clear_analytics_message, thread_id)
 
     # -------------------------------------------------------------------------
     # Hostility Operations
@@ -478,7 +694,8 @@ class DebatesDatabase:
         Returns:
             Dict with hostility data or None if not found
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT cumulative_score, message_count, warning_sent,
@@ -499,6 +716,10 @@ class DebatesDatabase:
                 }
             return None
 
+    async def get_thread_hostility_async(self, thread_id: int) -> Optional[dict]:
+        """Async wrapper for get_thread_hostility - runs in thread pool."""
+        return await asyncio.to_thread(self.get_thread_hostility, thread_id)
+
     def update_thread_hostility(
         self,
         thread_id: int,
@@ -513,7 +734,8 @@ class DebatesDatabase:
             cumulative_score: Current cumulative score
             message_count: Total messages analyzed
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT INTO thread_hostility (thread_id, cumulative_score, message_count, updated_at)
@@ -526,6 +748,17 @@ class DebatesDatabase:
             )
             conn.commit()
 
+    async def update_thread_hostility_async(
+        self,
+        thread_id: int,
+        cumulative_score: float,
+        message_count: int
+    ) -> None:
+        """Async wrapper for update_thread_hostility - runs in thread pool."""
+        await asyncio.to_thread(
+            self.update_thread_hostility, thread_id, cumulative_score, message_count
+        )
+
     def mark_warning_sent(self, thread_id: int) -> None:
         """
         Mark that a warning was sent for a thread.
@@ -533,7 +766,8 @@ class DebatesDatabase:
         Args:
             thread_id: Discord thread ID
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """UPDATE thread_hostility
@@ -543,6 +777,10 @@ class DebatesDatabase:
             )
             conn.commit()
 
+    async def mark_warning_sent_async(self, thread_id: int) -> None:
+        """Async wrapper for mark_warning_sent - runs in thread pool."""
+        await asyncio.to_thread(self.mark_warning_sent, thread_id)
+
     def mark_thread_locked(self, thread_id: int) -> None:
         """
         Mark that a thread was locked due to hostility.
@@ -550,7 +788,8 @@ class DebatesDatabase:
         Args:
             thread_id: Discord thread ID
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """UPDATE thread_hostility
@@ -559,6 +798,10 @@ class DebatesDatabase:
                 (thread_id,)
             )
             conn.commit()
+
+    async def mark_thread_locked_async(self, thread_id: int) -> None:
+        """Async wrapper for mark_thread_locked - runs in thread pool."""
+        await asyncio.to_thread(self.mark_thread_locked, thread_id)
 
     def add_message_hostility(
         self,
@@ -576,7 +819,8 @@ class DebatesDatabase:
             user_id: Author ID
             score: Hostility score
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT OR REPLACE INTO message_hostility
@@ -585,6 +829,18 @@ class DebatesDatabase:
                 (thread_id, message_id, user_id, score)
             )
             conn.commit()
+
+    async def add_message_hostility_async(
+        self,
+        thread_id: int,
+        message_id: int,
+        user_id: int,
+        score: float
+    ) -> None:
+        """Async wrapper for add_message_hostility - runs in thread pool."""
+        await asyncio.to_thread(
+            self.add_message_hostility, thread_id, message_id, user_id, score
+        )
 
     def get_top_hostile_user(self, thread_id: int) -> Optional[int]:
         """
@@ -596,7 +852,8 @@ class DebatesDatabase:
         Returns:
             User ID of most hostile user, or None if no data
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT user_id, SUM(score) as total_score
@@ -609,6 +866,10 @@ class DebatesDatabase:
             )
             row = cursor.fetchone()
             return row[0] if row else None
+
+    async def get_top_hostile_user_async(self, thread_id: int) -> Optional[int]:
+        """Async wrapper for get_top_hostile_user - runs in thread pool."""
+        return await asyncio.to_thread(self.get_top_hostile_user, thread_id)
 
     # -------------------------------------------------------------------------
     # Debate Ban Operations
@@ -633,7 +894,8 @@ class DebatesDatabase:
         Returns:
             True if ban was added, False if already exists
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             try:
                 cursor.execute(
@@ -643,8 +905,26 @@ class DebatesDatabase:
                 )
                 conn.commit()
                 return True
-            except Exception:
+            except sqlite3.IntegrityError:
+                # User already banned (unique constraint violation)
                 return False
+            except sqlite3.OperationalError as e:
+                logger.warning("Database Operational Error In add_debate_ban", [
+                    ("Error", str(e)),
+                ])
+                return False
+
+    async def add_debate_ban_async(
+        self,
+        user_id: int,
+        thread_id: Optional[int],
+        banned_by: int,
+        reason: Optional[str] = None
+    ) -> bool:
+        """Async wrapper for add_debate_ban - runs in thread pool."""
+        return await asyncio.to_thread(
+            self.add_debate_ban, user_id, thread_id, banned_by, reason
+        )
 
     def remove_debate_ban(self, user_id: int, thread_id: Optional[int]) -> bool:
         """
@@ -657,7 +937,8 @@ class DebatesDatabase:
         Returns:
             True if ban was removed, False if not found
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             if thread_id is None:
                 cursor.execute(
@@ -672,6 +953,10 @@ class DebatesDatabase:
             conn.commit()
             return cursor.rowcount > 0
 
+    async def remove_debate_ban_async(self, user_id: int, thread_id: Optional[int]) -> bool:
+        """Async wrapper for remove_debate_ban - runs in thread pool."""
+        return await asyncio.to_thread(self.remove_debate_ban, user_id, thread_id)
+
     def is_user_banned(self, user_id: int, thread_id: int) -> bool:
         """
         Check if user is banned from a specific thread.
@@ -683,7 +968,8 @@ class DebatesDatabase:
         Returns:
             True if user is banned from this thread or all debates
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             # Check for specific thread ban OR global debates ban (thread_id IS NULL)
             cursor.execute(
@@ -693,6 +979,10 @@ class DebatesDatabase:
                 (user_id, thread_id)
             )
             return cursor.fetchone() is not None
+
+    async def is_user_banned_async(self, user_id: int, thread_id: int) -> bool:
+        """Async wrapper for is_user_banned - runs in thread pool."""
+        return await asyncio.to_thread(self.is_user_banned, user_id, thread_id)
 
     def get_user_bans(self, user_id: int) -> list[dict]:
         """
@@ -704,7 +994,8 @@ class DebatesDatabase:
         Returns:
             List of ban records
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT thread_id, banned_by, reason, created_at
@@ -728,7 +1019,8 @@ class DebatesDatabase:
         Returns:
             List of user IDs with active bans
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT DISTINCT user_id FROM debate_bans")
             return [row[0] for row in cursor.fetchall()]
@@ -754,7 +1046,8 @@ class DebatesDatabase:
         Returns:
             Dict with counts of deleted records
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             deleted = {}
 
@@ -806,6 +1099,42 @@ class DebatesDatabase:
             conn.commit()
             return deleted
 
+    async def delete_user_data_async(self, user_id: int) -> dict:
+        """Async wrapper for delete_user_data - runs in thread pool."""
+        return await asyncio.to_thread(self.delete_user_data, user_id)
+
+    def delete_thread_data(self, thread_id: int) -> dict:
+        """
+        Delete all database records associated with a thread.
+
+        Called when a debate thread is deleted.
+
+        Args:
+            thread_id: Discord thread ID
+
+        Returns:
+            Dict with counts of deleted records
+        """
+        deleted = {
+            "analytics_messages": 0,
+            "bans": 0,
+        }
+
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Delete analytics message record
+            cursor.execute("DELETE FROM analytics_messages WHERE thread_id = ?", (thread_id,))
+            deleted["analytics_messages"] = cursor.rowcount
+
+            # Delete thread-specific bans (where thread_id matches)
+            cursor.execute("DELETE FROM user_bans WHERE thread_id = ?", (thread_id,))
+            deleted["bans"] = cursor.rowcount
+
+            conn.commit()
+            return deleted
+
     # -------------------------------------------------------------------------
     # Leaderboard Thread Operations
     # -------------------------------------------------------------------------
@@ -817,7 +1146,8 @@ class DebatesDatabase:
         Returns:
             Thread ID if found, None otherwise
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT thread_id FROM leaderboard_thread WHERE id = 1")
             row = cursor.fetchone()
@@ -830,7 +1160,8 @@ class DebatesDatabase:
         Args:
             thread_id: Discord thread ID
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT OR REPLACE INTO leaderboard_thread (id, thread_id)
@@ -838,6 +1169,16 @@ class DebatesDatabase:
                 (thread_id,)
             )
             conn.commit()
+
+    def clear_leaderboard_thread(self) -> None:
+        """Clear saved leaderboard thread ID and all month embeds."""
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM leaderboard_thread WHERE id = 1")
+            cursor.execute("DELETE FROM month_embeds")
+            conn.commit()
+            logger.info("📊 Cleared leaderboard thread and month embeds from database")
 
     # -------------------------------------------------------------------------
     # Monthly Leaderboard Operations
@@ -860,7 +1201,16 @@ class DebatesDatabase:
         Returns:
             List of UserKarma sorted by monthly karma desc
         """
-        with self._get_connection() as conn:
+        # Validate month is in valid range
+        if not 1 <= month <= 12:
+            logger.warning("Invalid month for leaderboard query", [
+                ("Month", str(month)),
+                ("Expected", "1-12"),
+            ])
+            return []
+
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             # Calculate karma from votes in the specified month
             cursor.execute(
@@ -902,7 +1252,8 @@ class DebatesDatabase:
         Returns:
             Message ID if found, None otherwise
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT message_id FROM leaderboard_embeds WHERE year = ? AND month = ?",
@@ -920,7 +1271,8 @@ class DebatesDatabase:
             month: Month (1-12)
             message_id: Discord message ID
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT OR REPLACE INTO leaderboard_embeds (year, month, message_id)
@@ -936,7 +1288,8 @@ class DebatesDatabase:
         Returns:
             List of dicts with year, month, message_id
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT year, month, message_id FROM leaderboard_embeds
@@ -946,6 +1299,23 @@ class DebatesDatabase:
                 {"year": row[0], "month": row[1], "message_id": row[2]}
                 for row in cursor.fetchall()
             ]
+
+    def delete_month_embed(self, year: int, month: int) -> None:
+        """
+        Delete a monthly embed record (when message is deleted/not found).
+
+        Args:
+            year: Year
+            month: Month (1-12)
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM leaderboard_embeds WHERE year = ? AND month = ?",
+                (year, month)
+            )
+            conn.commit()
 
     # -------------------------------------------------------------------------
     # User Cache Operations (for "(left)" tracking)
@@ -965,7 +1335,8 @@ class DebatesDatabase:
             username: Discord username
             display_name: Display name (nickname)
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT INTO user_cache (user_id, username, display_name, is_member, updated_at)
@@ -989,7 +1360,8 @@ class DebatesDatabase:
         Returns:
             Dict with user info or None
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT username, display_name, is_member, updated_at
@@ -1014,7 +1386,8 @@ class DebatesDatabase:
         Args:
             user_id: Discord user ID
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """UPDATE user_cache
@@ -1031,7 +1404,8 @@ class DebatesDatabase:
         Args:
             user_id: Discord user ID
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """UPDATE user_cache
@@ -1048,7 +1422,8 @@ class DebatesDatabase:
         Returns:
             List of user IDs
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT DISTINCT u.user_id FROM users u
@@ -1070,7 +1445,8 @@ class DebatesDatabase:
         Returns:
             List of dicts with thread_id, message_count
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT thread_id, message_count
@@ -1100,7 +1476,8 @@ class DebatesDatabase:
         Returns:
             Dict with total_debates, total_votes, most_active_day
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
 
             # Total debates created this month
@@ -1151,13 +1528,15 @@ class DebatesDatabase:
         Returns:
             List of dicts with user_id, message_count
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
+            # Use debate_participation table for accurate counts
             cursor.execute(
-                """SELECT user_id, COUNT(*) as msg_count
-                   FROM message_hostility
+                """SELECT user_id, SUM(message_count) as total_messages
+                   FROM debate_participation
                    GROUP BY user_id
-                   ORDER BY msg_count DESC
+                   ORDER BY total_messages DESC
                    LIMIT ?""",
                 (limit,)
             )
@@ -1169,7 +1548,6 @@ class DebatesDatabase:
     def get_top_debate_starters(self, limit: int = 3) -> list[dict]:
         """
         Get users who started the most debates (all-time).
-        Uses the first message in each thread to determine the starter.
 
         Args:
             limit: Number of users to return
@@ -1177,19 +1555,13 @@ class DebatesDatabase:
         Returns:
             List of dicts with user_id, debate_count
         """
-        with self._get_connection() as conn:
+        with self._lock:
+            conn = self._get_connection()
             cursor = conn.cursor()
-            # Get the first message (lowest message_id) per thread as the starter
+            # Use debate_creators table for accurate counts
             cursor.execute(
-                """SELECT user_id, COUNT(DISTINCT thread_id) as debate_count
-                   FROM (
-                       SELECT thread_id, user_id
-                       FROM message_hostility
-                       WHERE message_id = (
-                           SELECT MIN(message_id) FROM message_hostility m2
-                           WHERE m2.thread_id = message_hostility.thread_id
-                       )
-                   )
+                """SELECT user_id, COUNT(*) as debate_count
+                   FROM debate_creators
                    GROUP BY user_id
                    ORDER BY debate_count DESC
                    LIMIT ?""",
@@ -1199,6 +1571,80 @@ class DebatesDatabase:
                 {"user_id": row[0], "debate_count": row[1]}
                 for row in cursor.fetchall()
             ]
+
+    # -------------------------------------------------------------------------
+    # Debate Participation Operations
+    # -------------------------------------------------------------------------
+
+    def increment_participation(self, thread_id: int, user_id: int) -> None:
+        """
+        Increment message count for a user in a debate thread.
+
+        Args:
+            thread_id: Discord thread ID
+            user_id: Discord user ID
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO debate_participation (thread_id, user_id, message_count)
+                   VALUES (?, ?, 1)
+                   ON CONFLICT(thread_id, user_id) DO UPDATE SET
+                       message_count = message_count + 1""",
+                (thread_id, user_id)
+            )
+            conn.commit()
+
+    async def increment_participation_async(self, thread_id: int, user_id: int) -> None:
+        """Async wrapper for increment_participation - runs in thread pool."""
+        await asyncio.to_thread(self.increment_participation, thread_id, user_id)
+
+    def set_debate_creator(self, thread_id: int, user_id: int) -> None:
+        """
+        Record who created a debate thread.
+
+        Args:
+            thread_id: Discord thread ID
+            user_id: Discord user ID of creator
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT OR IGNORE INTO debate_creators (thread_id, user_id)
+                   VALUES (?, ?)""",
+                (thread_id, user_id)
+            )
+            conn.commit()
+
+    async def set_debate_creator_async(self, thread_id: int, user_id: int) -> None:
+        """Async wrapper for set_debate_creator - runs in thread pool."""
+        await asyncio.to_thread(self.set_debate_creator, thread_id, user_id)
+
+    def bulk_set_participation(self, thread_id: int, user_id: int, count: int) -> None:
+        """
+        Set message count for a user in a debate thread (for backfill).
+
+        Unlike increment_participation, this sets an absolute count.
+        Used during initial backfill of historical data.
+
+        Args:
+            thread_id: The debate thread ID
+            user_id: The user's Discord ID
+            count: Total message count to set
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO debate_participation (thread_id, user_id, message_count)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(thread_id, user_id) DO UPDATE SET
+                       message_count = ?""",
+                (thread_id, user_id, count, count)
+            )
+            conn.commit()
 
 
 # =============================================================================

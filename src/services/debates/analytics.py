@@ -8,13 +8,61 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import asyncio
 from datetime import datetime, timezone
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, TYPE_CHECKING
 
 import discord
 
+if TYPE_CHECKING:
+    from src.bot import OthmanBot
+
 from src.core.logger import logger
 from src.utils import get_developer_avatar
+
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+THREAD_HISTORY_TIMEOUT: float = 30.0
+"""Maximum seconds to wait when fetching thread history."""
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+async def _collect_messages_with_timeout(
+    thread: discord.Thread,
+    timeout: float = THREAD_HISTORY_TIMEOUT
+) -> List[discord.Message]:
+    """
+    Collect all messages from a thread with a timeout.
+
+    Args:
+        thread: Discord thread to fetch messages from
+        timeout: Maximum seconds to wait
+
+    Returns:
+        List of messages, or empty list on timeout
+
+    DESIGN: Prevents bot from hanging indefinitely on large threads
+    or slow Discord API responses. Returns partial results on timeout.
+    """
+    messages = []
+    try:
+        async def collect():
+            async for message in thread.history(limit=None):
+                messages.append(message)
+        await asyncio.wait_for(collect(), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning("Thread History Fetch Timed Out", [
+            ("Thread", thread.name[:30]),
+            ("Timeout", f"{timeout}s"),
+            ("Messages Collected", str(len(messages))),
+        ])
+    return messages
 
 
 # =============================================================================
@@ -34,6 +82,18 @@ class DebateAnalytics:
         activity_graph: str = "",
         hostility_score: float = 0.0,
     ):
+        """
+        Initialize debate analytics container.
+
+        Args:
+            participants: Number of unique users who participated in the debate.
+            total_replies: Total number of replies in the thread.
+            total_karma: Sum of all karma earned in this debate.
+            last_activity: Timestamp of the most recent message.
+            top_contributor: Tuple of (username, reply_count) for top participant.
+            activity_graph: ASCII representation of activity over time.
+            hostility_score: AI-calculated hostility score (0.0-1.0).
+        """
         self.participants = participants
         self.total_replies = total_replies
         self.total_karma = total_karma
@@ -62,7 +122,7 @@ async def calculate_debate_analytics(
         DebateAnalytics object with calculated statistics
     """
     try:
-        # Fetch all messages in the thread
+        # Fetch all messages in the thread with timeout protection
         participants = set()
         reply_counts: Dict[int, int] = {}  # user_id -> count
         total_replies = 0
@@ -70,8 +130,9 @@ async def calculate_debate_analytics(
         hourly_activity: List[int] = [0] * 5  # Last 5 hours
         total_thread_karma = 0  # Track karma earned from votes in THIS thread
 
-        # Get all messages from the thread
-        async for message in thread.history(limit=None):
+        # Get all messages from the thread (with timeout)
+        messages = await _collect_messages_with_timeout(thread)
+        for message in messages:
             # Skip bot messages (analytics embed)
             if message.author.bot:
                 continue
@@ -124,8 +185,8 @@ async def calculate_debate_analytics(
             top_user_id = max(reply_counts, key=reply_counts.get)
             top_reply_count = reply_counts[top_user_id]
 
-            # Get username from thread
-            async for message in thread.history(limit=None):
+            # Get username from already-collected messages (no need to re-fetch)
+            for message in messages:
                 if message.author.id == top_user_id:
                     top_contributor = (message.author.name, top_reply_count)
                     break
@@ -143,7 +204,9 @@ async def calculate_debate_analytics(
         )
 
     except Exception as e:
-        logger.error(f"Failed to calculate debate analytics: {e}")
+        logger.error("Failed To Calculate Debate Analytics", [
+            ("Error", str(e)),
+        ])
         # Return default analytics
         return DebateAnalytics(
             participants=0,
@@ -188,7 +251,7 @@ def generate_activity_graph(hourly_activity: List[int]) -> str:
 # Embed Generation
 # =============================================================================
 
-async def generate_analytics_embed(bot, analytics: DebateAnalytics) -> discord.Embed:
+async def generate_analytics_embed(bot: "OthmanBot", analytics: DebateAnalytics) -> discord.Embed:
     """
     Generate Discord embed for debate analytics.
 

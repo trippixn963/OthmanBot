@@ -9,10 +9,15 @@ Server: discord.gg/syria
 """
 
 import json
+import time
 from pathlib import Path
 from typing import Optional
 
 from src.core.logger import logger
+
+
+# Cache expiration (30 days in seconds)
+CACHE_EXPIRATION_SECONDS: int = 30 * 24 * 60 * 60
 
 
 class AICache:
@@ -21,7 +26,12 @@ class AICache:
 
     Stores AI-generated content (titles, summaries) to avoid
     redundant OpenAI API calls for the same content.
+
+    Automatically cleans up old entries when max size is exceeded
+    or when entries are older than CACHE_EXPIRATION_SECONDS.
     """
+
+    MAX_ENTRIES = 5000  # Maximum cache entries before cleanup
 
     def __init__(self, filename: str) -> None:
         """
@@ -32,18 +42,41 @@ class AICache:
         """
         self.cache_file: Path = Path(filename)
         self.cache_file.parent.mkdir(exist_ok=True)
-        self.cache: dict[str, str] = {}
+        # Cache stores {key: {"value": str, "timestamp": float}}
+        self.cache: dict[str, dict] = {}
         self._load_cache()
+        self._cleanup_if_needed()
 
     def _load_cache(self) -> None:
-        """Load cache from disk."""
+        """Load cache from disk and migrate old format if needed."""
         try:
             if self.cache_file.exists():
                 with open(self.cache_file, "r", encoding="utf-8") as f:
-                    self.cache = json.load(f)
-                logger.debug(f"Loaded {len(self.cache)} cached AI responses")
+                    raw_cache = json.load(f)
+
+                # Migrate old format (string values) to new format (dict with timestamp)
+                migrated = False
+                for key, value in raw_cache.items():
+                    if isinstance(value, str):
+                        # Old format: migrate to new format with current timestamp
+                        raw_cache[key] = {"value": value, "timestamp": time.time()}
+                        migrated = True
+
+                self.cache = raw_cache
+
+                if migrated:
+                    self._save_cache()
+                    logger.info("Migrated AI Cache To New Format", [
+                        ("Entries", str(len(self.cache))),
+                    ])
+                else:
+                    logger.debug("Loaded AI Cache", [
+                        ("Entries", str(len(self.cache))),
+                    ])
         except Exception as e:
-            logger.warning(f"Failed to load AI cache: {e}")
+            logger.warning("Failed To Load AI Cache", [
+                ("Error", str(e)),
+            ])
             self.cache = {}
 
     def _save_cache(self) -> None:
@@ -52,30 +85,83 @@ class AICache:
             with open(self.cache_file, "w", encoding="utf-8") as f:
                 json.dump(self.cache, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            logger.warning(f"Failed to save AI cache: {e}")
+            logger.warning("Failed To Save AI Cache", [
+                ("Error", str(e)),
+            ])
+
+    def _cleanup_if_needed(self) -> None:
+        """Remove expired and oldest entries to prevent memory leaks."""
+        current_time = time.time()
+        initial_count = len(self.cache)
+
+        # First, remove expired entries (use list() to create snapshot and avoid dict size change during iteration)
+        expired_keys = [
+            key for key, entry in list(self.cache.items())
+            if isinstance(entry, dict) and current_time - entry.get("timestamp", 0) > CACHE_EXPIRATION_SECONDS
+        ]
+        for key in expired_keys:
+            del self.cache[key]
+
+        # Then, if still over limit, remove oldest entries by timestamp
+        if len(self.cache) > self.MAX_ENTRIES:
+            # Sort by timestamp and remove oldest 20% (use list() to avoid dict modification during iteration)
+            sorted_entries = sorted(
+                list(self.cache.items()),
+                key=lambda x: x[1].get("timestamp", 0) if isinstance(x[1], dict) else 0
+            )
+            entries_to_remove = len(self.cache) - int(self.MAX_ENTRIES * 0.8)
+            keys_to_remove = [key for key, _ in sorted_entries[:entries_to_remove]]
+
+            for key in keys_to_remove:
+                del self.cache[key]
+
+        removed_count = initial_count - len(self.cache)
+        if removed_count > 0:
+            self._save_cache()
+            logger.info("🧹 Cleaned AI Cache", [
+                ("File", str(self.cache_file)),
+                ("Expired", str(len(expired_keys))),
+                ("Total Removed", str(removed_count)),
+                ("Remaining", str(len(self.cache))),
+            ])
 
     def get(self, key: str) -> Optional[str]:
         """
-        Get a cached value.
+        Get a cached value if not expired.
 
         Args:
             key: Cache key
 
         Returns:
-            Cached value or None if not found
+            Cached value or None if not found or expired
         """
-        return self.cache.get(key)
+        entry = self.cache.get(key)
+        if entry is None:
+            return None
+
+        # Handle new format with timestamp
+        if isinstance(entry, dict):
+            timestamp = entry.get("timestamp", 0)
+            if time.time() - timestamp > CACHE_EXPIRATION_SECONDS:
+                # Entry expired, remove it
+                del self.cache[key]
+                return None
+            return entry.get("value")
+
+        # Handle old format (string) for backward compatibility
+        return entry
 
     def set(self, key: str, value: str) -> None:
         """
-        Set a cache value.
+        Set a cache value with timestamp.
 
         Args:
             key: Cache key
             value: Value to cache
         """
-        self.cache[key] = value
+        self.cache[key] = {"value": value, "timestamp": time.time()}
         self._save_cache()
+        self._cleanup_if_needed()
 
     def clear(self) -> None:
         """Clear all cached values."""

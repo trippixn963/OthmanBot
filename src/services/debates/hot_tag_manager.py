@@ -12,10 +12,14 @@ Server: discord.gg/syria
 import discord
 from discord.ext import tasks
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID
+from src.core.config import DEBATES_FORUM_ID, DISCORD_ARCHIVED_THREADS_LIMIT
+from src.utils import edit_thread_with_retry
 from src.services.debates.tags import DEBATE_TAGS, should_add_hot_tag, should_remove_hot_tag
+
+if TYPE_CHECKING:
+    from src.bot import OthmanBot
 
 
 # =============================================================================
@@ -33,7 +37,7 @@ class HotTagManager:
     - Never interferes with other tags (religion, politics, etc.)
     """
 
-    def __init__(self, bot):
+    def __init__(self, bot: "OthmanBot") -> None:
         """
         Initialize the Hot Tag Manager.
 
@@ -47,13 +51,13 @@ class HotTagManager:
     # Start/Stop Controls
     # -------------------------------------------------------------------------
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the background task."""
         if not self.manage_hot_tags.is_running():
             self.manage_hot_tags.start()
             logger.info("Hot tag manager started")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop the background task."""
         if self.manage_hot_tags.is_running():
             self.manage_hot_tags.cancel()
@@ -64,7 +68,7 @@ class HotTagManager:
     # -------------------------------------------------------------------------
 
     @tasks.loop(minutes=10)
-    async def manage_hot_tags(self):
+    async def manage_hot_tags(self) -> None:
         """
         Periodically check all debate threads and manage Hot tags.
 
@@ -78,7 +82,9 @@ class HotTagManager:
             debates_forum = self.bot.get_channel(DEBATES_FORUM_ID)
 
             if not debates_forum:
-                logger.error(f"Debates forum not found: {DEBATES_FORUM_ID}")
+                logger.error("Debates Forum Not Found", [
+                    ("Forum ID", str(DEBATES_FORUM_ID)),
+                ])
                 return
 
             logger.info("Starting Hot tag management cycle")
@@ -96,23 +102,26 @@ class HotTagManager:
                 checked_count += 1
 
             # Check recently archived threads (in case they were just archived)
-            async for thread in debates_forum.archived_threads(limit=50):
+            async for thread in debates_forum.archived_threads(limit=DISCORD_ARCHIVED_THREADS_LIMIT):
                 if await self._process_thread(thread):
                     added_count += 1
                 elif await self._should_remove_hot(thread):
                     removed_count += 1
                 checked_count += 1
 
-            logger.info(
-                f"Hot tag cycle complete: {checked_count} threads checked, "
-                f"{added_count} tags added, {removed_count} tags removed"
-            )
+            logger.info("🔥 Hot Tag Cycle Complete", [
+                ("Threads Checked", str(checked_count)),
+                ("Tags Added", str(added_count)),
+                ("Tags Removed", str(removed_count)),
+            ])
 
         except Exception as e:
-            logger.error(f"Error in Hot tag management cycle: {e}")
+            logger.error("Error In Hot Tag Management Cycle", [
+                ("Error", str(e)),
+            ])
 
     @manage_hot_tags.before_loop
-    async def before_manage_hot_tags(self):
+    async def before_manage_hot_tags(self) -> None:
         """Wait until the bot is ready before starting the task."""
         await self.bot.wait_until_ready()
         logger.info("Hot tag manager ready to start")
@@ -148,16 +157,20 @@ class HotTagManager:
                 if self.hot_tag_id not in current_tag_ids:
                     # Add Hot tag
                     await self._add_hot_tag(thread)
-                    logger.info(
-                        f"Added Hot tag to '{thread.name}' "
-                        f"({message_count} messages in {hours_since_creation:.1f}h)"
-                    )
+                    logger.info("🔥 Added Hot Tag", [
+                        ("Thread", thread.name[:30]),
+                        ("Messages", str(message_count)),
+                        ("Age", f"{hours_since_creation:.1f}h"),
+                    ])
                     return True
 
             return False
 
         except Exception as e:
-            logger.error(f"Error processing thread '{thread.name}': {e}")
+            logger.error("Error Processing Thread", [
+                ("Thread", thread.name[:30]),
+                ("Error", str(e)),
+            ])
             return False
 
     async def _should_remove_hot(self, thread: discord.Thread) -> bool:
@@ -183,16 +196,19 @@ class HotTagManager:
             # Check if thread should lose Hot tag
             if should_remove_hot_tag(message_count, hours_since_last):
                 await self._remove_hot_tag(thread)
-                logger.info(
-                    f"Removed Hot tag from '{thread.name}' "
-                    f"({hours_since_last:.1f}h since last message)"
-                )
+                logger.info("🔥 Removed Hot Tag", [
+                    ("Thread", thread.name[:30]),
+                    ("Inactive", f"{hours_since_last:.1f}h"),
+                ])
                 return True
 
             return False
 
         except Exception as e:
-            logger.error(f"Error checking Hot tag removal for '{thread.name}': {e}")
+            logger.error("Error Checking Hot Tag Removal", [
+                ("Thread", thread.name[:30]),
+                ("Error", str(e)),
+            ])
             return False
 
     # -------------------------------------------------------------------------
@@ -265,7 +281,10 @@ class HotTagManager:
             return delta.total_seconds() / 3600
 
         except Exception as e:
-            logger.error(f"Error getting last message time for '{thread.name}': {e}")
+            logger.error("Error Getting Last Message Time", [
+                ("Thread", thread.name[:30]),
+                ("Error", str(e)),
+            ])
             # Fallback to creation time
             return self._get_hours_since_creation(thread)
 
@@ -292,13 +311,16 @@ class HotTagManager:
                 # Add Hot tag to the list
                 current_tags.append(hot_tag)
 
-                # Update thread tags (max 5 tags allowed by Discord)
-                await thread.edit(applied_tags=current_tags[:5])
+                # Update thread tags (max 5 tags allowed by Discord) with rate limit handling
+                await edit_thread_with_retry(thread, applied_tags=current_tags[:5])
             else:
-                logger.error(f"Hot tag object not found in forum tags")
+                logger.error("Hot Tag Object Not Found In Forum Tags")
 
         except Exception as e:
-            logger.error(f"Failed to add Hot tag to '{thread.name}': {e}")
+            logger.error("Failed To Add Hot Tag", [
+                ("Thread", thread.name[:30]),
+                ("Error", str(e)),
+            ])
 
     async def _remove_hot_tag(self, thread: discord.Thread):
         """
@@ -311,11 +333,14 @@ class HotTagManager:
             # Get current tags, excluding the Hot tag
             current_tags = [tag for tag in thread.applied_tags if tag.id != self.hot_tag_id]
 
-            # Update thread tags
-            await thread.edit(applied_tags=current_tags)
+            # Update thread tags with rate limit handling
+            await edit_thread_with_retry(thread, applied_tags=current_tags)
 
         except Exception as e:
-            logger.error(f"Failed to remove Hot tag from '{thread.name}': {e}")
+            logger.error("Failed To Remove Hot Tag", [
+                ("Thread", thread.name[:30]),
+                ("Error", str(e)),
+            ])
 
 
 # =============================================================================

@@ -22,7 +22,7 @@ from openai import OpenAI
 
 from src.core.logger import logger
 from src.core.config import MODERATOR_ROLE_ID
-from src.utils import get_developer_avatar
+from src.utils import get_developer_avatar, send_message_with_retry, edit_thread_with_retry
 
 
 # =============================================================================
@@ -117,20 +117,45 @@ class HostilityTracker:
         self.openai_client: Optional[OpenAI] = None
         self._init_openai()
 
-        # In-memory state
+        # In-memory state with bounded size
         self.queues: Dict[int, List[QueuedMessage]] = {}  # thread_id -> messages
         self.thread_scores: Dict[int, ThreadHostility] = {}  # thread_id -> hostility
 
-        logger.info("Hostility tracker initialized")
+        # Cache limits to prevent memory leaks
+        self._MAX_CACHED_THREADS = 100
+
+        logger.info("🔥 Hostility Tracker Initialized")
 
     def _init_openai(self) -> None:
         """Initialize OpenAI client."""
         api_key = os.getenv("OPENAI_API_KEY")
         if api_key:
-            self.openai_client = OpenAI(api_key=api_key)
-            logger.info("OpenAI client initialized for hostility detection")
+            self.openai_client = OpenAI(api_key=api_key, timeout=30.0)
+            logger.info("🤖 OpenAI Client Initialized For Hostility Detection")
         else:
-            logger.warning("OPENAI_API_KEY not set - hostility AI analysis disabled")
+            logger.warning("🤖 OPENAI_API_KEY Not Set - Hostility AI Analysis Disabled")
+
+    def _cleanup_caches(self) -> None:
+        """Remove oldest entries from caches to prevent memory leaks."""
+        # Cleanup thread_scores if over limit
+        if len(self.thread_scores) > self._MAX_CACHED_THREADS:
+            # Sort by updated_at and remove oldest (use list() to avoid dict modification during iteration)
+            sorted_threads = sorted(
+                list(self.thread_scores.items()),
+                key=lambda x: x[1].updated_at
+            )
+            # Remove oldest 20%
+            to_remove = len(self.thread_scores) - int(self._MAX_CACHED_THREADS * 0.8)
+            for thread_id, _ in sorted_threads[:to_remove]:
+                del self.thread_scores[thread_id]
+                # Also clean up empty queues
+                if thread_id in self.queues and not self.queues[thread_id]:
+                    del self.queues[thread_id]
+
+            logger.debug("🧹 Cleaned Hostility Caches", [
+                ("Removed", str(to_remove)),
+                ("Remaining", str(len(self.thread_scores))),
+            ])
 
     # -------------------------------------------------------------------------
     # Main Entry Point
@@ -191,6 +216,9 @@ class HostilityTracker:
 
         # Step 8: Check thresholds and take action (warning at 70%, lock at 90%)
         await self._check_thresholds(thread, current_score, bot)
+
+        # Step 9: Clean up caches to prevent memory leaks
+        self._cleanup_caches()
 
         return current_score
 
@@ -299,7 +327,10 @@ class HostilityTracker:
         _, keyword_score = self._keyword_filter(message.content)
         self._add_score(thread_id, message.id, message.author.id, keyword_score)
 
-        logger.debug(f"Queued message {message.id} for hostility analysis (severity: {severity})")
+        logger.debug("🔥 Queued Message For Hostility Analysis", [
+            ("Message ID", str(message.id)),
+            ("Severity", severity),
+        ])
 
     # -------------------------------------------------------------------------
     # Batch AI Analysis
@@ -316,7 +347,7 @@ class HostilityTracker:
             Dict mapping message_id to hostility score (0-1)
         """
         if not self.openai_client:
-            logger.warning("OpenAI client not available - skipping batch analysis")
+            logger.warning("🤖 OpenAI Client Not Available - Skipping Batch Analysis")
             self.queues[thread_id] = []
             return {}
 
@@ -365,19 +396,55 @@ Output JSON only: {{"MSG_0": 0.2, "MSG_1": 0.7}}"""
 
             # Apply AI scores to thread
             for key, ai_score in scores.items():
-                idx = int(key.split("_")[1])
-                if idx < len(queue):
-                    msg = queue[idx]
-                    # AI score is 0-1, convert to 0-12 range (matching severe keyword score)
-                    score_addition = ai_score * 12
-                    self._add_score(thread_id, msg.message_id, msg.user_id, score_addition)
+                # Validate key format
+                if not isinstance(key, str) or not key.startswith("MSG_"):
+                    logger.warning("🔥 Invalid AI Response Key", [
+                        ("Key", str(key)),
+                    ])
+                    continue
 
-            logger.info(f"Analyzed batch of {len(queue)} messages for thread {thread_id}")
+                try:
+                    idx = int(key.split("_")[1])
+                except (ValueError, IndexError):
+                    logger.warning("🔥 Invalid AI Response Key Format", [
+                        ("Key", str(key)),
+                    ])
+                    continue
+
+                if idx < 0 or idx >= len(queue):
+                    continue
+
+                # Validate AI score is a number and clamp to 0-1 range
+                try:
+                    ai_score = float(ai_score)
+                except (TypeError, ValueError):
+                    logger.warning("🔥 Invalid AI Score Value", [
+                        ("Key", key),
+                        ("Value", str(ai_score)),
+                    ])
+                    continue
+
+                # Clamp to valid range (0.0 to 1.0)
+                ai_score = max(0.0, min(1.0, ai_score))
+
+                msg = queue[idx]
+                # AI score is 0-1, convert to 0-12 range (matching severe keyword score)
+                score_addition = ai_score * 12
+                self._add_score(thread_id, msg.message_id, msg.user_id, score_addition)
+
+            logger.info("🔥 Analyzed Hostility Batch", [
+                ("Messages", str(len(queue))),
+                ("Thread ID", str(thread_id)),
+            ])
 
         except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse AI response: {e}")
+            logger.warning("🔥 Failed To Parse AI Response", [
+                ("Error", str(e)),
+            ])
         except Exception as e:
-            logger.error(f"Batch analysis failed: {e}")
+            logger.error("🔥 Batch Analysis Failed", [
+                ("Error", str(e)),
+            ])
 
         # Clear queue
         self.queues[thread_id] = []
@@ -430,7 +497,12 @@ Output JSON only: {{"MSG_0": 0.2, "MSG_1": 0.7}}"""
                 score=score
             )
 
-        logger.debug(f"Thread {thread_id} hostility: {state.cumulative_score:.1f}% (user {user_id} added {score:.1f})")
+        logger.debug("🔥 Thread Hostility Updated", [
+            ("Thread ID", str(thread_id)),
+            ("Score", f"{state.cumulative_score:.1f}%"),
+            ("User", str(user_id)),
+            ("Added", f"{score:.1f}"),
+        ])
 
     def _apply_decay(self, thread_id: int) -> None:
         """
@@ -450,6 +522,19 @@ Output JSON only: {{"MSG_0": 0.2, "MSG_1": 0.7}}"""
             state.cumulative_score *= decay_factor
             state.cumulative_score = max(0.0, state.cumulative_score)
 
+    def _parse_datetime(self, value: Any) -> Optional[datetime]:
+        """Parse datetime from string or return as-is if already datetime."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                return datetime.now()
+        return datetime.now()
+
     def _load_thread_hostility(self, thread_id: int) -> ThreadHostility:
         """
         Load thread hostility from database.
@@ -467,9 +552,9 @@ Output JSON only: {{"MSG_0": 0.2, "MSG_1": 0.7}}"""
                 cumulative_score=data.get("cumulative_score", 0.0),
                 message_count=data.get("message_count", 0),
                 warning_sent=data.get("warning_sent", False),
-                last_warning_at=data.get("last_warning_at"),
-                locked_at=data.get("locked_at"),
-                updated_at=data.get("updated_at", datetime.now())
+                last_warning_at=self._parse_datetime(data.get("last_warning_at")),
+                locked_at=self._parse_datetime(data.get("locked_at")),
+                updated_at=self._parse_datetime(data.get("updated_at")) or datetime.now()
             )
         return ThreadHostility(thread_id=thread_id)
 
@@ -546,10 +631,15 @@ Output JSON only: {{"MSG_0": 0.2, "MSG_1": 0.7}}"""
         embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
 
         try:
-            await thread.send(embed=embed)
-            logger.info(f"Sent hostility meter update to thread {thread.id} at {score:.0f}%")
+            await send_message_with_retry(thread, embed=embed)
+            logger.info("🔥 Sent Hostility Meter Update", [
+                ("Thread ID", str(thread.id)),
+                ("Score", f"{score:.0f}%"),
+            ])
         except discord.HTTPException as e:
-            logger.error(f"Failed to send meter update: {e}")
+            logger.error("🔥 Failed To Send Meter Update", [
+                ("Error", str(e)),
+            ])
 
     # -------------------------------------------------------------------------
     # Threshold Actions
@@ -630,7 +720,7 @@ Output JSON only: {{"MSG_0": 0.2, "MSG_1": 0.7}}"""
         embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
 
         try:
-            await thread.send(content="@here", embed=embed)
+            await send_message_with_retry(thread, content="@here", embed=embed)
 
             # Update state
             state = self.thread_scores[thread.id]
@@ -640,10 +730,15 @@ Output JSON only: {{"MSG_0": 0.2, "MSG_1": 0.7}}"""
             # Persist
             self.db.mark_warning_sent(thread.id)
 
-            logger.info(f"Sent hostility warning to thread {thread.id} at {score:.0f}%")
+            logger.info("🔥 Sent Hostility Warning", [
+                ("Thread ID", str(thread.id)),
+                ("Score", f"{score:.0f}%"),
+            ])
 
         except discord.HTTPException as e:
-            logger.error(f"Failed to send warning: {e}")
+            logger.error("🔥 Failed To Send Warning", [
+                ("Error", str(e)),
+            ])
 
     async def _auto_lock_thread(
         self,
@@ -681,14 +776,15 @@ Output JSON only: {{"MSG_0": 0.2, "MSG_1": 0.7}}"""
         embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
 
         try:
-            # Send message and ping moderators
-            await thread.send(
+            # Send message and ping moderators with rate limit handling
+            await send_message_with_retry(
+                thread,
                 content=f"<@&{MODERATOR_ROLE_ID}>",
                 embed=embed
             )
 
-            # Lock thread
-            await thread.edit(locked=True)
+            # Lock thread with rate limit handling
+            await edit_thread_with_retry(thread, locked=True)
 
             # Update state
             state = self.thread_scores[thread.id]
@@ -697,10 +793,15 @@ Output JSON only: {{"MSG_0": 0.2, "MSG_1": 0.7}}"""
             # Persist
             self.db.mark_thread_locked(thread.id)
 
-            logger.info(f"Auto-locked thread {thread.id} due to hostility at {score:.0f}%")
+            logger.info("🔒 Auto-Locked Thread Due To Hostility", [
+                ("Thread ID", str(thread.id)),
+                ("Score", f"{score:.0f}%"),
+            ])
 
         except discord.HTTPException as e:
-            logger.error(f"Failed to lock thread: {e}")
+            logger.error("🔒 Failed To Lock Thread", [
+                ("Error", str(e)),
+            ])
 
     # -------------------------------------------------------------------------
     # Public API

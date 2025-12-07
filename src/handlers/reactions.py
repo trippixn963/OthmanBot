@@ -8,9 +8,14 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+from typing import TYPE_CHECKING
+
 import discord
 
 from src.core.logger import logger
+
+if TYPE_CHECKING:
+    from src.bot import OthmanBot
 
 
 # =============================================================================
@@ -18,7 +23,7 @@ from src.core.logger import logger
 # =============================================================================
 
 async def on_reaction_add_handler(
-    bot,
+    bot: "OthmanBot",
     reaction: discord.Reaction,
     user: discord.User
 ) -> None:
@@ -45,11 +50,16 @@ async def on_reaction_add_handler(
     # Remove ALL reactions on announcement embeds
     try:
         await reaction.remove(user)
-        logger.info(
-            f"🗑️ Removed reaction {reaction.emoji} from {user.name} on announcement"
-        )
+        logger.info("Announcement Reaction Removed", [
+            ("User", f"{user.name} ({user.id})"),
+            ("Emoji", str(reaction.emoji)),
+            ("Message ID", str(reaction.message.id)),
+            ("Channel", str(reaction.message.channel.id)),
+        ])
     except discord.HTTPException as e:
-        logger.warning(f"Failed to remove reaction: {e}")
+        logger.warning("📛 Failed To Remove Reaction", [
+            ("Error", str(e)),
+        ])
 
 
 # =============================================================================

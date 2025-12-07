@@ -46,7 +46,9 @@ class DebatesService:
     def __init__(self) -> None:
         """Initialize the debates service."""
         self.db = DebatesDatabase()
-        logger.info("🗳️ Debates service initialized")
+        logger.info("Debates Service Initialized", [
+            ("Database", "Connected"),
+        ])
 
     def record_upvote(
         self,
@@ -70,7 +72,10 @@ class DebatesService:
 
         result = self.db.add_vote(voter_id, message_id, author_id, 1)
         if result:
-            logger.debug(f"⬆️ User {voter_id} upvoted message {message_id}")
+            logger.debug("⬆️ Upvote Recorded", [
+                ("Voter", str(voter_id)),
+                ("Message", str(message_id)),
+            ])
         return result
 
     def record_downvote(
@@ -95,7 +100,10 @@ class DebatesService:
 
         result = self.db.add_vote(voter_id, message_id, author_id, -1)
         if result:
-            logger.debug(f"⬇️ User {voter_id} downvoted message {message_id}")
+            logger.debug("⬇️ Downvote Recorded", [
+                ("Voter", str(voter_id)),
+                ("Message", str(message_id)),
+            ])
         return result
 
     def remove_vote(
@@ -115,7 +123,10 @@ class DebatesService:
         """
         author_id = self.db.remove_vote(voter_id, message_id)
         if author_id:
-            logger.debug(f"🗑️ User {voter_id} removed vote from message {message_id}")
+            logger.debug("🗑️ Vote Removed", [
+                ("Voter", str(voter_id)),
+                ("Message", str(message_id)),
+            ])
             return True
         return False
 
@@ -179,7 +190,9 @@ class DebatesService:
         try:
             forum = bot.get_channel(forum_id)
             if not forum or not isinstance(forum, discord.ForumChannel):
-                logger.warning(f"Forum {forum_id} not found or invalid")
+                logger.warning("Forum Not Found Or Invalid", [
+                    ("Forum ID", str(forum_id)),
+                ])
                 return None
 
             # Get all active threads
@@ -241,7 +254,10 @@ class DebatesService:
                     ))
 
                 except Exception as e:
-                    logger.warning(f"Failed to analyze thread {thread.id}: {e}")
+                    logger.warning("Failed To Analyze Thread", [
+                        ("Thread ID", str(thread.id)),
+                        ("Error", str(e)),
+                    ])
                     continue
 
             if not hot_debates:
@@ -253,7 +269,9 @@ class DebatesService:
             return hot_debates[0]
 
         except Exception as e:
-            logger.error(f"Failed to get hottest debate: {e}")
+            logger.error("Failed To Get Hottest Debate", [
+                ("Error", str(e)),
+            ])
             return None
 
 

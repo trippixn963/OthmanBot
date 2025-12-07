@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional, Callable, Any
 
 from src.core.logger import logger
+from src.core.config import SCHEDULER_ERROR_RETRY
 
 
 # =============================================================================
@@ -60,12 +61,13 @@ class DebatesScheduler:
                 with open(self.state_file, "r") as f:
                     data: dict[str, Any] = json.load(f)
                     self.is_running = data.get("is_running", False)
-                    logger.info(
-                        f"🔥 Loaded debates scheduler state: "
-                        f"{'RUNNING' if self.is_running else 'STOPPED'}"
-                    )
+                    logger.info("🔥 Loaded Debates Scheduler State", [
+                        ("Status", "RUNNING" if self.is_running else "STOPPED"),
+                    ])
         except Exception as e:
-            logger.warning(f"Failed to load debates scheduler state: {e}")
+            logger.warning("Failed To Load Debates Scheduler State", [
+                ("Error", str(e)),
+            ])
             self.is_running = False
 
     def _save_state(self) -> None:
@@ -74,7 +76,9 @@ class DebatesScheduler:
             with open(self.state_file, "w") as f:
                 json.dump({"is_running": self.is_running}, f, indent=2)
         except Exception as e:
-            logger.warning(f"Failed to save debates scheduler state: {e}")
+            logger.warning("Failed To Save Debates Scheduler State", [
+                ("Error", str(e)),
+            ])
 
     # -------------------------------------------------------------------------
     # Start/Stop Controls
@@ -152,25 +156,29 @@ class DebatesScheduler:
                 wait_seconds: float = (next_post_time - datetime.now()).total_seconds()
 
                 if wait_seconds > 0:
-                    logger.info(
-                        f"🔥 Next hot debate post scheduled for "
-                        f"{next_post_time.strftime('%I:%M %p')} (in {wait_seconds / 60:.1f} minutes)"
-                    )
+                    logger.info("🔥 Next Hot Debate Post Scheduled", [
+                        ("Time", next_post_time.strftime('%I:%M %p')),
+                        ("Wait", f"{wait_seconds / 60:.1f} minutes"),
+                    ])
                     await asyncio.sleep(wait_seconds)
 
                 if self.is_running:
-                    logger.info("🔥⏰ 3-hourly hot debate post triggered")
+                    logger.info("🔥⏰ 3-Hourly Hot Debate Post Triggered")
                     try:
                         await self.post_callback()
                     except Exception as e:
-                        logger.error(f"Failed to post hot debate: {e}")
+                        logger.error("Failed To Post Hot Debate", [
+                            ("Error", str(e)),
+                        ])
 
             except asyncio.CancelledError:
                 logger.info("Debates scheduler loop cancelled")
                 break
             except Exception as e:
-                logger.error(f"Debates scheduler loop error: {e}")
-                await asyncio.sleep(300)  # Retry after 5 minutes on error
+                logger.error("Debates Scheduler Loop Error", [
+                    ("Error", str(e)),
+                ])
+                await asyncio.sleep(SCHEDULER_ERROR_RETRY)
 
     def _calculate_next_post_time(self) -> datetime:
         """
