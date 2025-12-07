@@ -99,8 +99,8 @@ async def backfill_debate_stats(bot: "OthmanBot") -> dict:
             stats["threads_scanned"] += 1
 
             try:
-                # Record thread creator
-                if thread.owner_id:
+                # Record thread creator (skip if owner is the bot itself)
+                if thread.owner_id and thread.owner_id != bot.user.id:
                     bot.debates_service.db.set_debate_creator(thread.id, thread.owner_id)
                     stats["creators_recorded"] += 1
                     unique_users.add(thread.owner_id)
@@ -217,8 +217,8 @@ async def reconcile_debate_stats(bot: "OthmanBot") -> dict:
             stats["threads_scanned"] += 1
 
             try:
-                # Record thread creator
-                if thread.owner_id:
+                # Record thread creator (skip if owner is the bot itself)
+                if thread.owner_id and thread.owner_id != bot.user.id:
                     bot.debates_service.db.set_debate_creator(thread.id, thread.owner_id)
                     stats["creators_recorded"] += 1
                     unique_users.add(thread.owner_id)

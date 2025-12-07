@@ -56,7 +56,6 @@ OPENAI_DEPENDENT_FEATURES: list[str] = [
     "AI news summaries",
     "Bilingual content translation",
     "Debate tag detection",
-    "Hostility analysis",
 ]
 
 
@@ -206,10 +205,20 @@ CACHE_CLEANUP_RATIO: float = 0.8  # Remove 20% when cache is full
 
 
 # =============================================================================
-# Forum Thread Constants
+# Debate Content Rules
 # =============================================================================
 
-FORUM_AUTO_ARCHIVE_MINUTES: int = 1440  # 24 hours in minutes
+MIN_MESSAGE_LENGTH: int = int(os.getenv("MIN_MESSAGE_LENGTH", "200"))  # Minimum chars for Latin/English
+MIN_MESSAGE_LENGTH_ARABIC: int = int(os.getenv("MIN_MESSAGE_LENGTH_ARABIC", "400"))  # Min chars for Arabic
+
+
+# =============================================================================
+# Analytics Throttling
+# =============================================================================
+
+ANALYTICS_UPDATE_COOLDOWN: int = int(os.getenv("ANALYTICS_UPDATE_COOLDOWN", "30"))  # Seconds between updates
+ANALYTICS_CACHE_MAX_SIZE: int = int(os.getenv("ANALYTICS_CACHE_MAX_SIZE", "100"))  # Max throttle cache entries
+ANALYTICS_CACHE_CLEANUP_AGE: int = int(os.getenv("ANALYTICS_CACHE_CLEANUP_AGE", "3600"))  # Remove entries older than 1 hour
 
 
 # =============================================================================
@@ -368,8 +377,13 @@ __all__ = [
     # Cache Constants
     "AI_CACHE_MAX_ENTRIES",
     "CACHE_CLEANUP_RATIO",
-    # Forum Constants
-    "FORUM_AUTO_ARCHIVE_MINUTES",
+    # Debate Content Rules
+    "MIN_MESSAGE_LENGTH",
+    "MIN_MESSAGE_LENGTH_ARABIC",
+    # Analytics Throttling
+    "ANALYTICS_UPDATE_COOLDOWN",
+    "ANALYTICS_CACHE_MAX_SIZE",
+    "ANALYTICS_CACHE_CLEANUP_AGE",
     # IDs
     "SYRIA_GUILD_ID",
     "MODERATOR_ROLE_ID",

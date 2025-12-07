@@ -2,10 +2,57 @@
 Othman Discord Bot - Debates Database
 ======================================
 
-SQLite database operations for karma tracking.
+SQLite database operations for karma tracking and debate statistics.
 
-Uses a persistent connection with WAL mode for improved concurrency.
-Provides async wrappers via asyncio.to_thread() to avoid blocking the event loop.
+DATABASE SCHEMA:
+================
+┌─────────────────────────────────────────────────────────────────┐
+│                         votes                                    │
+├─────────────────────────────────────────────────────────────────┤
+│ voter_id (INT)     - User who voted                             │
+│ message_id (INT)   - Message that was voted on                  │
+│ author_id (INT)    - Author of the message (receives karma)     │
+│ vote_value (INT)   - +1 for upvote, -1 for downvote            │
+│ created_at (TEXT)  - Timestamp of vote                          │
+│ PRIMARY KEY: (voter_id, message_id) - One vote per user/message │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    debate_participation                          │
+├─────────────────────────────────────────────────────────────────┤
+│ thread_id (INT)    - Debate thread ID                           │
+│ user_id (INT)      - User who participated                      │
+│ message_count (INT)- Number of messages in thread               │
+│ updated_at (TEXT)  - Last update timestamp                      │
+│ PRIMARY KEY: (thread_id, user_id)                               │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                     debate_creators                              │
+├─────────────────────────────────────────────────────────────────┤
+│ thread_id (INT)    - Debate thread ID (PRIMARY KEY)             │
+│ user_id (INT)      - User who created the debate                │
+│ created_at (TEXT)  - When the debate was created                │
+└─────────────────────────────────────────────────────────────────┘
+
+DESIGN DECISIONS:
+=================
+1. WAL MODE: Write-Ahead Logging for better read/write concurrency
+   - Readers don't block writers
+   - Writers don't block readers
+   - Perfect for Discord bot with frequent reads
+
+2. THREAD SAFETY: Uses threading.Lock() for all operations
+   - check_same_thread=False allows multi-thread access
+   - Lock prevents race conditions
+
+3. PERSISTENT CONNECTION: Single connection reused for all operations
+   - Avoids connection overhead
+   - Auto-reconnects if connection drops
+
+4. KARMA CALCULATION: SUM(vote_value) WHERE author_id = user_id
+   - Upvotes (+1) and downvotes (-1) are summed
+   - Net karma can be negative
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
@@ -176,37 +223,6 @@ class DebatesDatabase:
                 ON users(total_karma DESC)
             """)
 
-            # Thread hostility tracking table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS thread_hostility (
-                    thread_id INTEGER PRIMARY KEY,
-                    cumulative_score REAL DEFAULT 0,
-                    message_count INTEGER DEFAULT 0,
-                    warning_sent INTEGER DEFAULT 0,
-                    last_warning_at TIMESTAMP,
-                    locked_at TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            # Message hostility scores (for audit)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS message_hostility (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    thread_id INTEGER NOT NULL,
-                    message_id INTEGER UNIQUE,
-                    user_id INTEGER NOT NULL,
-                    score REAL NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            # Index for hostility lookups
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_hostility_thread
-                ON message_hostility(thread_id)
-            """)
-
             # Debate bans table - users banned from specific threads or all debates
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS debate_bans (
@@ -293,7 +309,7 @@ class DebatesDatabase:
 
             conn.commit()
             logger.tree("Debates Database Initialized", [
-                ("Tables", "8 created/verified"),
+                ("Tables", "6 created/verified"),
                 ("Indexes", "4 created/verified"),
             ], emoji="🗳️")
 
@@ -468,11 +484,14 @@ class DebatesDatabase:
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT voter_id, vote_type FROM votes WHERE message_id = ?",
-                (message_id,)
-            )
-            return {row[0]: row[1] for row in cursor.fetchall()}
+            try:
+                cursor.execute(
+                    "SELECT voter_id, vote_type FROM votes WHERE message_id = ?",
+                    (message_id,)
+                )
+                return {row[0]: row[1] for row in cursor.fetchall()}
+            finally:
+                cursor.close()
 
     async def get_message_votes_async(self, message_id: int) -> dict[int, int]:
         """Async wrapper for get_message_votes - runs in thread pool."""
@@ -540,16 +559,19 @@ class DebatesDatabase:
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                """SELECT user_id, total_karma, upvotes_received, downvotes_received
-                   FROM users WHERE user_id = ?""",
-                (user_id,)
-            )
-            row = cursor.fetchone()
+            try:
+                cursor.execute(
+                    """SELECT user_id, total_karma, upvotes_received, downvotes_received
+                       FROM users WHERE user_id = ?""",
+                    (user_id,)
+                )
+                row = cursor.fetchone()
 
-            if row:
-                return UserKarma(*row)
-            return UserKarma(user_id, 0, 0, 0)
+                if row:
+                    return UserKarma(*row)
+                return UserKarma(user_id, 0, 0, 0)
+            finally:
+                cursor.close()
 
     async def get_user_karma_async(self, user_id: int) -> UserKarma:
         """Async wrapper for get_user_karma - runs in thread pool."""
@@ -568,14 +590,17 @@ class DebatesDatabase:
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                """SELECT user_id, total_karma, upvotes_received, downvotes_received
-                   FROM users
-                   ORDER BY total_karma DESC
-                   LIMIT ?""",
-                (limit,)
-            )
-            return [UserKarma(*row) for row in cursor.fetchall()]
+            try:
+                cursor.execute(
+                    """SELECT user_id, total_karma, upvotes_received, downvotes_received
+                       FROM users
+                       ORDER BY total_karma DESC
+                       LIMIT ?""",
+                    (limit,)
+                )
+                return [UserKarma(*row) for row in cursor.fetchall()]
+            finally:
+                cursor.close()
 
     async def get_leaderboard_async(self, limit: int = 10) -> list[UserKarma]:
         """Async wrapper for get_leaderboard - runs in thread pool."""
@@ -594,14 +619,17 @@ class DebatesDatabase:
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                """SELECT COUNT(*) + 1 FROM users
-                   WHERE total_karma > (
-                       SELECT COALESCE(total_karma, 0) FROM users WHERE user_id = ?
-                   )""",
-                (user_id,)
-            )
-            return cursor.fetchone()[0]
+            try:
+                cursor.execute(
+                    """SELECT COUNT(*) + 1 FROM users
+                       WHERE total_karma > (
+                           SELECT COALESCE(total_karma, 0) FROM users WHERE user_id = ?
+                       )""",
+                    (user_id,)
+                )
+                return cursor.fetchone()[0]
+            finally:
+                cursor.close()
 
     async def get_user_rank_async(self, user_id: int) -> int:
         """Async wrapper for get_user_rank - runs in thread pool."""
@@ -679,197 +707,6 @@ class DebatesDatabase:
     async def clear_analytics_message_async(self, thread_id: int) -> None:
         """Async wrapper for clear_analytics_message - runs in thread pool."""
         await asyncio.to_thread(self.clear_analytics_message, thread_id)
-
-    # -------------------------------------------------------------------------
-    # Hostility Operations
-    # -------------------------------------------------------------------------
-
-    def get_thread_hostility(self, thread_id: int) -> Optional[dict]:
-        """
-        Get hostility data for a thread.
-
-        Args:
-            thread_id: Discord thread ID
-
-        Returns:
-            Dict with hostility data or None if not found
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                """SELECT cumulative_score, message_count, warning_sent,
-                          last_warning_at, locked_at, updated_at
-                   FROM thread_hostility WHERE thread_id = ?""",
-                (thread_id,)
-            )
-            row = cursor.fetchone()
-
-            if row:
-                return {
-                    "cumulative_score": row[0],
-                    "message_count": row[1],
-                    "warning_sent": bool(row[2]),
-                    "last_warning_at": row[3],
-                    "locked_at": row[4],
-                    "updated_at": row[5]
-                }
-            return None
-
-    async def get_thread_hostility_async(self, thread_id: int) -> Optional[dict]:
-        """Async wrapper for get_thread_hostility - runs in thread pool."""
-        return await asyncio.to_thread(self.get_thread_hostility, thread_id)
-
-    def update_thread_hostility(
-        self,
-        thread_id: int,
-        cumulative_score: float,
-        message_count: int
-    ) -> None:
-        """
-        Update hostility data for a thread.
-
-        Args:
-            thread_id: Discord thread ID
-            cumulative_score: Current cumulative score
-            message_count: Total messages analyzed
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO thread_hostility (thread_id, cumulative_score, message_count, updated_at)
-                   VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                   ON CONFLICT(thread_id) DO UPDATE SET
-                       cumulative_score = excluded.cumulative_score,
-                       message_count = excluded.message_count,
-                       updated_at = CURRENT_TIMESTAMP""",
-                (thread_id, cumulative_score, message_count)
-            )
-            conn.commit()
-
-    async def update_thread_hostility_async(
-        self,
-        thread_id: int,
-        cumulative_score: float,
-        message_count: int
-    ) -> None:
-        """Async wrapper for update_thread_hostility - runs in thread pool."""
-        await asyncio.to_thread(
-            self.update_thread_hostility, thread_id, cumulative_score, message_count
-        )
-
-    def mark_warning_sent(self, thread_id: int) -> None:
-        """
-        Mark that a warning was sent for a thread.
-
-        Args:
-            thread_id: Discord thread ID
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                """UPDATE thread_hostility
-                   SET warning_sent = 1, last_warning_at = CURRENT_TIMESTAMP
-                   WHERE thread_id = ?""",
-                (thread_id,)
-            )
-            conn.commit()
-
-    async def mark_warning_sent_async(self, thread_id: int) -> None:
-        """Async wrapper for mark_warning_sent - runs in thread pool."""
-        await asyncio.to_thread(self.mark_warning_sent, thread_id)
-
-    def mark_thread_locked(self, thread_id: int) -> None:
-        """
-        Mark that a thread was locked due to hostility.
-
-        Args:
-            thread_id: Discord thread ID
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                """UPDATE thread_hostility
-                   SET locked_at = CURRENT_TIMESTAMP
-                   WHERE thread_id = ?""",
-                (thread_id,)
-            )
-            conn.commit()
-
-    async def mark_thread_locked_async(self, thread_id: int) -> None:
-        """Async wrapper for mark_thread_locked - runs in thread pool."""
-        await asyncio.to_thread(self.mark_thread_locked, thread_id)
-
-    def add_message_hostility(
-        self,
-        thread_id: int,
-        message_id: int,
-        user_id: int,
-        score: float
-    ) -> None:
-        """
-        Log hostility score for a message.
-
-        Args:
-            thread_id: Discord thread ID
-            message_id: Discord message ID
-            user_id: Author ID
-            score: Hostility score
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT OR REPLACE INTO message_hostility
-                   (thread_id, message_id, user_id, score)
-                   VALUES (?, ?, ?, ?)""",
-                (thread_id, message_id, user_id, score)
-            )
-            conn.commit()
-
-    async def add_message_hostility_async(
-        self,
-        thread_id: int,
-        message_id: int,
-        user_id: int,
-        score: float
-    ) -> None:
-        """Async wrapper for add_message_hostility - runs in thread pool."""
-        await asyncio.to_thread(
-            self.add_message_hostility, thread_id, message_id, user_id, score
-        )
-
-    def get_top_hostile_user(self, thread_id: int) -> Optional[int]:
-        """
-        Get the user with highest cumulative hostility score in a thread.
-
-        Args:
-            thread_id: Discord thread ID
-
-        Returns:
-            User ID of most hostile user, or None if no data
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                """SELECT user_id, SUM(score) as total_score
-                   FROM message_hostility
-                   WHERE thread_id = ?
-                   GROUP BY user_id
-                   ORDER BY total_score DESC
-                   LIMIT 1""",
-                (thread_id,)
-            )
-            row = cursor.fetchone()
-            return row[0] if row else None
-
-    async def get_top_hostile_user_async(self, thread_id: int) -> Optional[int]:
-        """Async wrapper for get_top_hostile_user - runs in thread pool."""
-        return await asyncio.to_thread(self.get_top_hostile_user, thread_id)
 
     # -------------------------------------------------------------------------
     # Debate Ban Operations
@@ -1038,7 +875,6 @@ class DebatesDatabase:
         - All votes cast BY this user
         - All votes received ON this user's messages
         - Any debate bans
-        - Hostility records
 
         Args:
             user_id: User ID to purge
@@ -1046,6 +882,10 @@ class DebatesDatabase:
         Returns:
             Dict with counts of deleted records
         """
+        logger.info("Starting User Data Deletion", [
+            ("User ID", str(user_id)),
+        ])
+
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -1092,11 +932,16 @@ class DebatesDatabase:
             cursor.execute("DELETE FROM debate_bans WHERE user_id = ?", (user_id,))
             deleted["bans"] = cursor.rowcount
 
-            # Delete hostility records
-            cursor.execute("DELETE FROM message_hostility WHERE user_id = ?", (user_id,))
-            deleted["hostility"] = cursor.rowcount
-
             conn.commit()
+
+            logger.info("User Data Deletion Complete", [
+                ("User ID", str(user_id)),
+                ("Karma Records", str(deleted.get("karma", 0))),
+                ("Votes Cast", str(deleted.get("votes_cast", 0))),
+                ("Votes Received", str(deleted.get("votes_received", 0))),
+                ("Bans", str(deleted.get("bans", 0))),
+            ])
+
             return deleted
 
     async def delete_user_data_async(self, user_id: int) -> dict:
@@ -1430,36 +1275,6 @@ class DebatesDatabase:
                    JOIN user_cache c ON u.user_id = c.user_id"""
             )
             return [row[0] for row in cursor.fetchall()]
-
-    # -------------------------------------------------------------------------
-    # Active Debates Operations
-    # -------------------------------------------------------------------------
-
-    def get_most_active_debates(self, limit: int = 3) -> list[dict]:
-        """
-        Get the most active debate threads by message count.
-
-        Args:
-            limit: Number of threads to return
-
-        Returns:
-            List of dicts with thread_id, message_count
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                """SELECT thread_id, message_count
-                   FROM thread_hostility
-                   WHERE message_count > 0
-                   ORDER BY message_count DESC
-                   LIMIT ?""",
-                (limit,)
-            )
-            return [
-                {"thread_id": row[0], "message_count": row[1]}
-                for row in cursor.fetchall()
-            ]
 
     # -------------------------------------------------------------------------
     # Leaderboard Stats Operations

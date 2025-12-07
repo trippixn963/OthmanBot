@@ -16,7 +16,6 @@ Server: discord.gg/syria
 """
 
 import asyncio
-import json
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 from aiohttp import web

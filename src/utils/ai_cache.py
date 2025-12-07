@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from src.core.logger import logger
+from src.core.config import AI_CACHE_MAX_ENTRIES, CACHE_CLEANUP_RATIO
 
 
 # Cache expiration (30 days in seconds)
@@ -31,7 +32,7 @@ class AICache:
     or when entries are older than CACHE_EXPIRATION_SECONDS.
     """
 
-    MAX_ENTRIES = 5000  # Maximum cache entries before cleanup
+    MAX_ENTRIES = AI_CACHE_MAX_ENTRIES  # Maximum cache entries before cleanup (from config)
 
     def __init__(self, filename: str) -> None:
         """
@@ -109,7 +110,7 @@ class AICache:
                 list(self.cache.items()),
                 key=lambda x: x[1].get("timestamp", 0) if isinstance(x[1], dict) else 0
             )
-            entries_to_remove = len(self.cache) - int(self.MAX_ENTRIES * 0.8)
+            entries_to_remove = len(self.cache) - int(self.MAX_ENTRIES * CACHE_CLEANUP_RATIO)
             keys_to_remove = [key for key, _ in sorted_entries[:entries_to_remove]]
 
             for key in keys_to_remove:
@@ -133,7 +134,7 @@ class AICache:
             key: Cache key
 
         Returns:
-            Cached value or None if not found or expired
+            Cached value or None if not found, expired, or invalid type
         """
         entry = self.cache.get(key)
         if entry is None:
@@ -146,10 +147,12 @@ class AICache:
                 # Entry expired, remove it
                 del self.cache[key]
                 return None
-            return entry.get("value")
+            value = entry.get("value")
+            # Ensure value is a string (safety check for corrupted cache)
+            return value if isinstance(value, str) else None
 
         # Handle old format (string) for backward compatibility
-        return entry
+        return entry if isinstance(entry, str) else None
 
     def set(self, key: str, value: str) -> None:
         """
@@ -184,7 +187,7 @@ class AICache:
             Dict with 'original_title' and 'english_title' keys, or None if not cached
         """
         key = f"title:{article_id}"
-        cached = self.cache.get(key)
+        cached = self.get(key)  # Use self.get() to properly extract value from new format
         if cached:
             parts = cached.split("|||", 1)
             if len(parts) == 2:
@@ -201,8 +204,7 @@ class AICache:
             ai_title: AI-cleaned/translated title
         """
         key = f"title:{article_id}"
-        self.cache[key] = f"{original_title}|||{ai_title}"
-        self._save_cache()
+        self.set(key, f"{original_title}|||{ai_title}")  # Use self.set() for proper timestamp handling
 
     # -------------------------------------------------------------------------
     # Summary Cache Methods
@@ -219,7 +221,7 @@ class AICache:
             Dict with 'arabic_summary' and 'english_summary' keys, or None if not cached
         """
         key = f"summary:{article_id}"
-        cached = self.cache.get(key)
+        cached = self.get(key)  # Use self.get() to properly extract value from new format
         if cached:
             parts = cached.split("|||", 1)
             if len(parts) == 2:
@@ -236,8 +238,7 @@ class AICache:
             english_summary: English summary text
         """
         key = f"summary:{article_id}"
-        self.cache[key] = f"{arabic_summary}|||{english_summary}"
-        self._save_cache()
+        self.set(key, f"{arabic_summary}|||{english_summary}")  # Use self.set() for proper timestamp handling
 
     # -------------------------------------------------------------------------
     # Team Tag Cache Methods (for soccer articles)
@@ -254,7 +255,7 @@ class AICache:
             Team tag string or None if not cached
         """
         key = f"team:{article_id}"
-        return self.cache.get(key)
+        return self.get(key)  # Use self.get() to properly extract value from new format
 
     def cache_team_tag(self, article_id: str, team_tag: str) -> None:
         """
@@ -265,8 +266,7 @@ class AICache:
             team_tag: Team tag (e.g., "Real Madrid", "Barcelona")
         """
         key = f"team:{article_id}"
-        self.cache[key] = team_tag
-        self._save_cache()
+        self.set(key, team_tag)  # Use self.set() for proper timestamp handling
 
 
 __all__ = ["AICache"]
