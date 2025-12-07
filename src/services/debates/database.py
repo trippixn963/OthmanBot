@@ -380,16 +380,38 @@ class DebatesDatabase:
                     self._update_user_karma(cursor, author_id, vote_type, vote_type)
 
                 conn.commit()
+
+                # Log successful vote with full context
+                if existing:
+                    logger.info("DB: Vote Updated", [
+                        ("Voter", str(voter_id)),
+                        ("Message", str(message_id)),
+                        ("Author", str(author_id)),
+                        ("Old Vote", "+1" if old_vote > 0 else "-1"),
+                        ("New Vote", "+1" if vote_type > 0 else "-1"),
+                        ("Karma Change", str(vote_type - old_vote)),
+                    ])
+                else:
+                    logger.info("DB: Vote Added", [
+                        ("Voter", str(voter_id)),
+                        ("Message", str(message_id)),
+                        ("Author", str(author_id)),
+                        ("Vote", "+1" if vote_type > 0 else "-1"),
+                    ])
                 return True
             except sqlite3.OperationalError as e:
                 conn.rollback()
                 logger.warning("Vote Transaction Failed (Retryable)", [
+                    ("Voter", str(voter_id)),
+                    ("Message", str(message_id)),
                     ("Error", str(e)),
                 ])
                 raise
             except sqlite3.IntegrityError as e:
                 conn.rollback()
                 logger.warning("Vote Integrity Error", [
+                    ("Voter", str(voter_id)),
+                    ("Message", str(message_id)),
                     ("Error", str(e)),
                 ])
                 return False
@@ -455,10 +477,20 @@ class DebatesDatabase:
                 self._update_user_karma(cursor, author_id, -vote_type, vote_type, is_removal=True)
 
                 conn.commit()
+
+                logger.info("DB: Vote Removed", [
+                    ("Voter", str(voter_id)),
+                    ("Message", str(message_id)),
+                    ("Author", str(author_id)),
+                    ("Was Vote", "+1" if vote_type > 0 else "-1"),
+                    ("Karma Reversed", str(-vote_type)),
+                ])
                 return author_id
             except sqlite3.OperationalError as e:
                 conn.rollback()
                 logger.warning("Remove Vote Transaction Failed (Retryable)", [
+                    ("Voter", str(voter_id)),
+                    ("Message", str(message_id)),
                     ("Error", str(e)),
                 ])
                 raise
@@ -656,6 +688,10 @@ class DebatesDatabase:
                 (thread_id, message_id)
             )
             conn.commit()
+            logger.info("DB: Analytics Message Set", [
+                ("Thread ID", str(thread_id)),
+                ("Message ID", str(message_id)),
+            ])
 
     async def set_analytics_message_async(self, thread_id: int, message_id: int) -> None:
         """Async wrapper for set_analytics_message - runs in thread pool."""
@@ -702,7 +738,12 @@ class DebatesDatabase:
                 "UPDATE debate_threads SET analytics_message_id = NULL WHERE thread_id = ?",
                 (thread_id,)
             )
+            rows_affected = cursor.rowcount
             conn.commit()
+            logger.info("DB: Analytics Message Cleared", [
+                ("Thread ID", str(thread_id)),
+                ("Rows Affected", str(rows_affected)),
+            ])
 
     async def clear_analytics_message_async(self, thread_id: int) -> None:
         """Async wrapper for clear_analytics_message - runs in thread pool."""
@@ -1183,6 +1224,10 @@ class DebatesDatabase:
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
+            # Check if user exists first
+            cursor.execute("SELECT 1 FROM user_cache WHERE user_id = ?", (user_id,))
+            is_new_user = cursor.fetchone() is None
+
             cursor.execute(
                 """INSERT INTO user_cache (user_id, username, display_name, is_member, updated_at)
                    VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
@@ -1194,6 +1239,12 @@ class DebatesDatabase:
                 (user_id, username, display_name)
             )
             conn.commit()
+
+            if is_new_user:
+                logger.info("DB: New User Cached", [
+                    ("User ID", str(user_id)),
+                    ("Username", username),
+                ])
 
     def get_cached_user(self, user_id: int) -> Optional[dict]:
         """
@@ -1240,7 +1291,12 @@ class DebatesDatabase:
                    WHERE user_id = ?""",
                 (user_id,)
             )
+            rows_affected = cursor.rowcount
             conn.commit()
+            logger.info("DB: User Marked As Left", [
+                ("User ID", str(user_id)),
+                ("Rows Affected", str(rows_affected)),
+            ])
 
     def mark_user_rejoined(self, user_id: int) -> None:
         """
@@ -1258,7 +1314,12 @@ class DebatesDatabase:
                    WHERE user_id = ?""",
                 (user_id,)
             )
+            rows_affected = cursor.rowcount
             conn.commit()
+            logger.info("DB: User Rejoined", [
+                ("User ID", str(user_id)),
+                ("Rows Affected", str(rows_affected)),
+            ])
 
     def get_leaderboard_users_in_cache(self) -> list[int]:
         """
@@ -1431,7 +1492,14 @@ class DebatesDatabase:
                    VALUES (?, ?)""",
                 (thread_id, user_id)
             )
+            rows_affected = cursor.rowcount
             conn.commit()
+
+            if rows_affected > 0:
+                logger.info("DB: Debate Creator Recorded", [
+                    ("Thread ID", str(thread_id)),
+                    ("Creator ID", str(user_id)),
+                ])
 
     async def set_debate_creator_async(self, thread_id: int, user_id: int) -> None:
         """Async wrapper for set_debate_creator - runs in thread pool."""

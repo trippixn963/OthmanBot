@@ -146,6 +146,10 @@ class AICache:
             if time.time() - timestamp > CACHE_EXPIRATION_SECONDS:
                 # Entry expired, remove it
                 del self.cache[key]
+                logger.debug("AI Cache Expired", [
+                    ("Key", key[:50]),
+                    ("Age Days", str(int((time.time() - timestamp) / 86400))),
+                ])
                 return None
             value = entry.get("value")
             # Ensure value is a string (safety check for corrupted cache)
@@ -191,7 +195,13 @@ class AICache:
         if cached:
             parts = cached.split("|||", 1)
             if len(parts) == 2:
+                logger.debug("AI Cache HIT: Title", [
+                    ("Article", article_id[:30]),
+                ])
                 return {"original_title": parts[0], "english_title": parts[1]}
+        logger.debug("AI Cache MISS: Title", [
+            ("Article", article_id[:30]),
+        ])
         return None
 
     def cache_title(self, article_id: str, original_title: str, ai_title: str) -> None:
@@ -225,7 +235,13 @@ class AICache:
         if cached:
             parts = cached.split("|||", 1)
             if len(parts) == 2:
+                logger.debug("AI Cache HIT: Summary", [
+                    ("Article", article_id[:30]),
+                ])
                 return {"arabic_summary": parts[0], "english_summary": parts[1]}
+        logger.debug("AI Cache MISS: Summary", [
+            ("Article", article_id[:30]),
+        ])
         return None
 
     def cache_summary(self, article_id: str, arabic_summary: str, english_summary: str) -> None:
@@ -255,7 +271,17 @@ class AICache:
             Team tag string or None if not cached
         """
         key = f"team:{article_id}"
-        return self.get(key)  # Use self.get() to properly extract value from new format
+        result = self.get(key)  # Use self.get() to properly extract value from new format
+        if result:
+            logger.debug("AI Cache HIT: Team Tag", [
+                ("Article", article_id[:30]),
+                ("Team", result),
+            ])
+        else:
+            logger.debug("AI Cache MISS: Team Tag", [
+                ("Article", article_id[:30]),
+            ])
+        return result
 
     def cache_team_tag(self, article_id: str, team_tag: str) -> None:
         """

@@ -16,6 +16,12 @@
 
 ---
 
+> **EDUCATIONAL USE ONLY**
+>
+> This repository is provided for **educational purposes only**. No support, no forking assistance, and no pull requests will be accepted. This code is custom-built for a specific Discord server and is not intended for general use or redistribution. See [LICENSE](LICENSE) for full terms.
+
+---
+
 ## What is OthmanBot?
 
 A fully automated Discord bot that:
@@ -241,7 +247,14 @@ OthmanBot/
 
 ## Disclaimer
 
-Educational purposes only. No support provided. Use at own risk.
+This project is provided **for educational purposes only**.
+
+- **No Support** - Issues, questions, and feature requests will not be addressed
+- **No Forking Support** - No assistance will be provided for forks or derivatives
+- **No Pull Requests** - Contributions are not accepted
+- **Use At Your Own Risk** - No warranty of any kind is provided
+
+See [LICENSE](LICENSE) for complete terms.
 
 ---
 
