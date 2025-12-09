@@ -356,15 +356,15 @@ class BaseScraper:
                 system_prompt=f"""You are a news summarizer. Generate complete, standalone summaries of this article in both Arabic and English.
 
 CRITICAL REQUIREMENTS:
-- Each summary MUST be {min_length}-{max_length} characters (count carefully!)
+- BOTH summaries MUST INDEPENDENTLY be {min_length}-{max_length} characters each (count carefully!)
+- Arabic text is often more concise than English - compensate by adding more detail and context in Arabic
 - Summaries MUST be COMPLETE - end with a proper conclusion, never mid-sentence
 - DO NOT exceed {max_length} characters - write concisely to fit within the limit
-- Include: what happened, who is involved, why it matters
-- Arabic summary first, then English translation of the same content
-- Separate with "|||"
+- Include: what happened, who is involved, why it matters, and key details
 - Format: Arabic summary|||English summary
+- Write the Arabic summary first with full detail, then translate to English
 
-The English summary should be a direct translation of the Arabic summary to maintain consistency.""",
+IMPORTANT: The Arabic summary MUST be at least {min_length} characters. Do NOT write brief Arabic text - expand with context and details to reach the minimum length.""",
                 user_prompt=f"Article content:\n\n{content}",
                 max_tokens=800,
                 temperature=0.7,
@@ -396,6 +396,14 @@ The English summary should be a direct translation of the Arabic summary to main
                 if len(english) > max_length:
                     english = english[: max_length - 3] + "..."
                     truncated_english = True
+
+                # Validate that Arabic and English are actually different
+                if arabic == english or arabic[:100] == english[:100]:
+                    logger.warning("🤖 AI Summary Not Bilingual - Rejected", [
+                        ("Reason", "Arabic and English are identical"),
+                        ("Action", "Using fallback"),
+                    ])
+                    return create_fallback_summaries()
 
                 # Log successful generation
                 logger.success("🤖 Bilingual Summary Generated", [
@@ -455,7 +463,7 @@ The English summary should be a direct translation of the Arabic summary to main
                 # Use asyncio.to_thread to make synchronous OpenAI call non-blocking
                 response = await asyncio.to_thread(
                     self.openai_client.chat.completions.create,
-                    model="gpt-3.5-turbo",
+                    model="gpt-4o-mini",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
