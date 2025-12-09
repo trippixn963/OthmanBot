@@ -22,6 +22,8 @@ jobs:
           echo "author=$(git log -1 --pretty=%an)" >> $GITHUB_OUTPUT
           echo "sha=$(git log -1 --pretty=%h)" >> $GITHUB_OUTPUT
           echo "files=$(git diff --name-only HEAD~1 HEAD | head -10 | tr '\n' ', ' | sed 's/,$//')" >> $GITHUB_OUTPUT
+          STATS=$(git diff --shortstat HEAD~1 HEAD | sed 's/ files\? changed//' | sed 's/ insertions\?(+)/+/' | sed 's/ deletions\?(-)/−/' | tr -d ' ')
+          echo "stats=${STATS:-no changes}" >> $GITHUB_OUTPUT
 
       - name: Send Discord notification
         env:
@@ -50,6 +52,16 @@ jobs:
                 {
                   \"name\": \"Author\",
                   \"value\": \"${{ steps.commit.outputs.author }}\",
+                  \"inline\": true
+                },
+                {
+                  \"name\": \"Changes\",
+                  \"value\": \"\`${{ steps.commit.outputs.stats }}\`\",
+                  \"inline\": true
+                },
+                {
+                  \"name\": \"Compare\",
+                  \"value\": \"[View Diff](https://github.com/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.sha }})\",
                   \"inline\": true
                 }
               ],
