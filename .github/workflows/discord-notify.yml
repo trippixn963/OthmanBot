@@ -36,7 +36,8 @@ jobs:
         run: |
           # Escape special characters for JSON
           TITLE=$(echo '${{ steps.commit.outputs.title }}' | sed 's/"/\\"/g' | head -c 200)
-          BODY=$(echo '${{ steps.commit.outputs.body }}' | sed 's/- //g' | sed 's/"/\\"/g')
+          # Remove bullet prefix, escape quotes, and convert newlines to \n for JSON
+          BODY=$(echo '${{ steps.commit.outputs.body }}' | sed 's/- //g' | sed 's/"/\\"/g' | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
           FILES=$(echo '${{ steps.commit.outputs.files }}' | sed 's/"/\\"/g')
 
           # Build description with title and numbered body in code block
