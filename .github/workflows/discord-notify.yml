@@ -67,7 +67,7 @@ jobs:
               ],
               \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
               \"thumbnail\": {
-                \"url\": \"https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png\"
+                \"url\": \"https://cdn-icons-png.flaticon.com/512/25/25231.png\"
               }
             }]
           }"
