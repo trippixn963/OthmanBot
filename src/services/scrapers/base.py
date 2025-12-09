@@ -353,24 +353,47 @@ class BaseScraper:
 
         try:
             response = await self._call_openai(
-                system_prompt=f"""You are a news summarizer. Generate complete, standalone summaries of this article in both Arabic and English.
+                system_prompt=f"""You are a news summarizer. Generate summaries in Arabic AND English.
 
-CRITICAL REQUIREMENTS:
-- BOTH summaries MUST INDEPENDENTLY be {min_length}-{max_length} characters each (count carefully!)
-- Arabic text is often more concise than English - compensate by adding more detail and context in Arabic
-- Summaries MUST be COMPLETE - end with a proper conclusion, never mid-sentence
-- DO NOT exceed {max_length} characters - write concisely to fit within the limit
-- Include: what happened, who is involved, why it matters, and key details
-- Format: Arabic summary|||English summary
-- Write the Arabic summary first with full detail, then translate to English
+OUTPUT FORMAT (VERY IMPORTANT - follow exactly):
+[Arabic summary here]|||[English summary here]
 
-IMPORTANT: The Arabic summary MUST be at least {min_length} characters. Do NOT write brief Arabic text - expand with context and details to reach the minimum length.""",
-                user_prompt=f"Article content:\n\n{content}",
+The three pipe characters ||| MUST separate the two summaries. Do NOT use any other separator.
+
+REQUIREMENTS:
+- Each summary: {min_length}-{max_length} characters
+- Arabic summary comes FIRST, then |||, then English summary
+- Both must be complete sentences, not cut off
+- Include: what happened, who, why it matters
+
+Example format:
+هذا ملخص باللغة العربية يحتوي على التفاصيل الكاملة للمقال|||This is the English summary with full article details""",
+                user_prompt=f"Summarize this article:\n\n{content[:3000]}",
                 max_tokens=800,
-                temperature=0.7,
+                temperature=0.5,
             )
 
+            # Log raw AI response for debugging
+            logger.debug("🤖 AI Raw Response", [
+                ("Length", str(len(response))),
+                ("Preview", response[:200].replace('\n', ' ') if response else "empty"),
+                ("Has Separator", str("|||" in response)),
+            ])
+
+            # Try primary separator first
             parts = response.split("|||")
+
+            # Fallback: try other common separators if primary fails
+            if len(parts) < 2:
+                for sep in ["---", "===", "\n\n\n", "ENGLISH:", "English:"]:
+                    if sep in response:
+                        parts = response.split(sep, 1)
+                        if len(parts) >= 2:
+                            logger.info("🤖 Used Fallback Separator", [
+                                ("Separator", repr(sep)),
+                            ])
+                            break
+
             if len(parts) >= 2:
                 arabic: str = parts[0].strip()
                 english: str = parts[1].strip()
@@ -419,6 +442,9 @@ IMPORTANT: The Arabic summary MUST be at least {min_length} characters. Do NOT w
 
             # AI returned invalid format - use fallback
             logger.warning("🤖 Invalid AI Summary Format", [
+                ("Response Length", str(len(response)) if response else "0"),
+                ("Response Preview", response[:150].replace('\n', ' ') if response else "empty"),
+                ("Parts Found", str(len(parts))),
                 ("Action", "Using fallback"),
             ])
             return create_fallback_summaries()
