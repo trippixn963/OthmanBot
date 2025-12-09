@@ -16,9 +16,14 @@ jobs:
       - name: Get commit info
         id: commit
         run: |
-          echo "message<<EOF" >> $GITHUB_OUTPUT
-          git log -1 --pretty=%B >> $GITHUB_OUTPUT
+          # Get title (first line)
+          echo "title=$(git log -1 --pretty=%s)" >> $GITHUB_OUTPUT
+
+          # Get body and convert bullet points to numbered list
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          git log -1 --pretty=%b | grep -E '^- ' | nl -w1 -s'. ' | sed 's/^//' >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+
           echo "author=$(git log -1 --pretty=%an)" >> $GITHUB_OUTPUT
           echo "sha=$(git log -1 --pretty=%h)" >> $GITHUB_OUTPUT
           echo "files=$(git diff --name-only HEAD~1 HEAD | head -10 | tr '\n' ', ' | sed 's/,$//')" >> $GITHUB_OUTPUT
@@ -30,13 +35,21 @@ jobs:
           WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           # Escape special characters for JSON
-          MESSAGE=$(echo '${{ steps.commit.outputs.message }}' | head -1 | sed 's/"/\\"/g' | head -c 200)
+          TITLE=$(echo '${{ steps.commit.outputs.title }}' | sed 's/"/\\"/g' | head -c 200)
+          BODY=$(echo '${{ steps.commit.outputs.body }}' | sed 's/- //g' | sed 's/"/\\"/g')
           FILES=$(echo '${{ steps.commit.outputs.files }}' | sed 's/"/\\"/g')
+
+          # Build description with title and numbered body in code block
+          if [ -n "$BODY" ]; then
+            DESC="**$TITLE**\n\n\`\`\`\n$BODY\`\`\`"
+          else
+            DESC="**$TITLE**"
+          fi
 
           curl -H "Content-Type: application/json" -X POST "$WEBHOOK_URL" -d "{
             \"embeds\": [{
               \"title\": \"OthmanBot - Code Update\",
-              \"description\": \"**$MESSAGE**\",
+              \"description\": \"$DESC\",
               \"color\": 5814783,
               \"fields\": [
                 {
