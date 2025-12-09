@@ -1,0 +1,58 @@
+name: Discord Push Notification
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Get commit info
+        id: commit
+        run: |
+          echo "message<<EOF" >> $GITHUB_OUTPUT
+          git log -1 --pretty=%B >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "author=$(git log -1 --pretty=%an)" >> $GITHUB_OUTPUT
+          echo "sha=$(git log -1 --pretty=%h)" >> $GITHUB_OUTPUT
+          echo "files=$(git diff --name-only HEAD~1 HEAD | head -10 | tr '\n' ', ' | sed 's/,$//')" >> $GITHUB_OUTPUT
+
+      - name: Send Discord notification
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          # Escape special characters for JSON
+          MESSAGE=$(echo '${{ steps.commit.outputs.message }}' | head -1 | sed 's/"/\\"/g' | head -c 200)
+          FILES=$(echo '${{ steps.commit.outputs.files }}' | sed 's/"/\\"/g')
+
+          curl -H "Content-Type: application/json" -X POST "$WEBHOOK_URL" -d "{
+            \"embeds\": [{
+              \"title\": \"OthmanBot - Code Update\",
+              \"description\": \"**$MESSAGE**\",
+              \"color\": 5814783,
+              \"fields\": [
+                {
+                  \"name\": \"Files Changed\",
+                  \"value\": \"\`$FILES\`\",
+                  \"inline\": false
+                },
+                {
+                  \"name\": \"Commit\",
+                  \"value\": \"[\`${{ steps.commit.outputs.sha }}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})\",
+                  \"inline\": true
+                },
+                {
+                  \"name\": \"Author\",
+                  \"value\": \"${{ steps.commit.outputs.author }}\",
+                  \"inline\": true
+                }
+              ],
+              \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+            }]
+          }"
