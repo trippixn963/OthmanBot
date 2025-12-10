@@ -441,26 +441,46 @@ class SoccerScraper(BaseScraper):
             Generated English title or original if AI fails
         """
         if not self.openai_client:
+            logger.warning("⚽ OpenAI Client Not Initialized For Title", [
+                ("Action", "Using original title"),
+            ])
             return original_title
+
+        logger.info("⚽ Generating Soccer Title", [
+            ("Original", original_title[:50]),
+            ("Content Length", f"{len(content)} chars"),
+        ])
 
         try:
             response = await self._call_openai(
-                system_prompt="You are a sports headline writer specializing in soccer/football news. Create concise, clear English titles for soccer articles. Your titles must be EXACTLY 3-5 words, in English only, and capture the main soccer topic.",
-                user_prompt=f"Create a 3-5 word English title for this soccer article.\n\nOriginal title: {original_title}\n\nContent: {content[:500]}\n\nRespond with ONLY the title.",
+                system_prompt="""You are a sports headline writer specializing in soccer/football news. Create concise, clear English titles for soccer articles.
+
+CRITICAL RULES:
+1. Your titles must be EXACTLY 3-5 words, in English only.
+2. ACCURACY IS PARAMOUNT: Extract team names, player names, and key facts DIRECTLY from the article content.
+3. DO NOT hallucinate or guess team/player names. Use only what is mentioned in the article.
+4. Capture the main soccer topic accurately.""",
+                user_prompt=f"Create a 3-5 word English title for this soccer article.\n\nOriginal title: {original_title}\n\nFull article content:\n{content}\n\nRespond with ONLY the title.",
                 max_tokens=20,
-                temperature=0.7,
+                temperature=0.3,
             )
 
             ai_title = response.strip()
             if ai_title and 3 <= len(ai_title.split()) <= 7:
-                logger.info("⚽ AI Generated Soccer Title", [
-                    ("Title", ai_title),
+                logger.success("⚽ Soccer Title Generated", [
+                    ("Original", original_title[:30]),
+                    ("Generated", ai_title),
                 ])
                 return ai_title
+            logger.warning("⚽ Invalid Soccer Title Length", [
+                ("Title", ai_title),
+                ("Action", "Using original"),
+            ])
             return original_title
         except Exception as e:
             logger.warning("⚽ Failed to Generate AI Soccer Title", [
                 ("Error", str(e)[:100]),
+                ("Action", "Using original"),
             ])
             return original_title
 
