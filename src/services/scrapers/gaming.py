@@ -658,33 +658,45 @@ class GamingScraper:
     def _generate_ai_title(self, original_title: str, content: str) -> str:
         """Generate a concise 3-5 word English title using OpenAI GPT-3.5-turbo."""
         if not self.openai_client:
-            logger.warning("OpenAI client not initialized - using original title")
+            logger.warning("🎮 OpenAI Client Not Initialized For Title", [
+                ("Action", "Using original title"),
+            ])
             return original_title
 
-        try:
-            content_snippet: str = content[:500] if len(content) > 500 else content
+        logger.info("🎮 Generating Gaming Title", [
+            ("Original", original_title[:50]),
+            ("Content Length", f"{len(content)} chars"),
+        ])
 
+        try:
             response = self.openai_client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a gaming headline writer specializing in video game news. Create concise, clear English titles for gaming articles. Your titles must be EXACTLY 3-5 words, in English only, and capture the main gaming topic (games, platforms, esports, hardware, industry news, etc.)."
+                        "content": """You are a gaming headline writer specializing in video game news. Create concise, clear English titles for gaming articles.
+
+CRITICAL RULES:
+1. Your titles must be EXACTLY 3-5 words, in English only.
+2. ACCURACY IS PARAMOUNT: Extract game names, company names, and key facts DIRECTLY from the article content.
+3. DO NOT hallucinate or guess game/company names. Use only what is mentioned in the article.
+4. Capture the main gaming topic (games, platforms, esports, hardware, industry news, etc.)."""
                     },
                     {
                         "role": "user",
-                        "content": f"Create a 3-5 word English title for this gaming article.\n\nOriginal title: {original_title}\n\nContent: {content_snippet}\n\nRespond with ONLY the title, nothing else."
+                        "content": f"Create a 3-5 word English title for this gaming article.\n\nOriginal title: {original_title}\n\nFull article content:\n{content}\n\nRespond with ONLY the title, nothing else."
                     }
                 ],
                 max_tokens=20,
-                temperature=0.7,
+                temperature=0.3,
             )
 
             ai_title: str = response.choices[0].message.content.strip()
 
             if ai_title and 3 <= len(ai_title.split()) <= 7:
-                logger.info("🎮 AI Generated Gaming Title", [
-                    ("Title", ai_title),
+                logger.success("🎮 Gaming Title Generated", [
+                    ("Original", original_title[:30]),
+                    ("Generated", ai_title),
                 ])
                 return ai_title
             else:
@@ -700,36 +712,80 @@ class GamingScraper:
             ])
             return original_title
 
+    def _truncate_at_sentence(self, text: str, max_length: int) -> str:
+        """Truncate text at a sentence boundary, not mid-word."""
+        if len(text) <= max_length:
+            return text
+
+        truncated = text[:max_length]
+
+        # Find last sentence boundary (. ! ? and Arabic ؟)
+        last_period = -1
+        for i in range(len(truncated) - 1, -1, -1):
+            if truncated[i] in '.!?؟':
+                last_period = i
+                break
+
+        if last_period > max_length // 2:
+            result = truncated[:last_period + 1]
+            logger.debug("🎮 Truncated At Sentence", [
+                ("Original", str(len(text))),
+                ("New", str(len(result))),
+            ])
+            return result
+
+        # Fallback: truncate at last space
+        last_space = truncated.rfind(' ')
+        if last_space > max_length // 2:
+            result = truncated[:last_space] + "..."
+            logger.debug("🎮 Truncated At Word", [
+                ("Original", str(len(text))),
+                ("New", str(len(result))),
+            ])
+            return result
+
+        logger.warning("🎮 Truncated Mid-Text (No Good Boundary)", [
+            ("Original", str(len(text))),
+            ("New", str(max_length)),
+        ])
+        return truncated[:max_length - 3] + "..."
+
     def _generate_bilingual_summary(self, content: str) -> tuple[str, str]:
         """Generate bilingual summaries (Arabic and English) using OpenAI GPT-3.5-turbo."""
         if not self.openai_client:
             logger.warning("OpenAI client not initialized - using truncated content")
-            truncated: str = content[:300] + "..." if len(content) > 300 else content
+            truncated: str = self._truncate_at_sentence(content, 300)
             return (truncated, truncated)
 
+        logger.info("🎮 Generating Bilingual Summary", [
+            ("Content Length", f"{len(content)} chars"),
+        ])
+
         try:
-            # DESIGN: Limit summaries to fit within Discord's 2000 char message limit
-            # Total budget: ~1200 chars (leaving room for key quote/headers/dividers/footer)
-            # Arabic: 400 chars, English: 400 chars = 800 chars for summaries
             response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a bilingual gaming news summarizer. Create comprehensive, detailed summaries in both Arabic and English. Each summary should be 200-350 characters - detailed enough to give readers the full picture. Include: what happened, who is involved, why it matters, and any relevant context. NEVER write summaries under 150 characters."
+                        "content": """You are a bilingual gaming news summarizer. Create comprehensive, detailed summaries in both Arabic and English.
+
+REQUIREMENTS:
+- Each summary should be 200-500 characters
+- CRITICAL: Both summaries MUST end with complete sentences. NEVER cut off mid-sentence or mid-word.
+- Include: what happened, who is involved, why it matters, and any relevant context.
+- If approaching the character limit, finish your current sentence and stop."""
                     },
                     {
                         "role": "user",
-                        "content": f"Summarize this gaming article in both Arabic and English. Each summary should be 200-350 characters with full context and details. Include all key information: names, dates, reasons, implications.\n\nFormat your response EXACTLY as:\n\nARABIC:\n[Arabic summary - 200-350 characters]\n\nENGLISH:\n[English summary - 200-350 characters]\n\nArticle content:\n{content}"
+                        "content": f"Summarize this gaming article in both Arabic and English. Each summary should be 200-500 characters with full context and details. Include all key information: names, dates, reasons, implications.\n\nFormat your response EXACTLY as:\n\nARABIC:\n[Arabic summary - 200-500 characters, complete sentences]\n\nENGLISH:\n[English summary - 200-500 characters, complete sentences]\n\nArticle content:\n{content}"
                     }
                 ],
-                temperature=0.7,
-                max_tokens=500,
+                temperature=0.5,
+                max_tokens=800,
             )
 
             result: str = response.choices[0].message.content.strip()
 
-            # DESIGN: Parse AI response to extract Arabic and English summaries
             arabic_summary: str = ""
             english_summary: str = ""
 
@@ -741,29 +797,27 @@ class GamingScraper:
                 arabic_summary = arabic_part
                 english_summary = english_part
 
-                # DESIGN: Safety truncation to ensure summaries fit Discord limit
-                # Total content budget ~1600 chars (leaving room for headers/dividers/footer)
-                # 400 chars each = 800 chars for summaries, leaving plenty of room
-                if len(arabic_summary) > 400:
-                    arabic_summary = arabic_summary[:397] + "..."
-                    logger.warning("🎮 Truncated Arabic Gaming Summary", [
+                # Safety truncation at sentence boundary (not mid-word)
+                if len(arabic_summary) > 500:
+                    arabic_summary = self._truncate_at_sentence(arabic_summary, 500)
+                    logger.info("🎮 Truncated Arabic Gaming Summary", [
                         ("Original", str(len(arabic_part))),
-                        ("Truncated To", "400"),
+                        ("New", str(len(arabic_summary))),
                     ])
-                if len(english_summary) > 400:
-                    english_summary = english_summary[:397] + "..."
-                    logger.warning("🎮 Truncated English Gaming Summary", [
+                if len(english_summary) > 500:
+                    english_summary = self._truncate_at_sentence(english_summary, 500)
+                    logger.info("🎮 Truncated English Gaming Summary", [
                         ("Original", str(len(english_part))),
-                        ("Truncated To", "400"),
+                        ("New", str(len(english_summary))),
                     ])
 
-                logger.info("🎮 Generated Bilingual Gaming Summaries", [
+                logger.success("🎮 Generated Bilingual Gaming Summaries", [
                     ("Arabic", f"{len(arabic_summary)} chars"),
                     ("English", f"{len(english_summary)} chars"),
                 ])
             else:
                 logger.warning("AI gaming summary format invalid - using truncated content")
-                truncated: str = content[:300] + "..." if len(content) > 300 else content
+                truncated: str = self._truncate_at_sentence(content, 300)
                 return (truncated, truncated)
 
             return (arabic_summary, english_summary)
@@ -772,7 +826,7 @@ class GamingScraper:
             logger.warning("🎮 Failed to Generate Bilingual Summary", [
                 ("Error", str(e)[:100]),
             ])
-            truncated: str = content[:300] + "..." if len(content) > 300 else content
+            truncated: str = self._truncate_at_sentence(content, 300)
             return (truncated, truncated)
 
     def _detect_game_category(self, title: str, content: str) -> str:
