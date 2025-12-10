@@ -266,13 +266,26 @@ class BaseScraper:
             AI-generated English title
         """
         if not self.openai_client:
+            logger.warning("🤖 OpenAI Client Not Initialized For Title", [
+                ("Action", "Using original title"),
+                ("Original", original_title[:50]),
+            ])
             return original_title
 
         # Check cache first
         cache_key: str = f"title_{original_title[:100]}"
         cached: Optional[str] = self.ai_cache.get(cache_key)
         if cached:
+            logger.info("🤖 Cache Hit - Title", [
+                ("Original", original_title[:30]),
+                ("Cached", cached[:30]),
+            ])
             return cached
+
+        logger.info("🤖 Generating Title", [
+            ("Original", original_title[:50]),
+            ("Content Length", f"{len(content)} chars"),
+        ])
 
         try:
             response = await self._call_openai(
@@ -290,10 +303,16 @@ CRITICAL RULES:
             )
             title: str = response.strip().strip('"').strip("'")
             self.ai_cache.set(cache_key, title)
+            logger.success("🤖 Title Generated", [
+                ("Original", original_title[:30]),
+                ("Generated", title[:50]),
+            ])
             return title
         except Exception as e:
             logger.warning("🤖 Failed to Generate Title", [
                 ("Error", str(e)),
+                ("Original", original_title[:30]),
+                ("Action", "Using original title"),
             ])
             return original_title
 
@@ -308,7 +327,8 @@ CRITICAL RULES:
         Returns:
             Text truncated at the last complete sentence within max_length
         """
-        if len(text) <= max_length:
+        original_length = len(text)
+        if original_length <= max_length:
             return text
 
         # Find the last sentence boundary within max_length
@@ -323,15 +343,36 @@ CRITICAL RULES:
                 break
 
         if last_period > max_length // 2:  # Only use if we keep at least half the content
-            return truncated[:last_period + 1]
+            result = truncated[:last_period + 1]
+            logger.debug("✂️ Truncated At Sentence Boundary", [
+                ("Original Length", str(original_length)),
+                ("New Length", str(len(result))),
+                ("Max Allowed", str(max_length)),
+                ("Method", "sentence boundary"),
+            ])
+            return result
 
         # Fallback: truncate at last space to avoid mid-word cut
         last_space = truncated.rfind(' ')
         if last_space > max_length // 2:
-            return truncated[:last_space] + "..."
+            result = truncated[:last_space] + "..."
+            logger.debug("✂️ Truncated At Word Boundary", [
+                ("Original Length", str(original_length)),
+                ("New Length", str(len(result))),
+                ("Max Allowed", str(max_length)),
+                ("Method", "word boundary"),
+            ])
+            return result
 
         # Last resort: just truncate with ellipsis
-        return truncated[:max_length - 3] + "..."
+        result = truncated[:max_length - 3] + "..."
+        logger.warning("✂️ Truncated Mid-Text (No Good Boundary)", [
+            ("Original Length", str(original_length)),
+            ("New Length", str(len(result))),
+            ("Max Allowed", str(max_length)),
+            ("Method", "hard cut"),
+        ])
+        return result
 
     async def _generate_bilingual_summary(
         self,

@@ -203,7 +203,8 @@ def _truncate_at_sentence(text: str, max_length: int) -> str:
     Returns:
         Text truncated at the last complete sentence within max_length
     """
-    if len(text) <= max_length:
+    original_length = len(text)
+    if original_length <= max_length:
         return text
 
     truncated = text[:max_length]
@@ -216,14 +217,32 @@ def _truncate_at_sentence(text: str, max_length: int) -> str:
             break
 
     if last_period > max_length // 2:
-        return truncated[:last_period + 1]
+        result = truncated[:last_period + 1]
+        logger.debug("✂️ News Truncated At Sentence", [
+            ("Original", str(original_length)),
+            ("New", str(len(result))),
+            ("Method", "sentence"),
+        ])
+        return result
 
     # Fallback: truncate at last space
     last_space = truncated.rfind(' ')
     if last_space > max_length // 2:
-        return truncated[:last_space] + "..."
+        result = truncated[:last_space] + "..."
+        logger.debug("✂️ News Truncated At Word", [
+            ("Original", str(original_length)),
+            ("New", str(len(result))),
+            ("Method", "word"),
+        ])
+        return result
 
-    return truncated[:max_length - 3] + "..."
+    result = truncated[:max_length - 3] + "..."
+    logger.warning("✂️ News Truncated Mid-Text", [
+        ("Original", str(original_length)),
+        ("New", str(len(result))),
+        ("Method", "hard cut"),
+    ])
+    return result
 
 
 def _build_forum_content(article: NewsArticle) -> str:
