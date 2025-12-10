@@ -276,10 +276,17 @@ class BaseScraper:
 
         try:
             response = await self._call_openai(
-                system_prompt="You are a news headline writer. Generate a concise, engaging title in ENGLISH ONLY (3-7 words) for this article. IMPORTANT: The title MUST be in English, not Arabic. Translate Arabic titles to English. Return ONLY the English title, no quotes or explanation.",
-                user_prompt=f"Original title: {original_title}\n\nContent preview: {content[:500]}",
+                system_prompt="""You are a news headline writer. Generate a concise, engaging title in ENGLISH ONLY (3-7 words) for this article.
+
+CRITICAL RULES:
+1. The title MUST be in English, not Arabic. Translate Arabic titles to English.
+2. ACCURACY IS PARAMOUNT: Extract location names, people names, and key facts DIRECTLY from the article content.
+3. DO NOT hallucinate or guess location names. If the article mentions "Aleppo" (حلب), use "Aleppo". If it mentions "Homs" (حمص), use "Homs".
+4. Read the content carefully to identify the correct city/location mentioned.
+5. Return ONLY the English title, no quotes or explanation.""",
+                user_prompt=f"Original title: {original_title}\n\nFull article content:\n{content}",
                 max_tokens=50,
-                temperature=0.7,
+                temperature=0.3,
             )
             title: str = response.strip().strip('"').strip("'")
             self.ai_cache.set(cache_key, title)
@@ -290,11 +297,47 @@ class BaseScraper:
             ])
             return original_title
 
+    def _truncate_at_sentence(self, text: str, max_length: int) -> str:
+        """
+        Truncate text at a sentence boundary, not mid-word.
+
+        Args:
+            text: Text to truncate
+            max_length: Maximum allowed length
+
+        Returns:
+            Text truncated at the last complete sentence within max_length
+        """
+        if len(text) <= max_length:
+            return text
+
+        # Find the last sentence boundary within max_length
+        # Look for sentence-ending punctuation (. ! ? and Arabic equivalents)
+        truncated = text[:max_length]
+
+        # Find last sentence boundary
+        last_period = -1
+        for i in range(len(truncated) - 1, -1, -1):
+            if truncated[i] in '.!?。؟':
+                last_period = i
+                break
+
+        if last_period > max_length // 2:  # Only use if we keep at least half the content
+            return truncated[:last_period + 1]
+
+        # Fallback: truncate at last space to avoid mid-word cut
+        last_space = truncated.rfind(' ')
+        if last_space > max_length // 2:
+            return truncated[:last_space] + "..."
+
+        # Last resort: just truncate with ellipsis
+        return truncated[:max_length - 3] + "..."
+
     async def _generate_bilingual_summary(
         self,
         content: str,
         min_length: int = 150,
-        max_length: int = 400,
+        max_length: int = 500,
     ) -> tuple[str, str]:
         """
         Generate bilingual summaries (Arabic and English) using AI.
@@ -313,11 +356,8 @@ class BaseScraper:
             # Clean and truncate content
             clean_content = content.strip()
 
-            # Create a simple truncated summary
-            if len(clean_content) > max_length:
-                fallback = clean_content[:max_length - 3] + "..."
-            else:
-                fallback = clean_content
+            # Truncate at sentence boundary
+            fallback = self._truncate_at_sentence(clean_content, max_length)
 
             logger.info("🤖 Using Fallback Summary", [
                 ("Reason", "AI unavailable"),
@@ -363,13 +403,14 @@ The three pipe characters ||| MUST separate the two summaries. Do NOT use any ot
 REQUIREMENTS:
 - Each summary: {min_length}-{max_length} characters
 - Arabic summary comes FIRST, then |||, then English summary
-- Both must be complete sentences, not cut off
-- Include: what happened, who, why it matters
+- CRITICAL: Both summaries MUST end with complete sentences. NEVER cut off mid-sentence or mid-word.
+- Include: what happened, who, where, why it matters
+- If approaching the character limit, finish your current sentence and stop. Do not add "..." or incomplete thoughts.
 
 Example format:
-هذا ملخص باللغة العربية يحتوي على التفاصيل الكاملة للمقال|||This is the English summary with full article details""",
-                user_prompt=f"Summarize this article:\n\n{content[:3000]}",
-                max_tokens=800,
+هذا ملخص باللغة العربية يحتوي على التفاصيل الكاملة للمقال.|||This is the English summary with full article details.""",
+                user_prompt=f"Summarize this article:\n\n{content}",
+                max_tokens=1200,
                 temperature=0.5,
             )
 
@@ -410,14 +451,14 @@ Example format:
                     ])
                     return create_fallback_summaries()
 
-                # Safety truncation
+                # Safety truncation at sentence boundary (not mid-word)
                 truncated_arabic = False
                 truncated_english = False
                 if len(arabic) > max_length:
-                    arabic = arabic[: max_length - 3] + "..."
+                    arabic = self._truncate_at_sentence(arabic, max_length)
                     truncated_arabic = True
                 if len(english) > max_length:
-                    english = english[: max_length - 3] + "..."
+                    english = self._truncate_at_sentence(english, max_length)
                     truncated_english = True
 
                 # Validate that Arabic and English are actually different

@@ -192,6 +192,40 @@ async def post_article_to_forum(
 # Content Building
 # =============================================================================
 
+def _truncate_at_sentence(text: str, max_length: int) -> str:
+    """
+    Truncate text at a sentence boundary, not mid-word.
+
+    Args:
+        text: Text to truncate
+        max_length: Maximum allowed length
+
+    Returns:
+        Text truncated at the last complete sentence within max_length
+    """
+    if len(text) <= max_length:
+        return text
+
+    truncated = text[:max_length]
+
+    # Find last sentence boundary (. ! ? and Arabic ؟)
+    last_period = -1
+    for i in range(len(truncated) - 1, -1, -1):
+        if truncated[i] in '.!?؟':
+            last_period = i
+            break
+
+    if last_period > max_length // 2:
+        return truncated[:last_period + 1]
+
+    # Fallback: truncate at last space
+    last_space = truncated.rfind(' ')
+    if last_space > max_length // 2:
+        return truncated[:last_space] + "..."
+
+    return truncated[:max_length - 3] + "..."
+
+
 def _build_forum_content(article: NewsArticle) -> str:
     """
     Build forum post content with bilingual summaries.
@@ -216,7 +250,7 @@ def _build_forum_content(article: NewsArticle) -> str:
     footer += "The content is sourced from various news outlets and summarized using AI.\n\n"
     footer += "-# Bot developed by حَـــــنَّـــــا."
 
-    # Calculate space for summaries
+    # Calculate space for summaries (Discord limit 2000, minus footer and formatting overhead)
     max_summary_space = 2000 - len(footer) - 400
 
     # Truncate if needed - add null checks
@@ -227,9 +261,9 @@ def _build_forum_content(article: NewsArticle) -> str:
     if combined_length > max_summary_space:
         max_each = max_summary_space // 2
         if len(arabic_summary) > max_each:
-            arabic_summary = arabic_summary[:max_each-3] + "..."
+            arabic_summary = _truncate_at_sentence(arabic_summary, max_each)
         if len(english_summary) > max_each:
-            english_summary = english_summary[:max_each-3] + "..."
+            english_summary = _truncate_at_sentence(english_summary, max_each)
 
     # Build content
     message_content = ""
@@ -237,7 +271,7 @@ def _build_forum_content(article: NewsArticle) -> str:
     # Key quote
     first_sentence = english_summary.split('.')[0].strip()
     if len(first_sentence) > 250:
-        first_sentence = first_sentence[:247].strip() + '...'
+        first_sentence = _truncate_at_sentence(first_sentence, 247)
     else:
         first_sentence = first_sentence + '.'
 
