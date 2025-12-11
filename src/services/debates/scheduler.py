@@ -31,6 +31,7 @@ class DebatesScheduler:
         self,
         post_callback: Callable[[], Any],
         state_filename: str = "debates_scheduler_state.json",
+        bot: Any = None,
     ) -> None:
         """
         Initialize the debates scheduler.
@@ -38,7 +39,9 @@ class DebatesScheduler:
         Args:
             post_callback: Async function to call when posting
             state_filename: JSON file for state persistence
+            bot: Bot instance (to check disabled state)
         """
+        self.bot = bot
         self.post_callback: Callable[[], Any] = post_callback
         self.is_running: bool = False
         self.task: Optional[asyncio.Task] = None
@@ -152,6 +155,11 @@ class DebatesScheduler:
         """
         while self.is_running:
             try:
+                # Check if bot is disabled
+                if self.bot and getattr(self.bot, 'disabled', False):
+                    await asyncio.sleep(60)  # Check again in 1 minute
+                    continue
+
                 next_post_time: datetime = self._calculate_next_post_time()
                 wait_seconds: float = (next_post_time - datetime.now()).total_seconds()
 
@@ -161,6 +169,10 @@ class DebatesScheduler:
                         ("Wait", f"{wait_seconds / 60:.1f} minutes"),
                     ])
                     await asyncio.sleep(wait_seconds)
+
+                # Check again after sleep in case bot was disabled while waiting
+                if self.bot and getattr(self.bot, 'disabled', False):
+                    continue
 
                 if self.is_running:
                     logger.info("🔥⏰ 3-Hourly Hot Debate Post Triggered")
