@@ -493,29 +493,46 @@ Example format:
                     return create_fallback_summaries()
 
                 # Validate summaries - reject garbage/repeated content
-                def is_garbage_summary(text: str) -> bool:
-                    """Detect garbage summaries like repeated dates or patterns."""
+                def is_garbage_summary(text: str) -> tuple[bool, str]:
+                    """Detect garbage summaries like repeated dates or patterns.
+
+                    Returns:
+                        Tuple of (is_garbage, reason)
+                    """
+                    import re
+
                     lines = [l.strip() for l in text.split('\n') if l.strip()]
+
                     # If more than 3 lines and most are identical, it's garbage
                     if len(lines) > 3:
                         unique_lines = set(lines)
                         if len(unique_lines) <= 2:  # Almost all lines are the same
-                            return True
+                            return (True, f"identical_lines ({len(unique_lines)} unique of {len(lines)})")
+
                     # Check for repeated short patterns (like "2025-12-08" repeated)
                     if len(lines) > 5:
                         first_line = lines[0]
-                        if len(first_line) < 20 and lines.count(first_line) > len(lines) // 2:
-                            return True
+                        repeat_count = lines.count(first_line)
+                        if len(first_line) < 20 and repeat_count > len(lines) // 2:
+                            return (True, f"repeated_pattern ('{first_line[:20]}' x{repeat_count})")
+
                     # Check if content is mostly just dates or numbers
-                    import re
                     date_pattern = r'\d{4}-\d{2}-\d{2}'
                     date_matches = re.findall(date_pattern, text)
                     if len(date_matches) > 5 and len(text) < 200:
-                        return True
-                    return False
+                        return (True, f"date_spam ({len(date_matches)} dates in {len(text)} chars)")
 
-                if is_garbage_summary(arabic) or is_garbage_summary(english):
+                    return (False, "")
+
+                arabic_garbage, arabic_reason = is_garbage_summary(arabic)
+                english_garbage, english_reason = is_garbage_summary(english)
+
+                if arabic_garbage or english_garbage:
                     logger.warning("🤖 AI Summary Is Garbage - Rejected", [
+                        ("Arabic Garbage", str(arabic_garbage)),
+                        ("Arabic Reason", arabic_reason if arabic_garbage else "OK"),
+                        ("English Garbage", str(english_garbage)),
+                        ("English Reason", english_reason if english_garbage else "OK"),
                         ("Arabic Preview", arabic[:100].replace('\n', ' ')),
                         ("English Preview", english[:100].replace('\n', ' ')),
                         ("Action", "Using fallback"),

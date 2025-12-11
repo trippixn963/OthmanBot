@@ -190,29 +190,41 @@ class NewsScraper(BaseScraper):
                     continue
 
                 # Skip articles with garbage content (mostly dates, too short, etc.)
-                def is_garbage_content(text: str) -> bool:
-                    """Detect garbage content that would produce bad AI summaries."""
+                def is_garbage_content(text: str) -> tuple[bool, str]:
+                    """Detect garbage content that would produce bad AI summaries.
+
+                    Returns:
+                        Tuple of (is_garbage, reason)
+                    """
+                    import re
+
                     # Too short to be a real article
                     if len(text) < 100:
-                        return True
+                        return (True, f"too_short ({len(text)} chars)")
+
                     # Check for repeated date patterns (like a news listing page)
-                    import re
                     date_pattern = r'\d{4}-\d{2}-\d{2}'
                     date_matches = re.findall(date_pattern, text)
                     if len(date_matches) > 5 and len(text) < 500:
-                        return True
+                        return (True, f"date_spam ({len(date_matches)} dates in {len(text)} chars)")
+
                     # Check for mostly repeated lines
                     lines = [l.strip() for l in text.split('\n') if l.strip()]
                     if len(lines) > 5:
                         unique_lines = set(lines)
-                        if len(unique_lines) < len(lines) // 3:  # Less than 1/3 unique
-                            return True
-                    return False
+                        unique_ratio = len(unique_lines) / len(lines)
+                        if unique_ratio < 0.33:  # Less than 1/3 unique
+                            return (True, f"repeated_lines ({len(unique_lines)}/{len(lines)} unique, {unique_ratio:.0%})")
 
-                if is_garbage_content(full_content):
+                    return (False, "")
+
+                is_garbage, garbage_reason = is_garbage_content(full_content)
+                if is_garbage:
                     logger.warning("📰 Skipping Article With Garbage Content", [
                         ("Title", entry.get('title', 'Untitled')[:50]),
-                        ("Content Preview", full_content[:100].replace('\n', ' ')),
+                        ("URL", entry.get('link', '')[:60]),
+                        ("Reason", garbage_reason),
+                        ("Content Preview", full_content[:150].replace('\n', ' ')),
                         ("Content Length", str(len(full_content))),
                     ])
                     continue
