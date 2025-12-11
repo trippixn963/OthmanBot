@@ -214,19 +214,27 @@ class OthmanBot(commands.Bot):
         await on_ready_handler(self)
 
     async def on_message(self, message: discord.Message) -> None:
-        """Event handler for messages."""
-        if self.disabled:
-            return
+        """Event handler for messages.
+
+        NOTE: Messages are still processed when disabled to track karma/message counts.
+        The message handler itself checks bot.disabled to skip non-essential actions.
+        """
         await on_message_handler(self, message)
 
     async def on_thread_create(self, thread: discord.Thread) -> None:
-        """Event handler for thread creation."""
+        """Event handler for thread creation.
+
+        NOTE: Thread creation is blocked when disabled to prevent new debates.
+        """
         if self.disabled:
             return
         await on_thread_create_handler(self, thread)
 
     async def on_thread_delete(self, thread: discord.Thread) -> None:
-        """Event handler for thread deletion - triggers auto-renumbering."""
+        """Event handler for thread deletion - triggers auto-renumbering.
+
+        NOTE: Thread deletion tracking is blocked when disabled.
+        """
         if self.disabled:
             return
         await on_thread_delete_handler(self, thread)
@@ -236,10 +244,14 @@ class OthmanBot(commands.Bot):
         reaction: discord.Reaction,
         user: discord.User
     ) -> None:
-        """Event handler for reaction additions."""
-        if self.disabled:
-            return
-        await on_reaction_add_handler(self, reaction, user)
+        """Event handler for reaction additions.
+
+        NOTE: Reactions are still processed when disabled to track karma.
+        Non-karma reactions (news announcements) are blocked.
+        """
+        if not self.disabled:
+            await on_reaction_add_handler(self, reaction, user)
+        # Always track karma votes even when disabled
         await on_debate_reaction_add(self, reaction, user)
 
     async def on_reaction_remove(
@@ -247,9 +259,10 @@ class OthmanBot(commands.Bot):
         reaction: discord.Reaction,
         user: discord.User
     ) -> None:
-        """Event handler for reaction removals."""
-        if self.disabled:
-            return
+        """Event handler for reaction removals.
+
+        NOTE: Reactions are still processed when disabled to track karma.
+        """
         await on_debate_reaction_remove(self, reaction, user)
 
     async def on_member_remove(self, member: discord.Member) -> None:
