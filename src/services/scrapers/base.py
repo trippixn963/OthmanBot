@@ -492,6 +492,36 @@ Example format:
                     ])
                     return create_fallback_summaries()
 
+                # Validate summaries - reject garbage/repeated content
+                def is_garbage_summary(text: str) -> bool:
+                    """Detect garbage summaries like repeated dates or patterns."""
+                    lines = [l.strip() for l in text.split('\n') if l.strip()]
+                    # If more than 3 lines and most are identical, it's garbage
+                    if len(lines) > 3:
+                        unique_lines = set(lines)
+                        if len(unique_lines) <= 2:  # Almost all lines are the same
+                            return True
+                    # Check for repeated short patterns (like "2025-12-08" repeated)
+                    if len(lines) > 5:
+                        first_line = lines[0]
+                        if len(first_line) < 20 and lines.count(first_line) > len(lines) // 2:
+                            return True
+                    # Check if content is mostly just dates or numbers
+                    import re
+                    date_pattern = r'\d{4}-\d{2}-\d{2}'
+                    date_matches = re.findall(date_pattern, text)
+                    if len(date_matches) > 5 and len(text) < 200:
+                        return True
+                    return False
+
+                if is_garbage_summary(arabic) or is_garbage_summary(english):
+                    logger.warning("🤖 AI Summary Is Garbage - Rejected", [
+                        ("Arabic Preview", arabic[:100].replace('\n', ' ')),
+                        ("English Preview", english[:100].replace('\n', ' ')),
+                        ("Action", "Using fallback"),
+                    ])
+                    return create_fallback_summaries()
+
                 # Safety truncation at sentence boundary (not mid-word)
                 truncated_arabic = False
                 truncated_english = False
