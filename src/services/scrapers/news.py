@@ -174,6 +174,49 @@ class NewsScraper(BaseScraper):
                     ])
                     continue
 
+                # Skip articles with failed/garbage content extraction
+                error_messages = [
+                    "Content unavailable",
+                    "Could not fetch article content",
+                    "Could not extract article text",
+                    "Content extraction failed",
+                    "Article fetch timed out",
+                ]
+                if any(err in full_content for err in error_messages):
+                    logger.info("📰 Skipping Article With Failed Content Extraction", [
+                        ("Title", entry.get('title', 'Untitled')[:50]),
+                        ("Reason", full_content[:50]),
+                    ])
+                    continue
+
+                # Skip articles with garbage content (mostly dates, too short, etc.)
+                def is_garbage_content(text: str) -> bool:
+                    """Detect garbage content that would produce bad AI summaries."""
+                    # Too short to be a real article
+                    if len(text) < 100:
+                        return True
+                    # Check for repeated date patterns (like a news listing page)
+                    import re
+                    date_pattern = r'\d{4}-\d{2}-\d{2}'
+                    date_matches = re.findall(date_pattern, text)
+                    if len(date_matches) > 5 and len(text) < 500:
+                        return True
+                    # Check for mostly repeated lines
+                    lines = [l.strip() for l in text.split('\n') if l.strip()]
+                    if len(lines) > 5:
+                        unique_lines = set(lines)
+                        if len(unique_lines) < len(lines) // 3:  # Less than 1/3 unique
+                            return True
+                    return False
+
+                if is_garbage_content(full_content):
+                    logger.warning("📰 Skipping Article With Garbage Content", [
+                        ("Title", entry.get('title', 'Untitled')[:50]),
+                        ("Content Preview", full_content[:100].replace('\n', ' ')),
+                        ("Content Length", str(len(full_content))),
+                    ])
+                    continue
+
                 # Generate AI content
                 article_id = self._extract_article_id(entry.get("link", ""))
                 original_title = entry.get("title", "Untitled")
@@ -449,6 +492,32 @@ class NewsScraper(BaseScraper):
             from urllib.parse import urljoin
             return urljoin(base_url, url_str)
 
+    # Mapping for invalid categories to valid ones
+    CATEGORY_MAPPING: dict[str, str] = {
+        "education": "social",
+        "culture": "social",
+        "humanitarian": "social",
+        "society": "social",
+        "sports": "social",
+        "technology": "economy",
+        "business": "economy",
+        "finance": "economy",
+        "war": "military",
+        "conflict": "military",
+        "security": "military",
+        "defense": "military",
+        "government": "politics",
+        "diplomacy": "politics",
+        "elections": "politics",
+        "foreign": "international",
+        "global": "international",
+        "world": "international",
+        "medical": "health",
+        "healthcare": "health",
+        "breaking": "breaking_news",
+        "urgent": "breaking_news",
+    }
+
     async def _categorize_article(self, title: str, content: str) -> Optional[int]:
         """
         Categorize article and return Discord forum tag ID.
@@ -457,6 +526,9 @@ class NewsScraper(BaseScraper):
         """
         if not self.openai_client:
             return None
+
+        # Get valid categories from CATEGORY_TAGS
+        valid_categories = list(self.CATEGORY_TAGS.keys())
 
         try:
             import asyncio
@@ -467,19 +539,49 @@ class NewsScraper(BaseScraper):
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a news categorizer for Syrian news articles. Analyze the article and choose the MOST appropriate category from this list:\n\n- military: Military operations, armed conflicts, security forces\n- breaking_news: Urgent breaking news, major developments\n- politics: Political developments, government, diplomacy\n- economy: Economic news, trade, business, finance\n- health: Health care, medical news, diseases\n- international: International relations, foreign affairs\n- social: Society, culture, humanitarian issues\n\nRespond with ONLY the category name (one word), nothing else."
+                        "content": f"""You are a news categorizer. Your task is to classify Syrian news articles.
+
+VALID CATEGORIES (you MUST respond with EXACTLY one of these):
+- military
+- breaking_news
+- politics
+- economy
+- health
+- international
+- social
+
+CATEGORY DEFINITIONS:
+- military: Military operations, armed conflicts, security forces, defense
+- breaking_news: Urgent breaking news, major sudden developments
+- politics: Political developments, government, diplomacy, elections
+- economy: Economic news, trade, business, finance, technology
+- health: Health care, medical news, diseases, hospitals
+- international: International relations, foreign affairs, global news
+- social: Society, culture, humanitarian issues, education, sports, lifestyle
+
+IMPORTANT: Respond with ONLY one word from this exact list: {', '.join(valid_categories)}
+Do NOT use any other words. Do NOT add punctuation or explanation."""
                     },
                     {
                         "role": "user",
-                        "content": f"Categorize this Syrian news article.\n\nTitle: {title}\n\nContent: {content[:800]}\n\nCategory:"
+                        "content": f"Title: {title}\n\nContent: {content[:800]}"
                     }
                 ],
                 max_tokens=10,
-                temperature=0.3,
+                temperature=0.1,  # Lower temperature for more consistent output
             )
 
             category = response.choices[0].message.content.strip().lower()
+            # Remove any punctuation that might have slipped in
+            category = category.replace(".", "").replace(",", "").replace(":", "").strip()
 
+            # Log raw response for debugging
+            logger.debug("📰 AI Category Response", [
+                ("Raw", response.choices[0].message.content),
+                ("Parsed", category),
+            ])
+
+            # Check if valid category
             if category in self.CATEGORY_TAGS:
                 tag_id = self.CATEGORY_TAGS[category]
                 logger.info("📰 Article Categorized", [
@@ -487,12 +589,25 @@ class NewsScraper(BaseScraper):
                     ("Tag ID", str(tag_id)),
                 ])
                 return tag_id
-            else:
-                logger.warning("📰 Invalid Category", [
-                    ("Category", category),
-                    ("Fallback", "social"),
+
+            # Try mapping invalid category to valid one
+            if category in self.CATEGORY_MAPPING:
+                mapped_category = self.CATEGORY_MAPPING[category]
+                tag_id = self.CATEGORY_TAGS[mapped_category]
+                logger.info("📰 Category Mapped", [
+                    ("Original", category),
+                    ("Mapped To", mapped_category),
+                    ("Tag ID", str(tag_id)),
                 ])
-                return self.CATEGORY_TAGS["social"]
+                return tag_id
+
+            # Fallback to social
+            logger.warning("📰 Invalid Category", [
+                ("Category", category),
+                ("Valid Options", ", ".join(valid_categories)),
+                ("Fallback", "social"),
+            ])
+            return self.CATEGORY_TAGS["social"]
 
         except Exception as e:
             logger.warning("📰 Categorization Failed", [
