@@ -151,6 +151,7 @@ async def _init_content_rotation(bot: "OthmanBot") -> None:
         news_scraper=bot.news_scraper,
         soccer_scraper=bot.soccer_scraper,
         gaming_scraper=bot.gaming_scraper,
+        bot=bot,
     )
 
     # Start the rotation scheduler
@@ -174,7 +175,7 @@ async def _init_debates_scheduler(bot: "OthmanBot") -> None:
         logger.info("🔥 General Channel Not Configured - Skipping Debates Scheduler")
         return
 
-    bot.debates_scheduler = DebatesScheduler(lambda: post_hot_debate(bot))
+    bot.debates_scheduler = DebatesScheduler(lambda: post_hot_debate(bot), bot=bot)
     await bot.debates_scheduler.start(post_immediately=False)
     logger.tree("Automated Hot Debates Started", [
         ("Interval", "every 3 hours"),

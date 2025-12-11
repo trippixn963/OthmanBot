@@ -177,6 +177,13 @@ class OthmanBot(commands.Bot):
         # =================================================================
         self.presence_task: Optional[asyncio.Task] = None
 
+        # =================================================================
+        # Disabled State
+        # DESIGN: When True, all handlers and schedulers stop processing
+        # Bot stays connected for remote re-enabling via /toggle command
+        # =================================================================
+        self.disabled: bool = False
+
     # =========================================================================
     # Properties
     # =========================================================================
@@ -195,8 +202,9 @@ class OthmanBot(commands.Bot):
         # Initialize debates service
         self.debates_service = DebatesService()
 
-        # Load debates cog
+        # Load command cogs
         await self.load_extension("src.commands.debates")
+        await self.load_extension("src.commands.admin")
 
         # Note: Commands will be synced in on_ready for instant guild-specific sync
         logger.info("Bot setup complete - commands will sync on ready")
@@ -207,14 +215,20 @@ class OthmanBot(commands.Bot):
 
     async def on_message(self, message: discord.Message) -> None:
         """Event handler for messages."""
+        if self.disabled:
+            return
         await on_message_handler(self, message)
 
     async def on_thread_create(self, thread: discord.Thread) -> None:
         """Event handler for thread creation."""
+        if self.disabled:
+            return
         await on_thread_create_handler(self, thread)
 
     async def on_thread_delete(self, thread: discord.Thread) -> None:
         """Event handler for thread deletion - triggers auto-renumbering."""
+        if self.disabled:
+            return
         await on_thread_delete_handler(self, thread)
 
     async def on_reaction_add(
@@ -223,6 +237,8 @@ class OthmanBot(commands.Bot):
         user: discord.User
     ) -> None:
         """Event handler for reaction additions."""
+        if self.disabled:
+            return
         await on_reaction_add_handler(self, reaction, user)
         await on_debate_reaction_add(self, reaction, user)
 
@@ -232,14 +248,20 @@ class OthmanBot(commands.Bot):
         user: discord.User
     ) -> None:
         """Event handler for reaction removals."""
+        if self.disabled:
+            return
         await on_debate_reaction_remove(self, reaction, user)
 
     async def on_member_remove(self, member: discord.Member) -> None:
         """Event handler for member leaving the server."""
+        if self.disabled:
+            return
         await on_member_remove_handler(self, member)
 
     async def on_member_join(self, member: discord.Member) -> None:
         """Event handler for member joining the server."""
+        if self.disabled:
+            return
         await on_member_join_handler(self, member)
 
     async def close(self) -> None:

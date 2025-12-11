@@ -59,6 +59,7 @@ class ContentRotationScheduler:
         news_scraper: Any,
         soccer_scraper: Any,
         gaming_scraper: Any,
+        bot: Any = None,
     ) -> None:
         """
         Initialize the content rotation scheduler.
@@ -70,7 +71,9 @@ class ContentRotationScheduler:
             news_scraper: News scraper instance (to check for new content)
             soccer_scraper: Soccer scraper instance (to check for new content)
             gaming_scraper: Gaming scraper instance (to check for new content)
+            bot: Bot instance (to check disabled state)
         """
+        self.bot = bot
         self.callbacks = {
             ContentType.NEWS: news_callback,
             ContentType.SOCCER: soccer_callback,
@@ -222,6 +225,11 @@ class ContentRotationScheduler:
         """
         while self.is_running:
             try:
+                # Check if bot is disabled
+                if self.bot and getattr(self.bot, 'disabled', False):
+                    await asyncio.sleep(60)  # Check again in 1 minute
+                    continue
+
                 next_post_time: datetime = self._calculate_next_post_time()
                 wait_seconds: float = (next_post_time - datetime.now()).total_seconds()
 
@@ -233,6 +241,10 @@ class ContentRotationScheduler:
                         ("In", f"{wait_seconds / 60:.1f} minutes"),
                     ])
                     await asyncio.sleep(wait_seconds)
+
+                # Check again after sleep in case bot was disabled while waiting
+                if self.bot and getattr(self.bot, 'disabled', False):
+                    continue
 
                 if self.is_running:
                     await self._post_next_content()
