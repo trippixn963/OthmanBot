@@ -266,6 +266,9 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
     ALSO handles thread starter messages (first message in thread) for numbering
 
     ACCESS CONTROL: Checks if users have reacted with ✅ to the analytics embed before allowing them to post
+
+    NOTE: When bot is disabled, still tracks participation for database accuracy,
+    but skips all other actions (reactions, access control enforcement, analytics updates).
     """
     # Null safety checks for Discord API objects
     if message is None or message.author is None or message.channel is None:
@@ -292,6 +295,29 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
     is_thread_starter = (message.id == message.channel.id)
     if is_thread_starter:
         return  # Already processed by on_thread_create_handler
+
+    # Check if bot is disabled - still track participation but skip everything else
+    bot_disabled = getattr(bot, 'disabled', False)
+
+    # Track participation for leaderboard ALWAYS (even when disabled)
+    # This ensures database stays accurate
+    if hasattr(bot, 'debates_service') and bot.debates_service is not None:
+        try:
+            await bot.debates_service.db.increment_participation_async(
+                message.channel.id, message.author.id
+            )
+        except sqlite3.Error as e:
+            logger.warning("📊 Failed To Track Participation (DB Error)", [
+                ("Error", str(e)),
+            ])
+        except (asyncio.TimeoutError, asyncio.CancelledError) as e:
+            logger.warning("📊 Failed To Track Participation (Async Error)", [
+                ("Error", str(e)),
+            ])
+
+    # If bot is disabled, skip all other actions (reactions, access control, analytics)
+    if bot_disabled:
+        return
 
     # DEBATE BAN CHECK: Check if user is banned from this thread or all debates
     if hasattr(bot, 'debates_service') and bot.debates_service is not None:
@@ -434,21 +460,6 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
             ("Length", f"{len(message.content)} chars"),
             ("Min Required", f"{min_length} chars"),
         ])
-
-    # Track participation for leaderboard (count all messages in debate threads)
-    if hasattr(bot, 'debates_service') and bot.debates_service is not None:
-        try:
-            await bot.debates_service.db.increment_participation_async(
-                message.channel.id, message.author.id
-            )
-        except sqlite3.Error as e:
-            logger.warning("📊 Failed To Track Participation (DB Error)", [
-                ("Error", str(e)),
-            ])
-        except (asyncio.TimeoutError, asyncio.CancelledError) as e:
-            logger.warning("📊 Failed To Track Participation (Async Error)", [
-                ("Error", str(e)),
-            ])
 
     # ALWAYS update analytics embed after any valid message
     await update_analytics_embed(bot, message.channel)
