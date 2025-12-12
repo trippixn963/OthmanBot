@@ -99,9 +99,11 @@ class MiniTreeLogger:
         self.logs_base_dir = Path(__file__).parent.parent.parent / "logs"
         self.logs_base_dir.mkdir(exist_ok=True)
 
+        # Timezone for date calculations
+        self._timezone = ZoneInfo("America/New_York")
+
         # Get current date in EST timezone
-        eastern = ZoneInfo("America/New_York")
-        self.current_date = datetime.now(eastern).strftime("%Y-%m-%d")
+        self.current_date = datetime.now(self._timezone).strftime("%Y-%m-%d")
 
         # Create daily folder (e.g., logs/2025-12-06/)
         self.log_dir = self.logs_base_dir / self.current_date
@@ -120,6 +122,33 @@ class MiniTreeLogger:
     # =========================================================================
     # Private Methods - Setup
     # =========================================================================
+
+    def _check_date_rotation(self) -> None:
+        """Check if date has changed and rotate to new log folder if needed."""
+        current_date = datetime.now(self._timezone).strftime("%Y-%m-%d")
+
+        if current_date != self.current_date:
+            # Date has changed - rotate to new folder
+            self.current_date = current_date
+            self.log_dir = self.logs_base_dir / self.current_date
+            self.log_dir.mkdir(exist_ok=True)
+            self.log_file = self.log_dir / f"Othman-{self.current_date}.log"
+            self.error_file = self.log_dir / f"Othman-Errors-{self.current_date}.log"
+
+            # Write continuation header to new log files
+            header = (
+                f"\n{'='*60}\n"
+                f"LOG ROTATION - Continuing session {self.run_id}\n"
+                f"{self._get_timestamp()}\n"
+                f"{'='*60}\n\n"
+            )
+            try:
+                with open(self.log_file, "a", encoding="utf-8") as f:
+                    f.write(header)
+                with open(self.error_file, "a", encoding="utf-8") as f:
+                    f.write(header)
+            except (OSError, IOError):
+                pass
 
     def _cleanup_old_logs(self) -> None:
         """Clean up log folders older than retention period (7 days)."""
@@ -190,6 +219,9 @@ class MiniTreeLogger:
 
     def _write(self, message: str, emoji: str = "", include_timestamp: bool = True) -> None:
         """Write log message to both console and file."""
+        # Check if we need to rotate to a new date folder
+        self._check_date_rotation()
+
         # Strip any emojis from the message to avoid duplicates
         clean_message = self._strip_emojis(message)
 
@@ -221,6 +253,9 @@ class MiniTreeLogger:
 
     def _write_error(self, message: str, emoji: str = "", include_timestamp: bool = True) -> None:
         """Write error message to both main log and error log file."""
+        # Check if we need to rotate to a new date folder
+        self._check_date_rotation()
+
         clean_message = self._strip_emojis(message)
 
         if include_timestamp:

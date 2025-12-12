@@ -178,6 +178,13 @@ class OthmanBot(commands.Bot):
         self.presence_task: Optional[asyncio.Task] = None
 
         # =================================================================
+        # Ready State Guard
+        # DESIGN: Prevents on_ready from running multiple times
+        # Discord can fire on_ready multiple times (reconnects, etc.)
+        # =================================================================
+        self._ready_initialized: bool = False
+
+        # =================================================================
         # Disabled State
         # DESIGN: When True, all handlers and schedulers stop processing
         # Bot stays connected for remote re-enabling via /toggle command
@@ -210,7 +217,16 @@ class OthmanBot(commands.Bot):
         logger.info("Bot setup complete - commands will sync on ready")
 
     async def on_ready(self) -> None:
-        """Event handler called when bot is ready."""
+        """Event handler called when bot is ready.
+
+        NOTE: Discord can fire on_ready multiple times (reconnects, resume, etc.)
+        We guard against re-initialization to prevent duplicate schedulers.
+        """
+        if self._ready_initialized:
+            logger.info("🔄 Bot Reconnected (skipping re-initialization)")
+            return
+
+        self._ready_initialized = True
         await on_ready_handler(self)
 
     async def on_message(self, message: discord.Message) -> None:
