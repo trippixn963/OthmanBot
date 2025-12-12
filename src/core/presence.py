@@ -96,7 +96,18 @@ async def update_presence(bot: "OthmanBot", status_text: Optional[str] = None) -
     activity: discord.Activity = discord.Activity(
         type=discord.ActivityType.watching, name=status_text
     )
-    await bot.change_presence(activity=activity)
+    try:
+        await bot.change_presence(activity=activity)
+    except Exception as e:
+        # Ignore connection errors during shutdown/reconnection
+        # Common errors: "Cannot write to closing transport", "Not connected"
+        error_msg = str(e).lower()
+        if "transport" in error_msg or "not connected" in error_msg or "closed" in error_msg:
+            logger.debug(f"Presence update skipped (connection issue): {e}")
+        else:
+            logger.warning("Failed To Update Presence", [
+                ("Error", str(e)),
+            ])
 
 
 # =============================================================================
