@@ -62,6 +62,7 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import os
 import asyncio
 from typing import Optional
 
@@ -88,6 +89,15 @@ from src.handlers.debates import (
     on_member_join_handler,
 )
 from src.services.debates import DebatesService
+from src.services.webhook_alerts import get_alert_service
+
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+# Status channel ID for online/offline indicator (in mods server)
+STATUS_CHANNEL_ID = int(os.getenv("STATUS_CHANNEL_ID", "0"))
 
 
 # =============================================================================
@@ -190,6 +200,12 @@ class OthmanBot(commands.Bot):
         # Bot stays connected for remote re-enabling via /toggle command
         # =================================================================
         self.disabled: bool = False
+
+        # =================================================================
+        # Webhook Alerts Service
+        # DESIGN: Singleton service for Discord webhook notifications
+        # =================================================================
+        self.alert_service = get_alert_service()
 
     # =========================================================================
     # Properties
@@ -297,6 +313,39 @@ class OthmanBot(commands.Bot):
         """Cleanup when bot is shutting down."""
         await shutdown_handler(self)
         await super().close()
+
+    # =========================================================================
+    # Status Channel
+    # =========================================================================
+
+    async def update_status_channel(self, online: bool) -> None:
+        """
+        Update the status channel name to indicate bot online/offline status.
+
+        Args:
+            online: True for online (green), False for offline (red)
+        """
+        if not STATUS_CHANNEL_ID:
+            return
+
+        try:
+            channel = self.get_channel(STATUS_CHANNEL_ID)
+            if not channel:
+                logger.debug("Status Channel Not Found", [
+                    ("Channel ID", str(STATUS_CHANNEL_ID)),
+                ])
+                return
+
+            new_name = "🟢・status" if online else "🔴・status"
+            await channel.edit(name=new_name)
+            logger.info("Status Channel Updated", [
+                ("Status", "Online" if online else "Offline"),
+                ("Channel", new_name),
+            ])
+        except Exception as e:
+            logger.warning("Failed To Update Status Channel", [
+                ("Error", str(e)),
+            ])
 
 
 # =============================================================================

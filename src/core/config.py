@@ -46,6 +46,7 @@ OPTIONAL_ENV_VARS: dict[str, str] = {
     "GAMING_CHANNEL_ID": "Gaming news channel",
     "GENERAL_CHANNEL_ID": "General announcements channel",
     "SYRIA_GUILD_ID": "Main Discord server ID",
+    "MODS_GUILD_ID": "Moderators Discord server ID (optional)",
     "DEBATES_FORUM_ID": "Debates forum channel ID",
     "MODERATOR_ROLE_ID": "Moderator role ID",
     "DEVELOPER_ID": "Developer user ID",
@@ -239,6 +240,20 @@ def _load_required_id(env_var: str) -> int:
     return int(value)
 
 
+def _load_optional_id(env_var: str) -> Optional[int]:
+    """Load an optional Discord ID from environment variable.
+
+    Returns:
+        The ID as int if set, None if not set.
+    """
+    value = os.getenv(env_var)
+    if not value:
+        return None
+    if not value.isdigit():
+        return None  # Skip invalid values silently for optional IDs
+    return int(value)
+
+
 def _load_tag_dict(env_var: str) -> dict[str, int]:
     """Load a tag dictionary from a JSON-formatted environment variable.
 
@@ -262,6 +277,12 @@ def _load_tag_dict(env_var: str) -> dict[str, int]:
 
 
 SYRIA_GUILD_ID: int = _load_required_id("SYRIA_GUILD_ID")
+MODS_GUILD_ID: Optional[int] = _load_optional_id("MODS_GUILD_ID")
+
+# Build list of allowed guild IDs for auto-leave protection
+ALLOWED_GUILD_IDS: set[int] = {SYRIA_GUILD_ID}
+if MODS_GUILD_ID:
+    ALLOWED_GUILD_IDS.add(MODS_GUILD_ID)
 
 
 # =============================================================================
@@ -386,6 +407,8 @@ __all__ = [
     "ANALYTICS_CACHE_CLEANUP_AGE",
     # IDs
     "SYRIA_GUILD_ID",
+    "MODS_GUILD_ID",
+    "ALLOWED_GUILD_IDS",
     "MODERATOR_ROLE_ID",
     "DEVELOPER_ID",
     "DEBATES_FORUM_ID",
