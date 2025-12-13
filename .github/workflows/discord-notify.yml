@@ -61,11 +61,14 @@ jobs:
       - name: Send Discord notification
         env:
           WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          COMMIT_TITLE: ${{ steps.commit.outputs.title }}
+          COMMIT_BODY: ${{ steps.commit.outputs.body }}
+          COMMIT_FILES: ${{ steps.commit.outputs.files }}
         run: |
-          # Escape special characters for JSON
-          TITLE=$(echo '${{ steps.commit.outputs.title }}' | sed 's/"/\\"/g' | head -c 200)
-          BODY=$(echo '${{ steps.commit.outputs.body }}' | sed 's/- //g' | sed 's/"/\\"/g' | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
-          FILES=$(echo '${{ steps.commit.outputs.files }}' | sed 's/"/\\"/g')
+          # Escape special characters for JSON using env vars (safer for special chars)
+          TITLE=$(echo "$COMMIT_TITLE" | sed 's/"/\\"/g' | head -c 200)
+          BODY=$(echo "$COMMIT_BODY" | sed 's/- //g' | sed 's/"/\\"/g' | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
+          FILES=$(echo "$COMMIT_FILES" | sed 's/"/\\"/g')
 
           # Build description
           if [ -n "$BODY" ]; then
