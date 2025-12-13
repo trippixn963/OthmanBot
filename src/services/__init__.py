@@ -25,6 +25,12 @@ from src.services.schedulers import (
     ContentType,
 )
 
+# Webhook Alerts
+from src.services.webhook_alerts import (
+    WebhookAlertService,
+    get_alert_service,
+)
+
 __all__ = [
     # Scrapers
     "BaseScraper",
@@ -37,4 +43,7 @@ __all__ = [
     "BaseScheduler",
     "ContentRotationScheduler",
     "ContentType",
+    # Webhook Alerts
+    "WebhookAlertService",
+    "get_alert_service",
 ]

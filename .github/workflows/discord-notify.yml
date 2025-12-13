@@ -17,7 +17,29 @@ jobs:
         id: commit
         run: |
           # Get title (first line)
-          echo "title=$(git log -1 --pretty=%s)" >> $GITHUB_OUTPUT
+          TITLE=$(git log -1 --pretty=%s)
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
+          # Determine commit type and color
+          if echo "$TITLE" | grep -qiE '^fix|bug|patch'; then
+            echo "color=15158332" >> $GITHUB_OUTPUT  # Red for fixes
+            echo "type=🐛 Bug Fix" >> $GITHUB_OUTPUT
+          elif echo "$TITLE" | grep -qiE '^feat|add|new'; then
+            echo "color=3066993" >> $GITHUB_OUTPUT   # Green for features
+            echo "type=✨ New Feature" >> $GITHUB_OUTPUT
+          elif echo "$TITLE" | grep -qiE '^refactor|clean|improve'; then
+            echo "color=10181046" >> $GITHUB_OUTPUT  # Purple for refactor
+            echo "type=♻️ Refactor" >> $GITHUB_OUTPUT
+          elif echo "$TITLE" | grep -qiE '^doc|readme'; then
+            echo "color=3447003" >> $GITHUB_OUTPUT   # Blue for docs
+            echo "type=📚 Documentation" >> $GITHUB_OUTPUT
+          elif echo "$TITLE" | grep -qiE '^test'; then
+            echo "color=16776960" >> $GITHUB_OUTPUT  # Yellow for tests
+            echo "type=🧪 Tests" >> $GITHUB_OUTPUT
+          else
+            echo "color=9807270" >> $GITHUB_OUTPUT   # Gray for other
+            echo "type=📝 Update" >> $GITHUB_OUTPUT
+          fi
 
           # Get body and convert bullet points to numbered list
           echo "body<<EOF" >> $GITHUB_OUTPUT
@@ -26,7 +48,13 @@ jobs:
 
           echo "author=$(git log -1 --pretty=%an)" >> $GITHUB_OUTPUT
           echo "sha=$(git log -1 --pretty=%h)" >> $GITHUB_OUTPUT
-          echo "files=$(git diff --name-only HEAD~1 HEAD | head -10 | tr '\n' ', ' | sed 's/,$//')" >> $GITHUB_OUTPUT
+
+          # Get file count and list
+          FILE_COUNT=$(git diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ')
+          echo "file_count=$FILE_COUNT" >> $GITHUB_OUTPUT
+          echo "files=$(git diff --name-only HEAD~1 HEAD | head -8 | tr '\n' ', ' | sed 's/,$//')" >> $GITHUB_OUTPUT
+
+          # Get stats
           STATS=$(git diff --shortstat HEAD~1 HEAD | sed 's/ files\? changed//' | sed 's/ insertions\?(+)/+/' | sed 's/ deletions\?(-)/−/' | tr -d ' ')
           echo "stats=${STATS:-no changes}" >> $GITHUB_OUTPUT
 
@@ -36,11 +64,10 @@ jobs:
         run: |
           # Escape special characters for JSON
           TITLE=$(echo '${{ steps.commit.outputs.title }}' | sed 's/"/\\"/g' | head -c 200)
-          # Remove bullet prefix, escape quotes, and convert newlines to \n for JSON
           BODY=$(echo '${{ steps.commit.outputs.body }}' | sed 's/- //g' | sed 's/"/\\"/g' | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
           FILES=$(echo '${{ steps.commit.outputs.files }}' | sed 's/"/\\"/g')
 
-          # Build description with title and numbered body in code block
+          # Build description
           if [ -n "$BODY" ]; then
             DESC="**$TITLE**\n\n\`\`\`\n$BODY\`\`\`"
           else
@@ -49,39 +76,54 @@ jobs:
 
           curl -H "Content-Type: application/json" -X POST "$WEBHOOK_URL" -d "{
             \"embeds\": [{
-              \"title\": \"OthmanBot - Code Update\",
+              \"title\": \"${{ steps.commit.outputs.type }}\",
               \"description\": \"$DESC\",
-              \"color\": 5814783,
+              \"color\": ${{ steps.commit.outputs.color }},
               \"fields\": [
                 {
-                  \"name\": \"Files Changed\",
-                  \"value\": \"\`$FILES\`\",
+                  \"name\": \"📁 Files Changed\",
+                  \"value\": \"\`${{ steps.commit.outputs.file_count }}\` files\n\`\`\`$FILES\`\`\`\",
                   \"inline\": false
                 },
                 {
-                  \"name\": \"Commit\",
+                  \"name\": \"🔗 Commit\",
                   \"value\": \"[\`${{ steps.commit.outputs.sha }}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})\",
                   \"inline\": true
                 },
                 {
-                  \"name\": \"Author\",
-                  \"value\": \"${{ steps.commit.outputs.author }}\",
-                  \"inline\": true
-                },
-                {
-                  \"name\": \"Changes\",
+                  \"name\": \"📊 Changes\",
                   \"value\": \"\`${{ steps.commit.outputs.stats }}\`\",
                   \"inline\": true
                 },
                 {
-                  \"name\": \"Compare\",
+                  \"name\": \"🌿 Branch\",
+                  \"value\": \"\`${{ github.ref_name }}\`\",
+                  \"inline\": true
+                },
+                {
+                  \"name\": \"🔍 Compare\",
                   \"value\": \"[View Diff](https://github.com/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.sha }})\",
                   \"inline\": true
                 }
               ],
+              \"author\": {
+                \"name\": \"${{ steps.commit.outputs.author }}\",
+                \"icon_url\": \"https://github.com/${{ github.actor }}.png\"
+              },
               \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
-              \"thumbnail\": {
-                \"url\": \"https://cdn-icons-png.flaticon.com/512/25/25231.png\"
+              \"footer\": {
+                \"text\": \"OthmanBot • ${{ github.repository }}\",
+                \"icon_url\": \"https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png\"
               }
             }]
           }"
+
+      - name: Update category name with commit ID
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          MODS_CATEGORY_ID: ${{ secrets.MODS_CATEGORY_ID }}
+        run: |
+          curl -s -X PATCH "https://discord.com/api/v10/channels/${MODS_CATEGORY_ID}" \
+            -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\": \"OTHMAN ・${{ steps.commit.outputs.sha }}\"}"

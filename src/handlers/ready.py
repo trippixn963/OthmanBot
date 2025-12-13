@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, List
 import discord
 
 from src.core.logger import logger
-from src.core.config import SYRIA_GUILD_ID
+from src.core.config import SYRIA_GUILD_ID, ALLOWED_GUILD_IDS
 from src.core.health import HealthCheckServer
 from src.core.presence import update_presence, presence_update_loop
 from src.core.backup import BackupScheduler
@@ -119,6 +119,12 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
     # Start health check HTTP server
     bot.health_server = HealthCheckServer(bot)
     await bot.health_server.start()
+
+    # Initialize webhook alerts
+    await _init_webhook_alerts(bot)
+
+    # Update status channel to show online
+    await bot.update_status_channel(online=True)
 
 
 # =============================================================================
@@ -277,6 +283,29 @@ async def _init_backup_scheduler(bot: "OthmanBot") -> None:
     await bot.backup_scheduler.start(run_immediately=True)
 
 
+async def _init_webhook_alerts(bot: "OthmanBot") -> None:
+    """Initialize webhook alert service.
+
+    DESIGN: Sends status alerts to Discord webhook
+    - Startup alert on bot ready
+    - Hourly status alerts with system health
+    - Shutdown alert on bot close
+    - Error alerts (no pings)
+    """
+    # Set bot reference (alert_service is already created in bot.__init__)
+    bot.alert_service.set_bot(bot)
+
+    # Send startup alert
+    await bot.alert_service.send_startup_alert()
+
+    # Start hourly status alerts
+    await bot.alert_service.start_hourly_alerts()
+
+    logger.tree("Webhook Alerts Initialized", [
+        ("Status", "Enabled" if bot.alert_service.enabled else "Disabled"),
+    ], emoji="🔔")
+
+
 async def _init_leaderboard(bot: "OthmanBot") -> None:
     """Initialize debates leaderboard manager.
 
@@ -307,12 +336,12 @@ async def _init_leaderboard(bot: "OthmanBot") -> None:
 
 
 async def _leave_unauthorized_guilds(bot: "OthmanBot") -> None:
-    """Leave any guilds that aren't the authorized SYRIA_GUILD_ID.
+    """Leave any guilds that aren't in the ALLOWED_GUILD_IDS set.
 
-    DESIGN: Ensures bot only operates in the configured guild
+    DESIGN: Ensures bot only operates in configured guilds (Syria + Mods)
     Runs at startup to automatically remove bot from unauthorized servers
     """
-    unauthorized_guilds = [g for g in bot.guilds if g.id != SYRIA_GUILD_ID]
+    unauthorized_guilds = [g for g in bot.guilds if g.id not in ALLOWED_GUILD_IDS]
 
     if not unauthorized_guilds:
         return

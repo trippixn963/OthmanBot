@@ -12,6 +12,7 @@ import asyncio
 from typing import TYPE_CHECKING, List, Tuple, Callable, Any
 
 from src.core.logger import logger
+from src.services.webhook_alerts import get_alert_service
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -69,6 +70,24 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
     logger.info("Shutting Down Othman Bot", [
         ("Timeout", f"{SHUTDOWN_TIMEOUT}s"),
     ])
+
+    # Update status channel to show offline
+    try:
+        await bot.update_status_channel(online=False)
+    except Exception as e:
+        logger.debug("Status Channel Update Failed", [
+            ("Error", str(e)),
+        ])
+
+    # Stop hourly alerts and send shutdown alert to webhook
+    try:
+        alert_service = get_alert_service()
+        alert_service.stop_hourly_alerts()
+        await alert_service.send_shutdown_alert()
+    except Exception as e:
+        logger.debug("Shutdown Alert Failed", [
+            ("Error", str(e)),
+        ])
 
     cleanup_tasks: List[Tuple[str, Any]] = []
 
