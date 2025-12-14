@@ -9,7 +9,7 @@ Server: discord.gg/syria
 """
 
 import asyncio
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, Awaitable, Callable, List
 
 import discord
 
@@ -60,7 +60,7 @@ SERVICE_INIT_TIMEOUT: float = 30.0
 
 async def _safe_init(
     name: str,
-    init_func,
+    init_func: Callable[["OthmanBot"], Awaitable[None]],
     bot: "OthmanBot",
     timeout: float = SERVICE_INIT_TIMEOUT
 ) -> bool:
@@ -300,6 +300,8 @@ async def _init_karma_reconciliation(bot: "OthmanBot") -> None:
     reconciliation_task.add_done_callback(_handle_task_exception)
     if not hasattr(bot, '_background_tasks'):
         bot._background_tasks: List[asyncio.Task] = []
+    # Cleanup completed tasks to prevent memory leak
+    _cleanup_completed_tasks(bot)
     bot._background_tasks.append(reconciliation_task)
 
     # Start nightly scheduler
@@ -322,6 +324,12 @@ def _handle_task_exception(task: asyncio.Task) -> None:
             ])
     except asyncio.CancelledError:
         pass
+
+
+def _cleanup_completed_tasks(bot: "OthmanBot") -> None:
+    """Remove completed tasks from the background tasks list to prevent memory leak."""
+    if hasattr(bot, '_background_tasks'):
+        bot._background_tasks = [t for t in bot._background_tasks if not t.done()]
 
 
 async def _run_startup_reconciliation(bot: "OthmanBot") -> None:

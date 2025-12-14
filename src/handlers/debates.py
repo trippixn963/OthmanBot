@@ -135,30 +135,33 @@ class AnalyticsThrottleCache:
     async def _cleanup_unlocked(self) -> None:
         """
         Remove stale entries from cache. Must be called with lock held.
+        Uses atomic dict replacement to avoid modification during iteration.
         """
         now = datetime.now()
         stale_threshold = now - timedelta(seconds=self._cleanup_age)
 
-        # Remove entries older than cleanup age
-        stale_keys = [
-            thread_id for thread_id, last_update in list(self._last_update.items())
-            if last_update < stale_threshold
-        ]
+        # Build new dict with only fresh entries (atomic replacement)
+        fresh_entries = {
+            thread_id: last_update
+            for thread_id, last_update in self._last_update.items()
+            if last_update >= stale_threshold
+        }
 
-        for key in stale_keys:
-            del self._last_update[key]
+        removed_count = len(self._last_update) - len(fresh_entries)
 
-        # If still over max, remove oldest entries
-        if len(self._last_update) > self._max_size:
-            sorted_entries = sorted(self._last_update.items(), key=lambda x: x[1])
-            entries_to_remove = len(self._last_update) - self._max_size
-            for thread_id, _ in sorted_entries[:entries_to_remove]:
-                del self._last_update[thread_id]
-                stale_keys.append(thread_id)
+        # If still over max, keep only the newest entries
+        if len(fresh_entries) > self._max_size:
+            sorted_entries = sorted(fresh_entries.items(), key=lambda x: x[1], reverse=True)
+            extra_removed = len(fresh_entries) - self._max_size
+            fresh_entries = dict(sorted_entries[:self._max_size])
+            removed_count += extra_removed
 
-        if stale_keys:
+        # Atomic replacement
+        self._last_update = fresh_entries
+
+        if removed_count > 0:
             logger.debug("🧹 Cleaned Analytics Cache", [
-                ("Removed", str(len(stale_keys))),
+                ("Removed", str(removed_count)),
                 ("Remaining", str(len(self._last_update))),
             ])
 
@@ -263,8 +266,8 @@ async def update_analytics_embed(bot: "OthmanBot", thread: discord.Thread, force
         ])
 
 
-def get_next_debate_number() -> int:
-    """Get and increment the debate counter."""
+def _get_next_debate_number_sync() -> int:
+    """Synchronous helper for get_next_debate_number."""
     DEBATE_COUNTER_FILE.parent.mkdir(exist_ok=True)
 
     try:
@@ -286,6 +289,11 @@ def get_next_debate_number() -> int:
             ("Error", str(e)),
         ])
         return 1
+
+
+async def get_next_debate_number() -> int:
+    """Get and increment the debate counter (non-blocking)."""
+    return await asyncio.to_thread(_get_next_debate_number_sync)
 
 
 def is_debates_forum_message(channel) -> bool:
@@ -681,7 +689,7 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
             return
 
         # Get next debate number and rename thread
-        debate_number = get_next_debate_number()
+        debate_number = await get_next_debate_number()
 
         # Only add number if not already numbered
         if not original_title.split("|")[0].strip().isdigit():
@@ -1234,16 +1242,15 @@ async def _renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int
 
         # Update the debate counter to reflect the new highest number
         if threads_to_renumber:
-            # The new highest number is the old highest minus 1
-            highest_after_renumber = max(t[1] for t in threads_to_renumber) - 1
-            # But we need to account for all threads, not just renumbered ones
+            # Build a lookup dict for O(1) access instead of O(n) list comprehension
+            renumbered_ids = {t[0].id: t[1] for t in threads_to_renumber}
+
             # Find the actual highest number now
             max_number = 0
             for thread in all_threads:
-                if thread.id in [t[0].id for t in threads_to_renumber]:
-                    # This thread was renumbered
-                    old_num = next(t[1] for t in threads_to_renumber if t[0].id == thread.id)
-                    max_number = max(max_number, old_num - 1)
+                if thread.id in renumbered_ids:
+                    # This thread was renumbered - use old number - 1
+                    max_number = max(max_number, renumbered_ids[thread.id] - 1)
                 else:
                     num = _extract_debate_number(thread.name)
                     if num is not None:

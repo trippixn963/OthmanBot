@@ -143,7 +143,7 @@ class RenameCog(commands.Cog):
 
         try:
             # Get next debate number
-            debate_number = get_next_debate_number()
+            debate_number = await get_next_debate_number()
 
             # Create new title with number prefix
             new_title = f"{debate_number} | {title}"

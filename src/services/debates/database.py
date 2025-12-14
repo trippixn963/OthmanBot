@@ -194,6 +194,13 @@ class DebatesDatabase:
     # Current schema version - increment when adding migrations
     SCHEMA_VERSION = 3
 
+    # Valid table names for SQL injection prevention
+    VALID_TABLES = frozenset({
+        'votes', 'users', 'debate_threads', 'debate_bans',
+        'debate_participation', 'debate_creators', 'case_logs',
+        'analytics_messages', 'schema_version'
+    })
+
     def _init_database(self) -> None:
         """Create database tables and run migrations."""
         with self._lock:
@@ -406,6 +413,9 @@ class DebatesDatabase:
 
     def _column_exists(self, cursor: sqlite3.Cursor, table: str, column: str) -> bool:
         """Check if a column exists in a table."""
+        # Validate table name to prevent SQL injection
+        if table not in self.VALID_TABLES:
+            raise ValueError(f"Invalid table name: {table}")
         cursor.execute(f"PRAGMA table_info({table})")
         columns = [col[1] for col in cursor.fetchall()]
         return column in columns
