@@ -107,6 +107,7 @@ class KarmaReconciliationScheduler:
                         ])
                     except Exception as e:
                         logger.error("Nightly Karma Reconciliation Failed", [
+                            ("Error Type", type(e).__name__),
                             ("Error", str(e)),
                         ])
 
@@ -114,6 +115,7 @@ class KarmaReconciliationScheduler:
                 break
             except Exception as e:
                 logger.error("Error In Karma Reconciliation Scheduler", [
+                    ("Error Type", type(e).__name__),
                     ("Error", str(e)),
                 ])
                 # Wait 1 hour before retrying on error

@@ -1137,58 +1137,70 @@ class DebatesDatabase:
             cursor = conn.cursor()
             deleted = {}
 
-            # Delete from users table (karma)
-            cursor.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
-            deleted["karma"] = cursor.rowcount
+            try:
+                # Begin explicit transaction for atomicity
+                cursor.execute("BEGIN IMMEDIATE")
 
-            # Delete votes cast by this user (and update affected users' karma)
-            # First, get all votes this user made to reverse them
-            cursor.execute(
-                "SELECT author_id, vote_type FROM votes WHERE voter_id = ?",
-                (user_id,)
-            )
-            votes_made = cursor.fetchall()
-            for author_id, vote_type in votes_made:
-                # Reverse the karma effect
-                if vote_type > 0:
-                    cursor.execute(
-                        """UPDATE users SET
-                           total_karma = total_karma - 1,
-                           upvotes_received = MAX(0, upvotes_received - 1)
-                           WHERE user_id = ?""",
-                        (author_id,)
-                    )
-                else:
-                    cursor.execute(
-                        """UPDATE users SET
-                           total_karma = total_karma + 1,
-                           downvotes_received = MAX(0, downvotes_received - 1)
-                           WHERE user_id = ?""",
-                        (author_id,)
-                    )
+                # Delete from users table (karma)
+                cursor.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+                deleted["karma"] = cursor.rowcount
 
-            cursor.execute("DELETE FROM votes WHERE voter_id = ?", (user_id,))
-            deleted["votes_cast"] = cursor.rowcount
+                # Delete votes cast by this user (and update affected users' karma)
+                # First, get all votes this user made to reverse them
+                cursor.execute(
+                    "SELECT author_id, vote_type FROM votes WHERE voter_id = ?",
+                    (user_id,)
+                )
+                votes_made = cursor.fetchall()
+                for author_id, vote_type in votes_made:
+                    # Reverse the karma effect
+                    if vote_type > 0:
+                        cursor.execute(
+                            """UPDATE users SET
+                               total_karma = total_karma - 1,
+                               upvotes_received = MAX(0, upvotes_received - 1)
+                               WHERE user_id = ?""",
+                            (author_id,)
+                        )
+                    else:
+                        cursor.execute(
+                            """UPDATE users SET
+                               total_karma = total_karma + 1,
+                               downvotes_received = MAX(0, downvotes_received - 1)
+                               WHERE user_id = ?""",
+                            (author_id,)
+                        )
 
-            # Delete votes received on this user's messages
-            cursor.execute("DELETE FROM votes WHERE author_id = ?", (user_id,))
-            deleted["votes_received"] = cursor.rowcount
+                cursor.execute("DELETE FROM votes WHERE voter_id = ?", (user_id,))
+                deleted["votes_cast"] = cursor.rowcount
 
-            # Delete debate bans
-            cursor.execute("DELETE FROM debate_bans WHERE user_id = ?", (user_id,))
-            deleted["bans"] = cursor.rowcount
+                # Delete votes received on this user's messages
+                cursor.execute("DELETE FROM votes WHERE author_id = ?", (user_id,))
+                deleted["votes_received"] = cursor.rowcount
 
-            conn.commit()
+                # Delete debate bans
+                cursor.execute("DELETE FROM debate_bans WHERE user_id = ?", (user_id,))
+                deleted["bans"] = cursor.rowcount
 
-            logger.info("User Data Deletion Complete", [
-                ("User ID", str(user_id)),
-                ("Karma Records", str(deleted.get("karma", 0))),
-                ("Votes Cast", str(deleted.get("votes_cast", 0))),
-                ("Votes Received", str(deleted.get("votes_received", 0))),
-                ("Bans", str(deleted.get("bans", 0))),
-            ])
+                conn.commit()
 
-            return deleted
+                logger.info("User Data Deletion Complete", [
+                    ("User ID", str(user_id)),
+                    ("Karma Records", str(deleted.get("karma", 0))),
+                    ("Votes Cast", str(deleted.get("votes_cast", 0))),
+                    ("Votes Received", str(deleted.get("votes_received", 0))),
+                    ("Bans", str(deleted.get("bans", 0))),
+                ])
+
+                return deleted
+
+            except sqlite3.Error as e:
+                conn.rollback()
+                logger.error("User Data Deletion Failed - Rolled Back", [
+                    ("User ID", str(user_id)),
+                    ("Error", str(e)),
+                ])
+                return {"error": str(e), "karma": 0, "votes_cast": 0, "votes_received": 0, "bans": 0}
 
     async def delete_user_data_async(self, user_id: int) -> dict:
         """Async wrapper for delete_user_data - runs in thread pool."""
@@ -1217,33 +1229,45 @@ class DebatesDatabase:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # Delete from debate_threads (analytics message reference)
-            cursor.execute("DELETE FROM debate_threads WHERE thread_id = ?", (thread_id,))
-            deleted["debate_threads"] = cursor.rowcount
+            try:
+                # Begin explicit transaction for atomicity
+                cursor.execute("BEGIN IMMEDIATE")
 
-            # Delete thread-specific bans (where thread_id matches)
-            cursor.execute("DELETE FROM debate_bans WHERE thread_id = ?", (thread_id,))
-            deleted["debate_bans"] = cursor.rowcount
+                # Delete from debate_threads (analytics message reference)
+                cursor.execute("DELETE FROM debate_threads WHERE thread_id = ?", (thread_id,))
+                deleted["debate_threads"] = cursor.rowcount
 
-            # Delete participation records for this thread
-            cursor.execute("DELETE FROM debate_participation WHERE thread_id = ?", (thread_id,))
-            deleted["debate_participation"] = cursor.rowcount
+                # Delete thread-specific bans (where thread_id matches)
+                cursor.execute("DELETE FROM debate_bans WHERE thread_id = ?", (thread_id,))
+                deleted["debate_bans"] = cursor.rowcount
 
-            # Delete creator record for this thread
-            cursor.execute("DELETE FROM debate_creators WHERE thread_id = ?", (thread_id,))
-            deleted["debate_creators"] = cursor.rowcount
+                # Delete participation records for this thread
+                cursor.execute("DELETE FROM debate_participation WHERE thread_id = ?", (thread_id,))
+                deleted["debate_participation"] = cursor.rowcount
 
-            conn.commit()
+                # Delete creator record for this thread
+                cursor.execute("DELETE FROM debate_creators WHERE thread_id = ?", (thread_id,))
+                deleted["debate_creators"] = cursor.rowcount
 
-            logger.info("DB: Thread Data Deleted", [
-                ("Thread ID", str(thread_id)),
-                ("Threads Table", str(deleted["debate_threads"])),
-                ("Bans", str(deleted["debate_bans"])),
-                ("Participation", str(deleted["debate_participation"])),
-                ("Creators", str(deleted["debate_creators"])),
-            ])
+                conn.commit()
 
-            return deleted
+                logger.info("DB: Thread Data Deleted", [
+                    ("Thread ID", str(thread_id)),
+                    ("Threads Table", str(deleted["debate_threads"])),
+                    ("Bans", str(deleted["debate_bans"])),
+                    ("Participation", str(deleted["debate_participation"])),
+                    ("Creators", str(deleted["debate_creators"])),
+                ])
+
+                return deleted
+
+            except sqlite3.Error as e:
+                conn.rollback()
+                logger.error("Thread Data Deletion Failed - Rolled Back", [
+                    ("Thread ID", str(thread_id)),
+                    ("Error", str(e)),
+                ])
+                return {"error": str(e), **deleted}
 
     # -------------------------------------------------------------------------
     # Leaderboard Thread Operations

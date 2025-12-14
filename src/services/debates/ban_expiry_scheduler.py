@@ -62,12 +62,19 @@ class BanExpiryScheduler:
         """Check for and remove expired bans."""
         try:
             if not hasattr(self.bot, 'debates_service') or not self.bot.debates_service:
+                logger.debug("Ban Expiry Check Skipped - Debates Service Not Ready")
                 return
 
             db = self.bot.debates_service.db
 
             # Get expired bans before removing them (for logging)
-            expired_bans = db.get_expired_bans()
+            try:
+                expired_bans = db.get_expired_bans()
+            except Exception as e:
+                logger.error("Failed to Query Expired Bans", [
+                    ("Error", str(e)),
+                ])
+                return
 
             if not expired_bans:
                 return
