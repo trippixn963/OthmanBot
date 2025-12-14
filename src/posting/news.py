@@ -8,6 +8,7 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import aiohttp
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
@@ -77,8 +78,17 @@ async def post_news(bot: "OthmanBot") -> None:
         ])
         await update_presence(bot)
 
-    except Exception as e:
-        logger.error("📰 Failed To Post News", [
+    except discord.HTTPException as e:
+        logger.error("📰 Discord API Error Posting News", [
+            ("Status", str(e.status)),
+            ("Error", str(e)),
+        ])
+    except aiohttp.ClientError as e:
+        logger.error("📰 Network Error Fetching News", [
+            ("Error", str(e)),
+        ])
+    except (ValueError, KeyError, TypeError) as e:
+        logger.error("📰 Data Error Processing News", [
             ("Error", str(e)),
         ])
 
@@ -174,6 +184,13 @@ async def post_article_to_forum(
             ("Video", "Yes" if video_file else "No"),
             ("Tag", applied_tags[0].name if applied_tags else "None"),
         ])
+
+        # Log to webhook
+        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+            thread_link = f"https://discord.com/channels/{thread.guild.id}/{thread.id}" if thread.guild else None
+            await bot.interaction_logger.log_news_posted(
+                "news", article.title, channel.name, article.source, thread_link
+            )
 
         # Send announcement
         if bot.general_channel_id:

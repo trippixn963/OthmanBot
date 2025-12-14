@@ -11,8 +11,18 @@ Server: discord.gg/syria
 import os
 from dataclasses import dataclass, field
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from src.core.logger import logger
+
+
+# =============================================================================
+# Timezone Configuration
+# =============================================================================
+
+# Use America/New_York which automatically handles EST/EDT daylight savings
+# This is the single source of truth for timezone across the entire codebase
+NY_TZ = ZoneInfo("America/New_York")
 
 
 # =============================================================================
@@ -298,6 +308,23 @@ DEVELOPER_ID: int = _load_required_id("DEVELOPER_ID")
 # =============================================================================
 
 DEBATES_FORUM_ID: int = _load_required_id("DEBATES_FORUM_ID")
+CASE_LOG_FORUM_ID: Optional[int] = _load_optional_id("CASE_LOG_FORUM_ID")
+
+# Channel IDs to hide/unhide when bot is toggled off/on
+# These channels become invisible to @everyone when bot is disabled
+# Format in .env: TOGGLE_CHANNEL_IDS=123,456,789
+def _load_toggle_channel_ids() -> list[int]:
+    """Load toggle channel IDs from comma-separated env var."""
+    raw = os.getenv("TOGGLE_CHANNEL_IDS", "")
+    if not raw:
+        return []
+    try:
+        return [int(id.strip()) for id in raw.split(",") if id.strip()]
+    except ValueError:
+        logger.warning("Invalid TOGGLE_CHANNEL_IDS format - should be comma-separated integers")
+        return []
+
+TOGGLE_CHANNEL_IDS: list[int] = _load_toggle_channel_ids()
 
 
 # =============================================================================
@@ -371,6 +398,8 @@ def load_general_channel_id() -> Optional[int]:
 # =============================================================================
 
 __all__ = [
+    # Timezone
+    "NY_TZ",
     # Validation
     "ConfigValidationError",
     "ConfigValidationResult",
@@ -412,6 +441,7 @@ __all__ = [
     "MODERATOR_ROLE_ID",
     "DEVELOPER_ID",
     "DEBATES_FORUM_ID",
+    "CASE_LOG_FORUM_ID",
     "NEWS_FORUM_TAGS",
     "SOCCER_TEAM_TAG_IDS",
     "DEBATE_TAGS",

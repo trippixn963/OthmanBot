@@ -164,154 +164,251 @@ class DebatesDatabase:
                         ("WAL", "Checkpointed"),
                         ("Status", "Clean"),
                     ], emoji="🗄️")
-                except Exception as e:
+                except sqlite3.Error as e:
                     logger.warning("Error Closing Database", [
                         ("Error", str(e)),
                     ])
                 finally:
                     self._connection = None
 
+    def flush(self) -> None:
+        """
+        Flush pending writes to disk without closing connection.
+
+        Commits any pending transactions and checkpoints WAL.
+        Use for graceful shutdown preparation or before backup.
+        """
+        with self._lock:
+            if self._connection:
+                try:
+                    self._connection.commit()
+                    self._connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                    logger.info("Database Flushed", [
+                        ("Status", "OK"),
+                    ])
+                except sqlite3.Error as e:
+                    logger.warning("Error Flushing Database", [
+                        ("Error", str(e)),
+                    ])
+
+    # Current schema version - increment when adding migrations
+    SCHEMA_VERSION = 3
+
     def _init_database(self) -> None:
-        """Create database tables if they don't exist."""
+        """Create database tables and run migrations."""
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # Users table - stores karma totals
+            # Create schema version table first
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id INTEGER PRIMARY KEY,
-                    total_karma INTEGER DEFAULT 0,
-                    upvotes_received INTEGER DEFAULT 0,
-                    downvotes_received INTEGER DEFAULT 0
-                )
-            """)
-
-            # Votes table - tracks individual votes
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS votes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    voter_id INTEGER NOT NULL,
-                    message_id INTEGER NOT NULL,
-                    author_id INTEGER NOT NULL,
-                    vote_type INTEGER NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(voter_id, message_id)
-                )
-            """)
-
-            # Debate threads table - tracks debate threads and their analytics
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS debate_threads (
-                    thread_id INTEGER PRIMARY KEY,
-                    analytics_message_id INTEGER,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            # Indexes for performance
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_votes_message
-                ON votes(message_id)
-            """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_votes_author
-                ON votes(author_id)
-            """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_users_karma
-                ON users(total_karma DESC)
-            """)
-
-            # Debate bans table - users banned from specific threads or all debates
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS debate_bans (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    thread_id INTEGER,
-                    banned_by INTEGER NOT NULL,
-                    reason TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(user_id, thread_id)
-                )
-            """)
-
-            # Index for ban lookups
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_bans_user
-                ON debate_bans(user_id)
-            """)
-
-            # Leaderboard thread tracking (single row)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS leaderboard_thread (
+                CREATE TABLE IF NOT EXISTS schema_version (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
-                    thread_id INTEGER NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            # Monthly leaderboard embeds
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS leaderboard_embeds (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    year INTEGER NOT NULL,
-                    month INTEGER NOT NULL,
-                    message_id INTEGER NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(year, month)
-                )
-            """)
-
-            # User cache for "(left)" tracking
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS user_cache (
-                    user_id INTEGER PRIMARY KEY,
-                    username TEXT NOT NULL,
-                    display_name TEXT,
-                    is_member INTEGER DEFAULT 1,
+                    version INTEGER NOT NULL DEFAULT 0,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
 
-            # Debate participation tracking (for accurate "Most Active Participants")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS debate_participation (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    thread_id INTEGER NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    message_count INTEGER DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(thread_id, user_id)
-                )
-            """)
+            # Get current version
+            cursor.execute("SELECT version FROM schema_version WHERE id = 1")
+            row = cursor.fetchone()
+            current_version = row[0] if row else 0
 
-            # Index for participation lookups
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_participation_user
-                ON debate_participation(user_id)
-            """)
+            if current_version == 0:
+                # Insert initial version record
+                cursor.execute("INSERT OR IGNORE INTO schema_version (id, version) VALUES (1, 0)")
 
-            # Debate creators tracking (for accurate "Debate Starters")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS debate_creators (
-                    thread_id INTEGER PRIMARY KEY,
-                    user_id INTEGER NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+            # Create base tables
+            self._create_base_tables(cursor)
 
-            # Index for creator lookups
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_creators_user
-                ON debate_creators(user_id)
-            """)
+            # Run migrations
+            migrations_run = self._run_migrations(cursor, current_version)
 
             conn.commit()
-            logger.tree("Debates Database Initialized", [
-                ("Tables", "6 created/verified"),
-                ("Indexes", "4 created/verified"),
-            ], emoji="🗳️")
+
+            if migrations_run > 0:
+                logger.tree("Database Migrations Complete", [
+                    ("From Version", str(current_version)),
+                    ("To Version", str(self.SCHEMA_VERSION)),
+                    ("Migrations Run", str(migrations_run)),
+                ], emoji="🗳️")
+            else:
+                logger.tree("Debates Database Initialized", [
+                    ("Schema Version", str(self.SCHEMA_VERSION)),
+                    ("Tables", "9 created/verified"),
+                ], emoji="🗳️")
+
+    def _create_base_tables(self, cursor: sqlite3.Cursor) -> None:
+        """Create all base tables (idempotent)."""
+        # Users table - stores karma totals
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                total_karma INTEGER DEFAULT 0,
+                upvotes_received INTEGER DEFAULT 0,
+                downvotes_received INTEGER DEFAULT 0
+            )
+        """)
+
+        # Votes table - tracks individual votes
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS votes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                voter_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                author_id INTEGER NOT NULL,
+                vote_type INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(voter_id, message_id)
+            )
+        """)
+
+        # Debate threads table - tracks debate threads and their analytics
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS debate_threads (
+                thread_id INTEGER PRIMARY KEY,
+                analytics_message_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Debate bans table - users banned from specific threads or all debates
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS debate_bans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                thread_id INTEGER,
+                banned_by INTEGER NOT NULL,
+                reason TEXT,
+                expires_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, thread_id)
+            )
+        """)
+
+        # Leaderboard thread tracking (single row)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS leaderboard_thread (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                thread_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Monthly leaderboard embeds
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS leaderboard_embeds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                year INTEGER NOT NULL,
+                month INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(year, month)
+            )
+        """)
+
+        # User cache for "(left)" tracking
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_cache (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT NOT NULL,
+                display_name TEXT,
+                is_member INTEGER DEFAULT 1,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Debate participation tracking
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS debate_participation (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                message_count INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(thread_id, user_id)
+            )
+        """)
+
+        # Debate creators tracking
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS debate_creators (
+                thread_id INTEGER PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Case logs table - tracks user moderation cases
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS case_logs (
+                user_id INTEGER PRIMARY KEY,
+                case_id INTEGER UNIQUE NOT NULL,
+                thread_id INTEGER NOT NULL,
+                ban_count INTEGER DEFAULT 1,
+                last_unban_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Create indexes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_votes_message ON votes(message_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_votes_author ON votes(author_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_karma ON users(total_karma DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_bans_user ON debate_bans(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_participation_user ON debate_participation(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_creators_user ON debate_creators(user_id)")
+
+    def _run_migrations(self, cursor: sqlite3.Cursor, current_version: int) -> int:
+        """
+        Run all pending migrations.
+
+        Args:
+            cursor: Database cursor
+            current_version: Current schema version
+
+        Returns:
+            Number of migrations run
+        """
+        migrations_run = 0
+
+        # Migration 1: Add expires_at to debate_bans
+        if current_version < 1:
+            if not self._column_exists(cursor, "debate_bans", "expires_at"):
+                cursor.execute("ALTER TABLE debate_bans ADD COLUMN expires_at TIMESTAMP")
+                logger.info("Migration 1: Added expires_at to debate_bans")
+            migrations_run += 1
+
+        # Migration 2: Add ban_count and last_unban_at to case_logs
+        if current_version < 2:
+            if not self._column_exists(cursor, "case_logs", "ban_count"):
+                cursor.execute("ALTER TABLE case_logs ADD COLUMN ban_count INTEGER DEFAULT 1")
+                logger.info("Migration 2: Added ban_count to case_logs")
+            if not self._column_exists(cursor, "case_logs", "last_unban_at"):
+                cursor.execute("ALTER TABLE case_logs ADD COLUMN last_unban_at TIMESTAMP")
+                logger.info("Migration 2: Added last_unban_at to case_logs")
+            migrations_run += 1
+
+        # Migration 3: Add index on debate_bans expires_at for auto-unban queries
+        if current_version < 3:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_bans_expires ON debate_bans(expires_at)")
+            logger.info("Migration 3: Added index on debate_bans.expires_at")
+            migrations_run += 1
+
+        # Update schema version
+        if migrations_run > 0:
+            cursor.execute(
+                "UPDATE schema_version SET version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1",
+                (self.SCHEMA_VERSION,)
+            )
+
+        return migrations_run
+
+    def _column_exists(self, cursor: sqlite3.Cursor, table: str, column: str) -> bool:
+        """Check if a column exists in a table."""
+        cursor.execute(f"PRAGMA table_info({table})")
+        columns = [col[1] for col in cursor.fetchall()]
+        return column in columns
 
     # -------------------------------------------------------------------------
     # Vote Operations
@@ -758,7 +855,8 @@ class DebatesDatabase:
         user_id: int,
         thread_id: Optional[int],
         banned_by: int,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
+        expires_at: Optional[str] = None
     ) -> bool:
         """
         Ban a user from a specific thread or all debates.
@@ -768,6 +866,7 @@ class DebatesDatabase:
             thread_id: Thread ID to ban from (None = all debates)
             banned_by: User ID who issued the ban
             reason: Optional reason for the ban
+            expires_at: Optional ISO format timestamp when ban expires
 
         Returns:
             True if ban was added, False if already exists
@@ -777,9 +876,9 @@ class DebatesDatabase:
             cursor = conn.cursor()
             try:
                 cursor.execute(
-                    """INSERT INTO debate_bans (user_id, thread_id, banned_by, reason)
-                       VALUES (?, ?, ?, ?)""",
-                    (user_id, thread_id, banned_by, reason)
+                    """INSERT OR REPLACE INTO debate_bans (user_id, thread_id, banned_by, reason, expires_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (user_id, thread_id, banned_by, reason, expires_at)
                 )
                 conn.commit()
                 return True
@@ -797,11 +896,12 @@ class DebatesDatabase:
         user_id: int,
         thread_id: Optional[int],
         banned_by: int,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
+        expires_at: Optional[str] = None
     ) -> bool:
         """Async wrapper for add_debate_ban - runs in thread pool."""
         return await asyncio.to_thread(
-            self.add_debate_ban, user_id, thread_id, banned_by, reason
+            self.add_debate_ban, user_id, thread_id, banned_by, reason, expires_at
         )
 
     def remove_debate_ban(self, user_id: int, thread_id: Optional[int]) -> bool:
@@ -810,7 +910,7 @@ class DebatesDatabase:
 
         Args:
             user_id: User to unban
-            thread_id: Thread ID (None = all debates ban)
+            thread_id: Thread ID (None = remove ALL bans for this user)
 
         Returns:
             True if ban was removed, False if not found
@@ -819,8 +919,9 @@ class DebatesDatabase:
             conn = self._get_connection()
             cursor = conn.cursor()
             if thread_id is None:
+                # Remove ALL bans for this user (both global and thread-specific)
                 cursor.execute(
-                    "DELETE FROM debate_bans WHERE user_id = ? AND thread_id IS NULL",
+                    "DELETE FROM debate_bans WHERE user_id = ?",
                     (user_id,)
                 )
             else:
@@ -844,15 +945,17 @@ class DebatesDatabase:
             thread_id: Thread ID to check
 
         Returns:
-            True if user is banned from this thread or all debates
+            True if user is banned from this thread or all debates (and ban hasn't expired)
         """
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
             # Check for specific thread ban OR global debates ban (thread_id IS NULL)
+            # Exclude expired bans (expires_at IS NULL means permanent)
             cursor.execute(
                 """SELECT 1 FROM debate_bans
                    WHERE user_id = ? AND (thread_id = ? OR thread_id IS NULL)
+                   AND (expires_at IS NULL OR expires_at > datetime('now'))
                    LIMIT 1""",
                 (user_id, thread_id)
             )
@@ -864,20 +967,22 @@ class DebatesDatabase:
 
     def get_user_bans(self, user_id: int) -> list[dict]:
         """
-        Get all bans for a user.
+        Get all active bans for a user.
 
         Args:
             user_id: User ID
 
         Returns:
-            List of ban records
+            List of ban records (excludes expired bans)
         """
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                """SELECT thread_id, banned_by, reason, created_at
-                   FROM debate_bans WHERE user_id = ?""",
+                """SELECT thread_id, banned_by, reason, expires_at, created_at
+                   FROM debate_bans
+                   WHERE user_id = ?
+                   AND (expires_at IS NULL OR expires_at > datetime('now'))""",
                 (user_id,)
             )
             return [
@@ -885,7 +990,8 @@ class DebatesDatabase:
                     "thread_id": row[0],
                     "banned_by": row[1],
                     "reason": row[2],
-                    "created_at": row[3]
+                    "expires_at": row[3],
+                    "created_at": row[4]
                 }
                 for row in cursor.fetchall()
             ]
@@ -895,13 +1001,58 @@ class DebatesDatabase:
         Get all unique user IDs that have active bans.
 
         Returns:
-            List of user IDs with active bans
+            List of user IDs with active bans (excludes expired)
         """
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT user_id FROM debate_bans")
+            cursor.execute(
+                """SELECT DISTINCT user_id FROM debate_bans
+                   WHERE expires_at IS NULL OR expires_at > datetime('now')"""
+            )
             return [row[0] for row in cursor.fetchall()]
+
+    def get_expired_bans(self) -> list[dict]:
+        """
+        Get all expired bans that need to be removed.
+
+        Returns:
+            List of expired ban records
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, user_id, thread_id, expires_at
+                   FROM debate_bans
+                   WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')"""
+            )
+            return [
+                {
+                    "id": row[0],
+                    "user_id": row[1],
+                    "thread_id": row[2],
+                    "expires_at": row[3]
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def remove_expired_bans(self) -> int:
+        """
+        Remove all expired bans from the database.
+
+        Returns:
+            Number of bans removed
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """DELETE FROM debate_bans
+                   WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')"""
+            )
+            conn.commit()
+            return cursor.rowcount
 
     # -------------------------------------------------------------------------
     # User Data Cleanup (Member Leave)
@@ -1002,23 +1153,42 @@ class DebatesDatabase:
             Dict with counts of deleted records
         """
         deleted = {
-            "analytics_messages": 0,
-            "bans": 0,
+            "debate_threads": 0,
+            "debate_bans": 0,
+            "debate_participation": 0,
+            "debate_creators": 0,
         }
 
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # Delete analytics message record
-            cursor.execute("DELETE FROM analytics_messages WHERE thread_id = ?", (thread_id,))
-            deleted["analytics_messages"] = cursor.rowcount
+            # Delete from debate_threads (analytics message reference)
+            cursor.execute("DELETE FROM debate_threads WHERE thread_id = ?", (thread_id,))
+            deleted["debate_threads"] = cursor.rowcount
 
             # Delete thread-specific bans (where thread_id matches)
-            cursor.execute("DELETE FROM user_bans WHERE thread_id = ?", (thread_id,))
-            deleted["bans"] = cursor.rowcount
+            cursor.execute("DELETE FROM debate_bans WHERE thread_id = ?", (thread_id,))
+            deleted["debate_bans"] = cursor.rowcount
+
+            # Delete participation records for this thread
+            cursor.execute("DELETE FROM debate_participation WHERE thread_id = ?", (thread_id,))
+            deleted["debate_participation"] = cursor.rowcount
+
+            # Delete creator record for this thread
+            cursor.execute("DELETE FROM debate_creators WHERE thread_id = ?", (thread_id,))
+            deleted["debate_creators"] = cursor.rowcount
 
             conn.commit()
+
+            logger.info("DB: Thread Data Deleted", [
+                ("Thread ID", str(thread_id)),
+                ("Threads Table", str(deleted["debate_threads"])),
+                ("Bans", str(deleted["debate_bans"])),
+                ("Participation", str(deleted["debate_participation"])),
+                ("Creators", str(deleted["debate_creators"])),
+            ])
+
             return deleted
 
     # -------------------------------------------------------------------------
@@ -1475,6 +1645,28 @@ class DebatesDatabase:
                 for row in cursor.fetchall()
             ]
 
+    def get_all_debate_thread_ids(self) -> list[int]:
+        """
+        Get all unique thread IDs from the database.
+
+        Returns:
+            List of thread IDs
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            # Get thread IDs from multiple tables
+            cursor.execute(
+                """SELECT DISTINCT thread_id FROM (
+                       SELECT thread_id FROM debate_participation
+                       UNION
+                       SELECT thread_id FROM debate_creators
+                       UNION
+                       SELECT thread_id FROM debate_threads WHERE thread_id IS NOT NULL
+                   )"""
+            )
+            return [row[0] for row in cursor.fetchall() if row[0] is not None]
+
     # -------------------------------------------------------------------------
     # Debate Participation Operations
     # -------------------------------------------------------------------------
@@ -1555,6 +1747,221 @@ class DebatesDatabase:
                 (thread_id, user_id, count, count)
             )
             conn.commit()
+
+    # -------------------------------------------------------------------------
+    # Case Log Operations
+    # -------------------------------------------------------------------------
+
+    def get_case_log(self, user_id: int) -> Optional[dict]:
+        """
+        Get case log info for a user.
+
+        Args:
+            user_id: Discord user ID
+
+        Returns:
+            Dict with case_id, thread_id, ban_count, etc. or None if not found
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT case_id, thread_id, ban_count, last_unban_at, created_at FROM case_logs WHERE user_id = ?",
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "user_id": user_id,
+                    "case_id": row[0],
+                    "thread_id": row[1],
+                    "ban_count": row[2] or 1,
+                    "last_unban_at": row[3],
+                    "created_at": row[4]
+                }
+            return None
+
+    def create_case_log(self, user_id: int, case_id: int, thread_id: int) -> None:
+        """
+        Create a new case log entry.
+
+        Args:
+            user_id: Discord user ID
+            case_id: The case number (4-digit)
+            thread_id: The forum thread ID in mods server
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO case_logs (user_id, case_id, thread_id)
+                   VALUES (?, ?, ?)""",
+                (user_id, case_id, thread_id)
+            )
+            conn.commit()
+            logger.info("DB: Case Log Created", [
+                ("User ID", str(user_id)),
+                ("Case ID", str(case_id)),
+                ("Thread ID", str(thread_id)),
+            ])
+
+    def get_next_case_id(self) -> int:
+        """
+        Get the next available case ID.
+
+        Returns:
+            Next case ID (max + 1, starting at 1)
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT MAX(case_id) FROM case_logs")
+            row = cursor.fetchone()
+            max_id = row[0] if row and row[0] else 0
+            return max_id + 1
+
+    def increment_ban_count(self, user_id: int) -> int:
+        """
+        Increment the ban count for a user's case.
+
+        Args:
+            user_id: Discord user ID
+
+        Returns:
+            The new ban count
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE case_logs
+                   SET ban_count = COALESCE(ban_count, 0) + 1
+                   WHERE user_id = ?""",
+                (user_id,)
+            )
+            conn.commit()
+
+            # Get and return the new count
+            cursor.execute(
+                "SELECT ban_count FROM case_logs WHERE user_id = ?",
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            new_count = row[0] if row else 1
+
+            logger.info("DB: Ban Count Incremented", [
+                ("User ID", str(user_id)),
+                ("New Ban Count", str(new_count)),
+            ])
+
+            return new_count
+
+    def update_last_unban(self, user_id: int) -> None:
+        """
+        Update the last_unban_at timestamp for a user's case.
+
+        Args:
+            user_id: Discord user ID
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE case_logs
+                   SET last_unban_at = CURRENT_TIMESTAMP
+                   WHERE user_id = ?""",
+                (user_id,)
+            )
+            rows_affected = cursor.rowcount
+            conn.commit()
+
+            logger.info("DB: Last Unban Timestamp Updated", [
+                ("User ID", str(user_id)),
+                ("Rows Affected", str(rows_affected)),
+            ])
+
+    def get_all_case_logs(self) -> list[dict]:
+        """
+        Get all case logs (for /cases command and archiving).
+
+        Returns:
+            List of all case log records
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT user_id, case_id, thread_id, ban_count, last_unban_at, created_at
+                   FROM case_logs
+                   ORDER BY case_id DESC"""
+            )
+            results = [
+                {
+                    "user_id": row[0],
+                    "case_id": row[1],
+                    "thread_id": row[2],
+                    "ban_count": row[3] or 1,
+                    "last_unban_at": row[4],
+                    "created_at": row[5]
+                }
+                for row in cursor.fetchall()
+            ]
+
+            logger.info("DB: Retrieved All Case Logs", [
+                ("Total Cases", str(len(results))),
+            ])
+
+            return results
+
+    def search_case_logs(self, query: str) -> list[dict]:
+        """
+        Search case logs by user ID or case ID.
+
+        Args:
+            query: Search query (user ID or case ID)
+
+        Returns:
+            List of matching case log records
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            # Try to parse as integer for exact ID match
+            try:
+                query_int = int(query)
+                cursor.execute(
+                    """SELECT user_id, case_id, thread_id, ban_count, last_unban_at, created_at
+                       FROM case_logs
+                       WHERE user_id = ? OR case_id = ?
+                       ORDER BY case_id DESC""",
+                    (query_int, query_int)
+                )
+            except ValueError:
+                # Not a number, return empty list
+                logger.info("DB: Case Log Search - Invalid Query", [
+                    ("Query", query),
+                    ("Reason", "Not a valid number"),
+                ])
+                return []
+
+            results = [
+                {
+                    "user_id": row[0],
+                    "case_id": row[1],
+                    "thread_id": row[2],
+                    "ban_count": row[3] or 1,
+                    "last_unban_at": row[4],
+                    "created_at": row[5]
+                }
+                for row in cursor.fetchall()
+            ]
+
+            logger.info("DB: Case Log Search Complete", [
+                ("Query", query),
+                ("Results Found", str(len(results))),
+            ])
+
+            return results
 
 
 # =============================================================================

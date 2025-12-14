@@ -11,10 +11,10 @@ Server: discord.gg/syria
 
 import discord
 from discord.ext import tasks
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, DISCORD_ARCHIVED_THREADS_LIMIT
+from src.core.config import DEBATES_FORUM_ID, DISCORD_ARCHIVED_THREADS_LIMIT, NY_TZ
 from src.utils import edit_thread_with_retry
 from src.services.debates.tags import DEBATE_TAGS, should_add_hot_tag, should_remove_hot_tag
 
@@ -162,6 +162,12 @@ class HotTagManager:
                         ("Messages", str(message_count)),
                         ("Age", f"{hours_since_creation:.1f}h"),
                     ])
+
+                    # Log to webhook
+                    if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
+                        await self.bot.interaction_logger.log_hot_tag_added(
+                            thread.name, thread.id, f"{message_count} messages in {hours_since_creation:.1f}h"
+                        )
                     return True
 
             return False
@@ -200,6 +206,12 @@ class HotTagManager:
                     ("Thread", thread.name[:30]),
                     ("Inactive", f"{hours_since_last:.1f}h"),
                 ])
+
+                # Log to webhook
+                if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
+                    await self.bot.interaction_logger.log_hot_tag_removed(
+                        thread.name, thread.id, f"Inactive for {hours_since_last:.1f}h"
+                    )
                 return True
 
             return False
@@ -239,11 +251,11 @@ class HotTagManager:
         Returns:
             Hours since creation
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(NY_TZ)
         created_at = thread.created_at
 
         if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
+            created_at = created_at.replace(tzinfo=NY_TZ)
 
         delta = now - created_at
         return delta.total_seconds() / 3600
@@ -272,10 +284,10 @@ class HotTagManager:
                     # No messages, use creation time
                     last_activity = thread.created_at
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(NY_TZ)
 
             if last_activity.tzinfo is None:
-                last_activity = last_activity.replace(tzinfo=timezone.utc)
+                last_activity = last_activity.replace(tzinfo=NY_TZ)
 
             delta = now - last_activity
             return delta.total_seconds() / 3600
@@ -292,7 +304,7 @@ class HotTagManager:
     # Tag Operations
     # -------------------------------------------------------------------------
 
-    async def _add_hot_tag(self, thread: discord.Thread):
+    async def _add_hot_tag(self, thread: discord.Thread) -> None:
         """
         Add the Hot tag to a thread.
 
@@ -322,7 +334,7 @@ class HotTagManager:
                 ("Error", str(e)),
             ])
 
-    async def _remove_hot_tag(self, thread: discord.Thread):
+    async def _remove_hot_tag(self, thread: discord.Thread) -> None:
         """
         Remove the Hot tag from a thread.
 

@@ -39,6 +39,8 @@ from src.services.debates.backfill import (
     reconcile_debate_stats,
     StatsReconciliationScheduler,
 )
+from src.services.debates.ban_expiry_scheduler import BanExpiryScheduler
+from src.services.case_archive_scheduler import CaseArchiveScheduler
 from src.posting.news import post_news
 from src.posting.soccer import post_soccer_news
 from src.posting.gaming import post_gaming_news
@@ -52,6 +54,50 @@ if TYPE_CHECKING:
 # Ready Handler
 # =============================================================================
 
+# Default timeout for service initialization (seconds)
+SERVICE_INIT_TIMEOUT: float = 30.0
+
+
+async def _safe_init(
+    name: str,
+    init_func,
+    bot: "OthmanBot",
+    timeout: float = SERVICE_INIT_TIMEOUT
+) -> bool:
+    """
+    Safely initialize a service with error recovery and timeout.
+
+    Args:
+        name: Human-readable service name for logging
+        init_func: Async function to call
+        bot: The OthmanBot instance
+        timeout: Maximum seconds to wait for initialization
+
+    Returns:
+        True if initialization succeeded, False otherwise
+
+    DESIGN: Prevents hanging services from blocking entire startup
+    Each service gets a timeout (default 30s) to initialize
+    Timeout errors are logged but don't crash the bot
+    """
+    try:
+        async with asyncio.timeout(timeout):
+            await init_func(bot)
+        return True
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout Initializing {name}", [
+            ("Timeout", f"{timeout}s"),
+            ("Status", "Skipped - continuing startup"),
+        ])
+        return False
+    except Exception as e:
+        logger.error(f"Failed To Initialize {name}", [
+            ("Error", str(e)),
+            ("Status", "Skipped - continuing startup"),
+        ])
+        return False
+
+
 async def on_ready_handler(bot: "OthmanBot") -> None:
     """
     Initialize services and start automation when bot is ready.
@@ -59,12 +105,19 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
     Args:
         bot: The OthmanBot instance
 
-    DESIGN: Initializes all services and starts automation immediately
-    Bot automatically begins posting news on startup
-    Sets up presence updates and live score tracking
+    DESIGN: Initializes all services with error recovery
+    Each service failure is logged but doesn't block other services
+    Bot continues running even if some services fail to start
     """
-    # Leave unauthorized guilds first
-    await _leave_unauthorized_guilds(bot)
+    # Track initialization results
+    init_results: List[tuple[str, bool]] = []
+
+    # Leave unauthorized guilds first (with timeout)
+    try:
+        async with asyncio.timeout(15.0):
+            await _leave_unauthorized_guilds(bot)
+    except asyncio.TimeoutError:
+        logger.warning("Timeout leaving unauthorized guilds - continuing startup")
 
     logger.tree(
         f"Bot Ready: {bot.user.name}",
@@ -79,32 +132,33 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
         emoji="✅",
     )
 
-    # Sync slash commands to all guilds for instant availability
-    await _sync_commands(bot)
+    # Sync slash commands (critical - but continue if fails, with timeout)
+    try:
+        async with asyncio.timeout(30.0):
+            await _sync_commands(bot)
+    except asyncio.TimeoutError:
+        logger.error("Timeout syncing commands - continuing startup")
 
-    # Initialize content rotation service (news → soccer → gaming hourly)
-    await _init_content_rotation(bot)
+    # Initialize all services with error recovery
+    # Each service can fail independently without blocking others
+    init_results.append(("Content Rotation", await _safe_init("Content Rotation", _init_content_rotation, bot)))
+    init_results.append(("Debates Scheduler", await _safe_init("Debates Scheduler", _init_debates_scheduler, bot)))
+    init_results.append(("Hot Tag Manager", await _safe_init("Hot Tag Manager", _init_hot_tag_manager, bot)))
+    init_results.append(("Karma Reconciliation", await _safe_init("Karma Reconciliation", _init_karma_reconciliation, bot)))
+    init_results.append(("Numbering Reconciliation", await _safe_init("Numbering Reconciliation", _init_numbering_reconciliation, bot)))
+    init_results.append(("Leaderboard", await _safe_init("Leaderboard", _init_leaderboard, bot)))
+    init_results.append(("Ban Expiry Scheduler", await _safe_init("Ban Expiry Scheduler", _init_ban_expiry_scheduler, bot)))
+    init_results.append(("Case Archive Scheduler", await _safe_init("Case Archive Scheduler", _init_case_archive_scheduler, bot)))
+    init_results.append(("Backup Scheduler", await _safe_init("Backup Scheduler", _init_backup_scheduler, bot)))
 
-    # Initialize debates scheduler
-    await _init_debates_scheduler(bot)
-
-    # Initialize Hot tag manager for debates
-    await _init_hot_tag_manager(bot)
-
-    # Run startup karma reconciliation and start nightly scheduler
-    await _init_karma_reconciliation(bot)
-
-    # Initialize nightly numbering reconciliation scheduler
-    await _init_numbering_reconciliation(bot)
-
-    # Initialize leaderboard manager
-    await _init_leaderboard(bot)
-
-    # Initialize database backup scheduler
-    await _init_backup_scheduler(bot)
-
-    # Set initial presence
-    await update_presence(bot)
+    # Set initial presence (non-critical, with timeout)
+    try:
+        async with asyncio.timeout(10.0):
+            await update_presence(bot)
+    except asyncio.TimeoutError:
+        logger.warning("Timeout setting initial presence")
+    except Exception as e:
+        logger.warning("Failed to set initial presence", [("Error", str(e))])
 
     # Start presence update loop
     bot.presence_task = asyncio.create_task(presence_update_loop(bot))
@@ -116,15 +170,46 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
     cleanup_old_temp_files()
     logger.info("🧹 Cleaned Up Old Temp Files")
 
-    # Start health check HTTP server
-    bot.health_server = HealthCheckServer(bot)
-    await bot.health_server.start()
+    # Start health check HTTP server (critical for monitoring)
+    try:
+        bot.health_server = HealthCheckServer(bot)
+        await bot.health_server.start()
+        init_results.append(("Health Server", True))
+    except Exception as e:
+        logger.error("Failed To Start Health Server", [("Error", str(e))])
+        init_results.append(("Health Server", False))
 
     # Initialize webhook alerts
-    await _init_webhook_alerts(bot)
+    init_results.append(("Webhook Alerts", await _safe_init("Webhook Alerts", _init_webhook_alerts, bot)))
 
-    # Update status channel to show online
-    await bot.update_status_channel(online=True)
+    # Initialize daily stats scheduler
+    init_results.append(("Daily Stats", await _safe_init("Daily Stats", _init_daily_stats, bot)))
+
+    # Update status channel to show online (with timeout)
+    try:
+        async with asyncio.timeout(10.0):
+            await bot.update_status_channel(online=True)
+    except asyncio.TimeoutError:
+        logger.warning("Timeout updating status channel")
+    except Exception as e:
+        logger.warning("Failed to update status channel", [("Error", str(e))])
+
+    # Log initialization summary
+    succeeded = sum(1 for _, ok in init_results if ok)
+    failed = sum(1 for _, ok in init_results if not ok)
+
+    if failed > 0:
+        failed_services = [name for name, ok in init_results if not ok]
+        logger.warning("Startup Completed With Errors", [
+            ("Services OK", str(succeeded)),
+            ("Services Failed", str(failed)),
+            ("Failed", ", ".join(failed_services)),
+        ])
+    else:
+        logger.tree("All Services Initialized", [
+            ("Services", str(succeeded)),
+            ("Status", "All OK"),
+        ], emoji="✅")
 
 
 # =============================================================================
@@ -306,6 +391,21 @@ async def _init_webhook_alerts(bot: "OthmanBot") -> None:
     ], emoji="🔔")
 
 
+async def _init_daily_stats(bot: "OthmanBot") -> None:
+    """Initialize daily stats scheduler.
+
+    DESIGN: Tracks daily activity and sends summaries at midnight EST
+    - Daily summary sent at 00:00 EST
+    - Weekly summary sent every Sunday at midnight
+    """
+    if bot.daily_stats:
+        await bot.daily_stats.start_scheduler()
+        logger.tree("Daily Stats Scheduler Started", [
+            ("Schedule", "Midnight EST daily"),
+            ("Weekly", "Sunday midnight"),
+        ], emoji="📊")
+
+
 async def _init_leaderboard(bot: "OthmanBot") -> None:
     """Initialize debates leaderboard manager.
 
@@ -333,6 +433,47 @@ async def _init_leaderboard(bot: "OthmanBot") -> None:
         logger.error("📊 Failed To Initialize Leaderboard", [
             ("Error", str(e)),
         ])
+
+
+async def _init_ban_expiry_scheduler(bot: "OthmanBot") -> None:
+    """Initialize ban expiry scheduler for automatic unbans.
+
+    DESIGN: Runs every 1 minute to check for expired bans
+    - Automatically removes bans that have passed their expires_at timestamp
+    - Logs all automatic unbans for audit trail
+    """
+    if not hasattr(bot, 'debates_service') or not bot.debates_service:
+        logger.info("⏰ Debates Service Not Initialized - Skipping Ban Expiry Scheduler")
+        return
+
+    bot.ban_expiry_scheduler = BanExpiryScheduler(bot)
+    await bot.ban_expiry_scheduler.start()
+    logger.tree("Ban Expiry Scheduler Started", [
+        ("Check Interval", "every 1 minute"),
+    ], emoji="⏰")
+
+
+async def _init_case_archive_scheduler(bot: "OthmanBot") -> None:
+    """Initialize case archive scheduler for auto-archiving inactive case threads.
+
+    DESIGN: Runs every 24 hours to archive inactive case threads
+    - Archives threads that have been inactive for 7+ days
+    - Keeps forum clean while preserving case history
+    """
+    if not hasattr(bot, 'case_log_service') or not bot.case_log_service:
+        logger.info("📦 Case Log Service Not Initialized - Skipping Case Archive Scheduler")
+        return
+
+    if not bot.case_log_service.enabled:
+        logger.info("📦 Case Log Service Disabled - Skipping Case Archive Scheduler")
+        return
+
+    bot.case_archive_scheduler = CaseArchiveScheduler(bot)
+    await bot.case_archive_scheduler.start()
+    logger.tree("Case Archive Scheduler Started", [
+        ("Check Interval", "every 24 hours"),
+        ("Inactivity Threshold", "7 days"),
+    ], emoji="📦")
 
 
 async def _leave_unauthorized_guilds(bot: "OthmanBot") -> None:

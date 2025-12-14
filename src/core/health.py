@@ -19,9 +19,9 @@ import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 from aiohttp import web
-from zoneinfo import ZoneInfo
 
 from src.core.logger import logger
+from src.core.config import NY_TZ
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -44,7 +44,7 @@ class HealthCheckServer:
         """
         self.bot = bot
         self.port = port
-        self.start_time = datetime.now(ZoneInfo("America/New_York"))
+        self.start_time = datetime.now(NY_TZ)
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
 
@@ -77,7 +77,7 @@ class HealthCheckServer:
 
     async def _handle_health(self, request: web.Request) -> web.Response:
         """Handle /health endpoint - detailed JSON status."""
-        now = datetime.now(ZoneInfo("America/New_York"))
+        now = datetime.now(NY_TZ)
         uptime_seconds = (now - self.start_time).total_seconds()
 
         # Format uptime as human-readable

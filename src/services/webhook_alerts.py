@@ -20,11 +20,11 @@ import os
 import asyncio
 import aiohttp
 import psutil
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, TYPE_CHECKING
-from zoneinfo import ZoneInfo
 
 from src.core.logger import logger
+from src.core.config import NY_TZ
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -38,9 +38,6 @@ if TYPE_CHECKING:
 COLOR_ONLINE = 0x00FF00   # Green
 COLOR_OFFLINE = 0xFF0000  # Red
 COLOR_WARNING = 0xFFAA00  # Orange
-
-# Timezone
-NY_TZ = ZoneInfo("America/New_York")
 
 # Retry settings
 MAX_RETRIES = 3
@@ -91,8 +88,9 @@ class WebhookAlertService:
 
     def __init__(self, webhook_url: Optional[str] = None) -> None:
         # Read environment variables at runtime (after load_dotenv has been called)
-        self.webhook_url = webhook_url or os.getenv("ALERT_WEBHOOK_URL")
-        self._error_webhook_url = os.getenv("ALERT_ERROR_WEBHOOK_URL")  # Optional separate webhook
+        self.webhook_url = webhook_url or os.getenv("ALERT_WEBHOOK_URL")  # Hourly status + shutdown
+        self._error_webhook_url = os.getenv("ALERT_ERROR_WEBHOOK_URL")  # Error alerts
+        self._logging_webhook_url = os.getenv("LOGGING_WEBHOOK_URL")  # General logging (recovery, latency, etc.)
         self.enabled = bool(self.webhook_url)
         self._hourly_task: Optional[asyncio.Task] = None
         self._bot: Optional["OthmanBot"] = None
@@ -109,8 +107,9 @@ class WebhookAlertService:
             logger.tree("Webhook Alerts", [
                 ("Status", "Enabled"),
                 ("Schedule", "Every hour (NY time)"),
-                ("Webhook", webhook_display),
-                ("Error Webhook", "Separate" if self._error_webhook_url else "Same as status"),
+                ("Status Webhook", webhook_display),
+                ("Error Webhook", "Configured" if self._error_webhook_url else "Same as status"),
+                ("Logging Webhook", "Configured" if self._logging_webhook_url else "Same as status"),
                 ("Latency Threshold", f"{LATENCY_THRESHOLD_MS}ms"),
             ], emoji="🔔")
         else:
@@ -181,7 +180,8 @@ class WebhookAlertService:
         self,
         embed: dict,
         content: Optional[str] = None,
-        use_error_webhook: bool = False
+        use_error_webhook: bool = False,
+        use_logging_webhook: bool = False
     ) -> bool:
         """Send embed to webhook with retry and exponential backoff."""
         if not self.enabled or not self.webhook_url:
@@ -189,9 +189,12 @@ class WebhookAlertService:
             return False
 
         # Choose webhook URL (guaranteed non-None from check above)
+        # Priority: error > logging > status
         webhook_url: str = self.webhook_url
         if use_error_webhook and self._error_webhook_url:
             webhook_url = self._error_webhook_url
+        elif use_logging_webhook and self._logging_webhook_url:
+            webhook_url = self._logging_webhook_url
 
         payload = {
             "username": "OthmanBot Status",
@@ -377,7 +380,7 @@ class WebhookAlertService:
             "Discord connection may be experiencing issues."
         )
 
-        asyncio.create_task(self._send_webhook(embed, use_error_webhook=True))
+        asyncio.create_task(self._send_webhook(embed, use_logging_webhook=True))
 
     async def send_recovery_alert(self, recovery_type: str) -> None:
         """
@@ -396,7 +399,7 @@ class WebhookAlertService:
             f"**{recovery_type}** has recovered and is now healthy."
         )
 
-        asyncio.create_task(self._send_webhook(embed))
+        asyncio.create_task(self._send_webhook(embed, use_logging_webhook=True))
 
     def check_latency(self) -> None:
         """Check latency and send alert if too high, or recovery if normalized."""
@@ -440,9 +443,8 @@ class WebhookAlertService:
                     next_hour = now.replace(minute=0, second=0, microsecond=0)
                     next_hour = next_hour.replace(hour=(now.hour + 1) % 24)
                     if next_hour.hour == 0:
-                        # Handle day rollover
-                        from datetime import timedelta
-                        next_hour = next_hour + timedelta(days=1 if now.hour == 23 else 0)
+                        # Handle day rollover (hour wrapped from 23 to 0)
+                        next_hour = next_hour + timedelta(days=1)
 
                     wait_seconds = (next_hour - now).total_seconds()
                     if wait_seconds < 0:

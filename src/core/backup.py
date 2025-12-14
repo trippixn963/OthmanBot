@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from src.core.logger import logger
+from src.core.config import NY_TZ
 
 
 # =============================================================================
@@ -233,10 +234,7 @@ class BackupScheduler:
 
     def _seconds_until_next_backup(self) -> float:
         """Calculate seconds until next scheduled backup time."""
-        from zoneinfo import ZoneInfo
-
-        est = ZoneInfo("America/New_York")
-        now = datetime.now(est)
+        now = datetime.now(NY_TZ)
         target = now.replace(hour=BACKUP_HOUR_EST, minute=0, second=0, microsecond=0)
 
         # If we've passed today's backup time, schedule for tomorrow

@@ -54,6 +54,122 @@ from src.services.debates.tags import detect_debate_tags
 # =============================================================================
 
 UPVOTE_EMOJI = "\u2b06\ufe0f"  # ⬆️
+DOWNVOTE_EMOJI = "\u2b07\ufe0f"  # ⬇️
+PARTICIPATE_EMOJI = "✅"  # Checkmark for participation access control
+
+DEBATE_COUNTER_FILE = Path("data/debate_counter.json")
+DEBATE_MANAGEMENT_ROLE_ID = MODERATOR_ROLE_ID  # Debate Management role - can post without reacting
+
+
+# =============================================================================
+# Analytics Throttle Cache
+# =============================================================================
+
+class AnalyticsThrottleCache:
+    """
+    Thread-safe cache for throttling analytics updates.
+
+    Prevents excessive updates to analytics embeds by tracking the last update
+    time for each thread and enforcing a cooldown period.
+
+    DESIGN: Encapsulates global state (_analytics_last_update, _analytics_lock)
+    into a proper class with methods for checking/recording updates and cleanup.
+    """
+
+    def __init__(
+        self,
+        cooldown_seconds: int = ANALYTICS_UPDATE_COOLDOWN,
+        max_size: int = ANALYTICS_CACHE_MAX_SIZE,
+        cleanup_age_seconds: int = ANALYTICS_CACHE_CLEANUP_AGE,
+    ) -> None:
+        """
+        Initialize the throttle cache.
+
+        Args:
+            cooldown_seconds: Minimum seconds between updates for same thread
+            max_size: Maximum number of entries before cleanup
+            cleanup_age_seconds: Remove entries older than this
+        """
+        self._last_update: Dict[int, datetime] = {}
+        self._lock = asyncio.Lock()
+        self._cooldown = cooldown_seconds
+        self._max_size = max_size
+        self._cleanup_age = cleanup_age_seconds
+
+    async def should_update(self, thread_id: int) -> bool:
+        """
+        Check if enough time has passed since last update for this thread.
+
+        Args:
+            thread_id: The thread ID to check
+
+        Returns:
+            True if update is allowed, False if still in cooldown
+        """
+        async with self._lock:
+            last_update = self._last_update.get(thread_id)
+            if last_update is None:
+                return True
+
+            elapsed = (datetime.now() - last_update).total_seconds()
+            if elapsed < self._cooldown:
+                logger.debug("⏳ Throttled Analytics Update", [
+                    ("Thread ID", str(thread_id)),
+                    ("Elapsed", f"{elapsed:.0f}s"),
+                    ("Cooldown", f"{self._cooldown}s"),
+                ])
+                return False
+            return True
+
+    async def record_update(self, thread_id: int) -> None:
+        """
+        Record that an analytics update was performed for this thread.
+
+        Args:
+            thread_id: The thread ID that was updated
+        """
+        async with self._lock:
+            self._last_update[thread_id] = datetime.now()
+            await self._cleanup_unlocked()
+
+    async def _cleanup_unlocked(self) -> None:
+        """
+        Remove stale entries from cache. Must be called with lock held.
+        """
+        now = datetime.now()
+        stale_threshold = now - timedelta(seconds=self._cleanup_age)
+
+        # Remove entries older than cleanup age
+        stale_keys = [
+            thread_id for thread_id, last_update in list(self._last_update.items())
+            if last_update < stale_threshold
+        ]
+
+        for key in stale_keys:
+            del self._last_update[key]
+
+        # If still over max, remove oldest entries
+        if len(self._last_update) > self._max_size:
+            sorted_entries = sorted(self._last_update.items(), key=lambda x: x[1])
+            entries_to_remove = len(self._last_update) - self._max_size
+            for thread_id, _ in sorted_entries[:entries_to_remove]:
+                del self._last_update[thread_id]
+                stale_keys.append(thread_id)
+
+        if stale_keys:
+            logger.debug("🧹 Cleaned Analytics Cache", [
+                ("Removed", str(len(stale_keys))),
+                ("Remaining", str(len(self._last_update))),
+            ])
+
+    @property
+    def size(self) -> int:
+        """Return current cache size (for monitoring)."""
+        return len(self._last_update)
+
+
+# Module-level instance (initialized once, used throughout)
+_analytics_cache = AnalyticsThrottleCache()
 
 
 def _is_bot_ready(bot: "OthmanBot") -> bool:
@@ -74,55 +190,6 @@ def _is_bot_ready(bot: "OthmanBot") -> bool:
     if not hasattr(bot, 'debates_service') or bot.debates_service is None:
         return False
     return True
-DOWNVOTE_EMOJI = "\u2b07\ufe0f"  # ⬇️
-PARTICIPATE_EMOJI = "✅"  # Checkmark for participation access control
-# Language utilities (is_primarily_arabic, get_min_message_length, is_english_only) imported from src.utils
-
-DEBATE_COUNTER_FILE = Path("data/debate_counter.json")
-DEBATE_MANAGEMENT_ROLE_ID = MODERATOR_ROLE_ID  # Debate Management role - can post without reacting
-# ANALYTICS_UPDATE_COOLDOWN, ANALYTICS_CACHE_MAX_SIZE, ANALYTICS_CACHE_CLEANUP_AGE now imported from config.py
-
-# In-memory cache for analytics update throttling with lock for thread safety
-_analytics_last_update: Dict[int, datetime] = {}  # thread_id -> last_update_time
-_analytics_lock: asyncio.Lock = asyncio.Lock()  # Protect concurrent access
-
-
-async def _cleanup_analytics_cache() -> None:
-    """
-    Remove stale entries from the analytics throttle cache to prevent memory leaks.
-
-    IMPORTANT: Must be called from within async with _analytics_lock to prevent race conditions.
-    This function modifies the global cache dict and must be protected by the lock.
-    """
-    global _analytics_last_update
-
-    now = datetime.now()
-    # Always remove entries older than ANALYTICS_CACHE_CLEANUP_AGE seconds (even below max)
-    stale_threshold = now - timedelta(seconds=ANALYTICS_CACHE_CLEANUP_AGE)
-
-    # Create list of keys to remove (avoid modifying dict during iteration)
-    stale_keys = [
-        thread_id for thread_id, last_update in list(_analytics_last_update.items())
-        if last_update < stale_threshold
-    ]
-
-    for key in stale_keys:
-        del _analytics_last_update[key]
-
-    # If still over max, remove oldest entries
-    if len(_analytics_last_update) > ANALYTICS_CACHE_MAX_SIZE:
-        # Sort by timestamp and remove oldest entries to get back under limit
-        sorted_entries = sorted(list(_analytics_last_update.items()), key=lambda x: x[1])
-        entries_to_remove = len(_analytics_last_update) - ANALYTICS_CACHE_MAX_SIZE
-        for thread_id, _ in sorted_entries[:entries_to_remove]:
-            del _analytics_last_update[thread_id]
-            stale_keys.append(thread_id)
-
-    if stale_keys:
-        logger.debug("🧹 Cleaned Analytics Cache", [
-            ("Removed", str(len(stale_keys))),
-            ("Remaining", str(len(_analytics_last_update))),
-        ])
 
 
 # =============================================================================
@@ -140,25 +207,15 @@ async def update_analytics_embed(bot: "OthmanBot", thread: discord.Thread, force
 
     DESIGN: Updates analytics embed in-place without reposting
     Throttled to 30 seconds per thread to avoid rate limits
-    Uses asyncio.Lock for thread-safe cache access
+    Uses AnalyticsThrottleCache for thread-safe throttling
     """
     # Check if debates service is available
     if not hasattr(bot, 'debates_service') or bot.debates_service is None:
         return
 
-    # Throttle check with lock - skip if updated recently (unless forced)
-    async with _analytics_lock:
-        if not force:
-            last_update = _analytics_last_update.get(thread.id)
-            if last_update:
-                elapsed = (datetime.now() - last_update).total_seconds()
-                if elapsed < ANALYTICS_UPDATE_COOLDOWN:
-                    logger.debug("⏳ Throttled Analytics Update", [
-                        ("Thread ID", str(thread.id)),
-                        ("Elapsed", f"{elapsed:.0f}s"),
-                        ("Cooldown", f"{ANALYTICS_UPDATE_COOLDOWN}s"),
-                    ])
-                    return
+    # Throttle check - skip if updated recently (unless forced)
+    if not force and not await _analytics_cache.should_update(thread.id):
+        return
 
     try:
         # Get analytics message ID from database
@@ -189,10 +246,8 @@ async def update_analytics_embed(bot: "OthmanBot", thread: discord.Thread, force
         # Edit the message with rate limit handling
         await edit_message_with_retry(analytics_message, embed=embed)
 
-        # Update throttle timestamp and clean up old entries (with lock)
-        async with _analytics_lock:
-            _analytics_last_update[thread.id] = datetime.now()
-            await _cleanup_analytics_cache()
+        # Record the update (handles cleanup internally)
+        await _analytics_cache.record_update(thread.id)
 
         logger.debug("📊 Updated Analytics Embed", [
             ("Thread", thread.name[:50]),
@@ -324,12 +379,20 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
         is_banned = bot.debates_service.db.is_user_banned(message.author.id, message.channel.id)
         if is_banned:
             try:
+                content_preview = message.content[:50] + "..." if len(message.content) > 50 else message.content
                 await message.delete()
                 logger.info("Banned User Message Deleted", [
                     ("User", f"{message.author.name} ({message.author.id})"),
                     ("Thread", f"{message.channel.name} ({message.channel.id})"),
-                    ("Content Preview", message.content[:50] + "..." if len(message.content) > 50 else message.content),
+                    ("Content Preview", content_preview),
                 ])
+
+                # Log to webhook
+                if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+                    await bot.interaction_logger.log_banned_user_message_deleted(
+                        message.author, message.channel.name, content_preview
+                    )
+
                 # Send ephemeral-style DM to user with rate limit handling
                 try:
                     await send_message_with_retry(
@@ -403,6 +466,12 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                                     ("Thread", f"{message.channel.name} ({message.channel.id})"),
                                     ("Action", "DM sent with instructions"),
                                 ])
+
+                                # Log to webhook
+                                if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+                                    await bot.interaction_logger.log_access_blocked(
+                                        message.author, message.channel.name, "No participation react"
+                                    )
                             except discord.Forbidden:
                                 # User has DMs disabled, send a temporary message in the channel
                                 await send_message_with_retry(
@@ -415,6 +484,12 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                                     ("Thread", f"{message.channel.name} ({message.channel.id})"),
                                     ("Action", "Channel message sent (DMs disabled)"),
                                 ])
+
+                                # Log to webhook
+                                if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+                                    await bot.interaction_logger.log_access_blocked(
+                                        message.author, message.channel.name, "No participation react (DMs disabled)"
+                                    )
                         except discord.HTTPException as e:
                             logger.warning("🔐 Failed To Enforce Access Control", [
                             ("Error", str(e)),
@@ -450,6 +525,12 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                 ("Message ID", str(message.id)),
                 ("Content Length", f"{len(message.content)} chars"),
             ])
+
+            # Log to webhook
+            if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+                await bot.interaction_logger.log_vote_reactions_added(
+                    message.author, message.channel.name, message.id, len(message.content)
+                )
         except discord.HTTPException as e:
             logger.warning("🗳️ Failed To Add Vote Reactions", [
                 ("Error", str(e)),
@@ -497,8 +578,6 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
     try:
         # DESIGN: For forum threads, the starter message might not be immediately available
         # Try multiple methods to retrieve it with a small delay
-        import asyncio
-
         starter_message = thread.starter_message
 
         # If not available, wait a moment and try fetching from thread
@@ -583,6 +662,12 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                     ("Thread", f"{original_title} ({thread.id})"),
                     ("Reason", "Non-English title"),
                 ])
+
+                # Log to webhook
+                if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+                    await bot.interaction_logger.log_non_english_title_blocked(
+                        starter_message.author, original_title, suggested_title, thread.id
+                    )
 
             except discord.HTTPException as e:
                 logger.error("🌐 Failed To Handle Non-English Title (Discord Error)", [
@@ -712,6 +797,18 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                     ("Message ID", str(analytics_message.id)),
                     ("Pinned", "Yes"),
                 ])
+
+                # Log debate creation to webhook
+                if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+                    await bot.interaction_logger.log_debate_created(
+                        thread, starter_message.author, debate_number, original_title
+                    )
+
+                # Track stats
+                if hasattr(bot, 'daily_stats') and bot.daily_stats:
+                    bot.daily_stats.record_debate_created(
+                        thread.id, original_title, starter_message.author.id, starter_message.author.name
+                    )
             except discord.HTTPException as e:
                 logger.warning("📊 Failed To Post Analytics Embed For Debate Thread", [
                     ("Error", str(e)),
@@ -773,11 +870,18 @@ async def on_debate_reaction_add(
     if voter_id == author_id:
         try:
             await reaction.remove(user)
+            vote_type = "Upvote" if emoji == UPVOTE_EMOJI else "Downvote"
             logger.info("Self-Vote Prevented", [
                 ("User", f"{user.name} ({user.id})"),
                 ("Thread", f"{message.channel.name} ({message.channel.id})"),
                 ("Message ID", str(message.id)),
             ])
+
+            # Log to webhook
+            if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+                await bot.interaction_logger.log_self_vote_blocked(
+                    user, message.channel.name, vote_type
+                )
         except discord.HTTPException as e:
             logger.warning("🗳️ Failed To Remove Self-Vote Reaction", [
                 ("Error", str(e)),
@@ -798,6 +902,22 @@ async def on_debate_reaction_add(
         ("Thread", f"{message.channel.name} ({message.channel.id})"),
         ("Message ID", str(message.id)),
     ])
+
+    # Get updated karma for logging
+    karma_data = bot.debates_service.get_karma(author_id)
+    change = 1 if emoji == UPVOTE_EMOJI else -1
+
+    # Log karma change to webhook
+    if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+        await bot.interaction_logger.log_karma_change(
+            message.author, user, change, karma_data.total_karma, message.channel.name
+        )
+
+    # Track stats
+    if hasattr(bot, 'daily_stats') and bot.daily_stats:
+        bot.daily_stats.record_karma_vote(
+            author_id, message.author.name, emoji == UPVOTE_EMOJI
+        )
 
     # Update analytics embed
     await update_analytics_embed(bot, reaction.message.channel)
@@ -878,12 +998,20 @@ async def on_member_remove_handler(bot: "OthmanBot", member: discord.Member) -> 
     deleted_threads = 0
     deleted_messages = 0
     reactions_removed = 0
+    deleted_data: dict = {}  # Initialize before try block for safe access later
 
     try:
-        # Collect all threads (active + archived) to process
+        # Collect all threads (active + archived) to process with timeout
         all_threads = list(debates_forum.threads)
-        async for archived_thread in debates_forum.archived_threads(limit=100):
-            all_threads.append(archived_thread)
+        try:
+            async with asyncio.timeout(30.0):  # 30s timeout for fetching archived threads
+                async for archived_thread in debates_forum.archived_threads(limit=100):
+                    all_threads.append(archived_thread)
+        except asyncio.TimeoutError:
+            logger.warning("👋 Timeout Fetching Archived Threads For Member Cleanup", [
+                ("User", member.name),
+                ("Threads Collected", str(len(all_threads))),
+            ])
 
         # First, remove user's reactions from all thread starter messages
         for thread in all_threads:
@@ -970,6 +1098,13 @@ async def on_member_remove_handler(bot: "OthmanBot", member: discord.Member) -> 
                 ("Reactions Removed", str(reactions_removed)),
             ])
 
+            # Log to webhook
+            if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+                karma_reset = deleted_data.get('karma', 0)
+                await bot.interaction_logger.log_member_leave_cleanup(
+                    member.name, member.id, deleted_threads, deleted_messages, reactions_removed, karma_reset
+                )
+
     except discord.HTTPException as e:
         logger.error("👋 Discord Error Cleaning Up Debate Data", [
             ("User", member.name),
@@ -1005,6 +1140,10 @@ async def on_member_join_handler(bot: "OthmanBot", member: discord.Member) -> No
                 ("User", member.name),
                 ("Error", str(e)),
             ])
+
+    # Log to webhook
+    if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+        await bot.interaction_logger.log_member_rejoin(member)
 
 
 # =============================================================================
@@ -1164,6 +1303,12 @@ async def on_thread_delete_handler(bot: "OthmanBot", thread: discord.Thread) -> 
         ("Thread", thread.name),
         ("Thread ID", str(thread.id)),
     ])
+
+    # Log deletion to webhook
+    if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+        await bot.interaction_logger.log_debate_deleted(
+            thread.id, thread.name
+        )
 
     # Clean up database records for this thread
     if hasattr(bot, 'debates_service') and bot.debates_service is not None:
