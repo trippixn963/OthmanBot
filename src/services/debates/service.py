@@ -107,6 +107,46 @@ class DebatesService:
             ])
         return result
 
+    async def record_upvote_async(
+        self,
+        voter_id: int,
+        message_id: int,
+        author_id: int
+    ) -> bool:
+        """
+        Async version of record_upvote with retry logic.
+        """
+        if voter_id == author_id:
+            return False  # No self-voting
+
+        result = await self.db.add_vote_async(voter_id, message_id, author_id, 1)
+        if result:
+            logger.debug("⬆️ Upvote Recorded (Async)", [
+                ("Voter", str(voter_id)),
+                ("Message", str(message_id)),
+            ])
+        return result
+
+    async def record_downvote_async(
+        self,
+        voter_id: int,
+        message_id: int,
+        author_id: int
+    ) -> bool:
+        """
+        Async version of record_downvote with retry logic.
+        """
+        if voter_id == author_id:
+            return False  # No self-voting
+
+        result = await self.db.add_vote_async(voter_id, message_id, author_id, -1)
+        if result:
+            logger.debug("⬇️ Downvote Recorded (Async)", [
+                ("Voter", str(voter_id)),
+                ("Message", str(message_id)),
+            ])
+        return result
+
     def remove_vote(
         self,
         voter_id: int,

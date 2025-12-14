@@ -9,6 +9,7 @@ Server: discord.gg/syria
 """
 
 import asyncio
+import fcntl
 import json
 import sqlite3
 from datetime import datetime, timedelta
@@ -267,23 +268,34 @@ async def update_analytics_embed(bot: "OthmanBot", thread: discord.Thread, force
 
 
 def _get_next_debate_number_sync() -> int:
-    """Synchronous helper for get_next_debate_number."""
+    """
+    Synchronous helper for get_next_debate_number.
+    Uses file locking to prevent race conditions when multiple threads
+    are created simultaneously.
+    """
     DEBATE_COUNTER_FILE.parent.mkdir(exist_ok=True)
+    lock_file = DEBATE_COUNTER_FILE.with_suffix('.lock')
 
     try:
-        if DEBATE_COUNTER_FILE.exists():
-            with open(DEBATE_COUNTER_FILE, "r") as f:
-                data = json.load(f)
-                current = data.get("count", 0)
-        else:
-            current = 0
+        # Use exclusive file lock to prevent race conditions
+        with open(lock_file, 'w') as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                if DEBATE_COUNTER_FILE.exists():
+                    with open(DEBATE_COUNTER_FILE, "r") as f:
+                        data = json.load(f)
+                        current = data.get("count", 0)
+                else:
+                    current = 0
 
-        # Increment and save
-        next_num = current + 1
-        with open(DEBATE_COUNTER_FILE, "w") as f:
-            json.dump({"count": next_num}, f)
+                # Increment and save
+                next_num = current + 1
+                with open(DEBATE_COUNTER_FILE, "w") as f:
+                    json.dump({"count": next_num}, f)
 
-        return next_num
+                return next_num
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
     except (json.JSONDecodeError, IOError, OSError) as e:
         logger.warning("🔢 Failed To Get Debate Number", [
             ("Error", str(e)),
@@ -896,12 +908,29 @@ async def on_debate_reaction_add(
             ])
         return
 
-    # Record the vote
+    # Record the vote with error handling
     vote_type = "Upvote" if emoji == UPVOTE_EMOJI else "Downvote"
-    if emoji == UPVOTE_EMOJI:
-        bot.debates_service.record_upvote(voter_id, message.id, author_id)
-    else:
-        bot.debates_service.record_downvote(voter_id, message.id, author_id)
+    try:
+        if emoji == UPVOTE_EMOJI:
+            success = await bot.debates_service.record_upvote_async(voter_id, message.id, author_id)
+        else:
+            success = await bot.debates_service.record_downvote_async(voter_id, message.id, author_id)
+
+        if not success:
+            logger.warning("Vote Recording Failed (No Change)", [
+                ("Voter", str(voter_id)),
+                ("Message", str(message.id)),
+                ("Type", vote_type),
+            ])
+            return
+    except Exception as e:
+        logger.error("Vote Recording Exception", [
+            ("Voter", str(voter_id)),
+            ("Message", str(message.id)),
+            ("Type", vote_type),
+            ("Error", str(e)),
+        ])
+        return
 
     logger.info("Vote Recorded", [
         ("Voter", f"{user.name} ({user.id})"),
@@ -1212,6 +1241,9 @@ async def _renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int
         # Sort by number (ascending) to rename in order
         threads_to_renumber.sort(key=lambda x: x[1])
 
+        # Track successfully renamed threads
+        successfully_renamed = set()
+
         # Rename each thread
         for thread, old_number in threads_to_renumber:
             new_number = old_number - 1
@@ -1227,6 +1259,7 @@ async def _renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int
             try:
                 await edit_thread_with_retry(thread, name=new_name)
                 renumbered_count += 1
+                successfully_renamed.add(thread.id)  # Track success
                 logger.info("🔢 Debate Renumbered", [
                     ("Old Number", f"#{old_number}"),
                     ("New Number", f"#{new_number}"),
@@ -1241,17 +1274,22 @@ async def _renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int
                 ])
 
         # Update the debate counter to reflect the new highest number
+        # Recalculate based on ACTUAL final state, not assumed success
         if threads_to_renumber:
-            # Build a lookup dict for O(1) access instead of O(n) list comprehension
-            renumbered_ids = {t[0].id: t[1] for t in threads_to_renumber}
+            # Build lookup dict only for SUCCESSFULLY renamed threads
+            renumbered_ids = {
+                t[0].id: t[1] for t in threads_to_renumber
+                if t[0].id in successfully_renamed
+            }
 
             # Find the actual highest number now
             max_number = 0
             for thread in all_threads:
                 if thread.id in renumbered_ids:
-                    # This thread was renumbered - use old number - 1
+                    # This thread was successfully renumbered - use old number - 1
                     max_number = max(max_number, renumbered_ids[thread.id] - 1)
                 else:
+                    # Thread wasn't renamed or rename failed - use current number
                     num = _extract_debate_number(thread.name)
                     if num is not None:
                         max_number = max(max_number, num)
@@ -1262,6 +1300,8 @@ async def _renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int
                     json.dump({"count": max_number}, f)
                 logger.info("🔢 Debate Counter Updated", [
                     ("New Count", str(max_number)),
+                    ("Renamed", str(len(successfully_renamed))),
+                    ("Failed", str(len(threads_to_renumber) - len(successfully_renamed))),
                 ])
             except (IOError, OSError) as e:
                 logger.warning("🔢 Failed To Update Debate Counter", [
