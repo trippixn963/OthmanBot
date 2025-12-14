@@ -922,6 +922,11 @@ async def on_debate_reaction_add(
                 ("Message", str(message.id)),
                 ("Type", vote_type),
             ])
+            # Remove the reaction to signal the vote didn't count
+            try:
+                await reaction.remove(user)
+            except discord.HTTPException:
+                pass
             return
     except Exception as e:
         logger.error("Vote Recording Exception", [
@@ -930,6 +935,11 @@ async def on_debate_reaction_add(
             ("Type", vote_type),
             ("Error", str(e)),
         ])
+        # Remove the reaction to signal the vote didn't count
+        try:
+            await reaction.remove(user)
+        except discord.HTTPException:
+            pass
         return
 
     logger.info("Vote Recorded", [
@@ -994,9 +1004,18 @@ async def on_debate_reaction_remove(
     if not hasattr(bot, 'debates_service') or bot.debates_service is None:
         return
 
-    # Remove the vote
+    # Remove the vote and check if it existed
     vote_type = "Upvote" if emoji == UPVOTE_EMOJI else "Downvote"
-    bot.debates_service.remove_vote(user.id, reaction.message.id)
+    removed = bot.debates_service.remove_vote(user.id, reaction.message.id)
+
+    if not removed:
+        # Vote wasn't in database (already removed or never recorded)
+        logger.debug("Vote Already Removed Or Not Found", [
+            ("Voter", f"{user.name} ({user.id})"),
+            ("Message", str(reaction.message.id)),
+            ("Type", vote_type),
+        ])
+        return
 
     logger.info("Vote Removed", [
         ("Voter", f"{user.name} ({user.id})"),
@@ -1294,10 +1313,16 @@ async def _renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int
                     if num is not None:
                         max_number = max(max_number, num)
 
-            # Update the counter file
+            # Update the counter file with file locking to prevent race conditions
+            lock_file = DEBATE_COUNTER_FILE.with_suffix('.lock')
             try:
-                with open(DEBATE_COUNTER_FILE, "w") as f:
-                    json.dump({"count": max_number}, f)
+                with open(lock_file, 'w') as lock:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                    try:
+                        with open(DEBATE_COUNTER_FILE, "w") as f:
+                            json.dump({"count": max_number}, f)
+                    finally:
+                        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
                 logger.info("🔢 Debate Counter Updated", [
                     ("New Count", str(max_number)),
                     ("Renamed", str(len(successfully_renamed))),

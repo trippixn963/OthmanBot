@@ -72,60 +72,71 @@ class BanExpiryScheduler:
             if not expired_bans:
                 return
 
-            # Log each expired ban
+            # Log each expired ban - wrap each in try-except to prevent one failure
+            # from stopping processing of remaining bans
             for ban in expired_bans:
-                user_id = ban['user_id']
-                thread_id = ban['thread_id']
-                scope = f"thread {thread_id}" if thread_id else "all debates"
-
-                # Try to get user display name
                 try:
-                    user = await self.bot.fetch_user(user_id)
-                    display_name = f"{user.display_name} ({user_id})"
-                except Exception:
-                    display_name = f"User {user_id}"
+                    user_id = ban['user_id']
+                    thread_id = ban['thread_id']
+                    scope = f"thread {thread_id}" if thread_id else "all debates"
 
-                logger.tree("Auto-Unban: Ban Expired", [
-                    ("User", display_name),
-                    ("Scope", scope),
-                    ("Expired At", ban['expires_at']),
-                ], emoji="⏰")
+                    # Try to get user display name
+                    try:
+                        user = await self.bot.fetch_user(user_id)
+                        display_name = f"{user.display_name} ({user_id})"
+                    except Exception:
+                        display_name = f"User {user_id}"
 
-                # Log to webhook if available
-                try:
-                    if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
-                        # Try to get user info
-                        try:
-                            user = await self.bot.fetch_user(user_id)
-                            display_name = user.display_name if user else f"User {user_id}"
-                        except Exception:
-                            display_name = f"User {user_id}"
+                    logger.tree("Auto-Unban: Ban Expired", [
+                        ("User", display_name),
+                        ("Scope", scope),
+                        ("Expired At", ban['expires_at']),
+                    ], emoji="⏰")
 
-                        await self.bot.interaction_logger.log_ban_expired(
-                            user_id, scope, display_name
-                        )
+                    # Log to webhook if available
+                    try:
+                        if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
+                            # Try to get user info
+                            try:
+                                user = await self.bot.fetch_user(user_id)
+                                webhook_display_name = user.display_name if user else f"User {user_id}"
+                            except Exception:
+                                webhook_display_name = f"User {user_id}"
+
+                            await self.bot.interaction_logger.log_ban_expired(
+                                user_id, scope, webhook_display_name
+                            )
+                    except Exception as e:
+                        logger.warning("Failed to log auto-unban to webhook", [
+                            ("User ID", str(user_id)),
+                            ("Error", str(e)),
+                        ])
+
+                    # Log to case system (for mods server forum)
+                    try:
+                        if hasattr(self.bot, 'case_log_service') and self.bot.case_log_service:
+                            # Get display name for case log
+                            try:
+                                user = await self.bot.fetch_user(user_id)
+                                case_display_name = user.display_name if user else f"User {user_id}"
+                            except Exception:
+                                case_display_name = f"User {user_id}"
+
+                            await self.bot.case_log_service.log_ban_expired(
+                                user_id=user_id,
+                                scope=scope,
+                                display_name=case_display_name
+                            )
+                    except Exception as e:
+                        logger.warning("Failed to log auto-unban to case system", [
+                            ("User ID", str(user_id)),
+                            ("Error", str(e)),
+                        ])
+
                 except Exception as e:
-                    logger.warning("Failed to log auto-unban to webhook", [
-                        ("Error", str(e)),
-                    ])
-
-                # Log to case system (for mods server forum)
-                try:
-                    if hasattr(self.bot, 'case_log_service') and self.bot.case_log_service:
-                        # Get display name for case log
-                        try:
-                            user = await self.bot.fetch_user(user_id)
-                            case_display_name = user.display_name if user else f"User {user_id}"
-                        except Exception:
-                            case_display_name = f"User {user_id}"
-
-                        await self.bot.case_log_service.log_ban_expired(
-                            user_id=user_id,
-                            scope=scope,
-                            display_name=case_display_name
-                        )
-                except Exception as e:
-                    logger.warning("Failed to log auto-unban to case system", [
+                    # Log error but continue processing other bans
+                    logger.error("Failed to process expired ban", [
+                        ("Ban", str(ban)),
                         ("Error", str(e)),
                     ])
 

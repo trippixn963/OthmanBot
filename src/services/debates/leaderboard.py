@@ -52,6 +52,7 @@ class LeaderboardManager:
         self.db = db
         self._task: Optional[asyncio.Task] = None
         self._thread: Optional[discord.Thread] = None
+        self._refresh_lock = asyncio.Lock()  # Prevent concurrent refreshes
 
     @property
     def is_running(self) -> bool:
@@ -521,37 +522,39 @@ class LeaderboardManager:
         if not self._thread:
             return
 
-        embeds = self.db.get_all_month_embeds()
-        for embed_data in embeds:
-            try:
-                message = await self._thread.fetch_message(embed_data["message_id"])
-                content = self._generate_month_content(embed_data["year"], embed_data["month"])
-                await edit_message_with_retry(message, content=content, embed=None)
-                await asyncio.sleep(0.5)  # Rate limit delay between edits
-            except discord.NotFound:
-                # Message deleted, remove from db
-                self.db.delete_month_embed(embed_data["year"], embed_data["month"])
-            except discord.HTTPException as e:
-                if e.code == 50083:  # Thread is archived
-                    try:
-                        await edit_thread_with_retry(self._thread, archived=False)
-                        message = await self._thread.fetch_message(embed_data["message_id"])
-                        content = self._generate_month_content(embed_data["year"], embed_data["month"])
-                        await edit_message_with_retry(message, content=content, embed=None)
-                    except Exception:
-                        logger.error("📊 Failed To Refresh Message (Archived Thread)", [
+        # Prevent concurrent refreshes from multiple member events
+        async with self._refresh_lock:
+            embeds = self.db.get_all_month_embeds()
+            for embed_data in embeds:
+                try:
+                    message = await self._thread.fetch_message(embed_data["message_id"])
+                    content = self._generate_month_content(embed_data["year"], embed_data["month"])
+                    await edit_message_with_retry(message, content=content, embed=None)
+                    await asyncio.sleep(0.5)  # Rate limit delay between edits
+                except discord.NotFound:
+                    # Message deleted, remove from db
+                    self.db.delete_month_embed(embed_data["year"], embed_data["month"])
+                except discord.HTTPException as e:
+                    if e.code == 50083:  # Thread is archived
+                        try:
+                            await edit_thread_with_retry(self._thread, archived=False)
+                            message = await self._thread.fetch_message(embed_data["message_id"])
+                            content = self._generate_month_content(embed_data["year"], embed_data["month"])
+                            await edit_message_with_retry(message, content=content, embed=None)
+                        except Exception:
+                            logger.error("📊 Failed To Refresh Message (Archived Thread)", [
+                                ("Data", str(embed_data)),
+                            ])
+                    else:
+                        logger.error("📊 Failed To Refresh Message", [
                             ("Data", str(embed_data)),
+                            ("Error", str(e)),
                         ])
-                else:
+                except Exception as e:
                     logger.error("📊 Failed To Refresh Message", [
                         ("Data", str(embed_data)),
                         ("Error", str(e)),
                     ])
-            except Exception as e:
-                logger.error("📊 Failed To Refresh Message", [
-                    ("Data", str(embed_data)),
-                    ("Error", str(e)),
-                ])
 
 
 # =============================================================================
