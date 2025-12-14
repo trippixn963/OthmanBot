@@ -9,7 +9,7 @@ Server: discord.gg/syria
 """
 
 import asyncio
-from typing import TYPE_CHECKING, List, Tuple, Callable, Any
+from typing import TYPE_CHECKING, List, Tuple, Any
 
 from src.core.logger import logger
 from src.services.webhook_alerts import get_alert_service
@@ -103,43 +103,63 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
         bot.presence_task.cancel()
         cleanup_tasks.append(("Presence Task", _cancel_task(bot.presence_task)))
 
-    # 2. Stop content rotation scheduler
+    # 3. Stop content rotation scheduler
     if bot.content_rotation_scheduler:
         if hasattr(bot.content_rotation_scheduler, 'is_running') and bot.content_rotation_scheduler.is_running:
             cleanup_tasks.append(("Content Rotation Scheduler", bot.content_rotation_scheduler.stop()))
 
-    # 3. Close news scraper session
+    # 4. Close news scraper session
     if bot.news_scraper:
         cleanup_tasks.append(("News Scraper", bot.news_scraper.__aexit__(None, None, None)))
 
-    # 4. Close soccer scraper session
+    # 5. Close soccer scraper session
     if bot.soccer_scraper:
         cleanup_tasks.append(("Soccer Scraper", bot.soccer_scraper.__aexit__(None, None, None)))
 
-    # 5. Close gaming scraper session
+    # 6. Close gaming scraper session
     if bot.gaming_scraper:
         cleanup_tasks.append(("Gaming Scraper", bot.gaming_scraper.__aexit__(None, None, None)))
 
-    # 6. Stop debates scheduler
+    # 7. Stop debates scheduler
     if hasattr(bot, 'debates_scheduler') and bot.debates_scheduler:
         if hasattr(bot.debates_scheduler, 'is_running') and bot.debates_scheduler.is_running:
             cleanup_tasks.append(("Debates Scheduler", bot.debates_scheduler.stop()))
 
-    # 7. Stop hot tag manager
+    # 8. Stop hot tag manager
     if hasattr(bot, 'hot_tag_manager') and bot.hot_tag_manager:
         cleanup_tasks.append(("Hot Tag Manager", bot.hot_tag_manager.stop()))
 
-    # 8. Stop leaderboard manager
+    # 9. Stop leaderboard manager
     if hasattr(bot, 'leaderboard_manager') and bot.leaderboard_manager:
         if hasattr(bot.leaderboard_manager, 'is_running') and bot.leaderboard_manager.is_running:
             cleanup_tasks.append(("Leaderboard Manager", bot.leaderboard_manager.stop()))
 
-    # 9. Close database connection
+    # 10. Stop karma reconciliation scheduler
+    if hasattr(bot, 'karma_reconciliation_scheduler') and bot.karma_reconciliation_scheduler:
+        if hasattr(bot.karma_reconciliation_scheduler, 'is_running') and bot.karma_reconciliation_scheduler.is_running:
+            cleanup_tasks.append(("Karma Reconciliation Scheduler", bot.karma_reconciliation_scheduler.stop()))
+
+    # 11. Stop numbering reconciliation scheduler
+    if hasattr(bot, 'numbering_reconciliation_scheduler') and bot.numbering_reconciliation_scheduler:
+        if hasattr(bot.numbering_reconciliation_scheduler, 'is_running') and bot.numbering_reconciliation_scheduler.is_running:
+            cleanup_tasks.append(("Numbering Reconciliation Scheduler", bot.numbering_reconciliation_scheduler.stop()))
+
+    # 12. Stop stats reconciliation scheduler
+    if hasattr(bot, 'stats_reconciliation_scheduler') and bot.stats_reconciliation_scheduler:
+        if hasattr(bot.stats_reconciliation_scheduler, 'is_running') and bot.stats_reconciliation_scheduler.is_running:
+            cleanup_tasks.append(("Stats Reconciliation Scheduler", bot.stats_reconciliation_scheduler.stop()))
+
+    # 13. Stop backup scheduler
+    if hasattr(bot, 'backup_scheduler') and bot.backup_scheduler:
+        if hasattr(bot.backup_scheduler, 'is_running') and bot.backup_scheduler.is_running:
+            cleanup_tasks.append(("Backup Scheduler", bot.backup_scheduler.stop()))
+
+    # 14. Close database connection
     if hasattr(bot, 'debates_service') and bot.debates_service:
         if hasattr(bot.debates_service, 'db') and bot.debates_service.db:
             cleanup_tasks.append(("Debates Database", _close_database(bot.debates_service.db)))
 
-    # 10. Stop health check HTTP server
+    # 15. Stop health check HTTP server
     if hasattr(bot, 'health_server') and bot.health_server:
         cleanup_tasks.append(("Health Check Server", bot.health_server.stop()))
 

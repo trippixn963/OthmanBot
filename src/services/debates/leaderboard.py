@@ -53,6 +53,11 @@ class LeaderboardManager:
         self._task: Optional[asyncio.Task] = None
         self._thread: Optional[discord.Thread] = None
 
+    @property
+    def is_running(self) -> bool:
+        """Check if the leaderboard manager is running."""
+        return self._task is not None and not self._task.done()
+
     async def start(self) -> None:
         """Initialize leaderboard post and start hourly updates."""
         await self._ensure_leaderboard_post()
@@ -474,36 +479,6 @@ class LeaderboardManager:
             lines.append(f"📈 Most active: **{month_name} {stats['most_active_day']}**")
 
         return "\n".join(lines)
-
-    def _get_display_name(self, user_id: int) -> str:
-        """
-        Get display name for a user, with "(left)" suffix if they left.
-
-        Args:
-            user_id: Discord user ID
-
-        Returns:
-            Display name string
-        """
-        # First, try to get from cache
-        cached = self.db.get_cached_user(user_id)
-
-        if cached:
-            # Safely get display_name or username with fallback to avoid KeyError
-            name = cached.get("display_name") or cached.get("username") or f"User {user_id}"
-            if not cached.get("is_member", True):
-                return f"{name} (left)"
-            return name
-
-        # Not in cache, try to get from Discord
-        member = self.bot.get_user(user_id)
-        if member:
-            # Cache the user
-            self.db.cache_user(user_id, member.name, member.display_name)
-            return member.display_name
-
-        # User not found
-        return f"User {user_id}"
 
     # -------------------------------------------------------------------------
     # Member Events

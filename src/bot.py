@@ -90,6 +90,9 @@ from src.handlers.debates import (
 )
 from src.services.debates import DebatesService
 from src.services.webhook_alerts import get_alert_service
+from src.services.interaction_logger import InteractionLogger
+from src.services.daily_stats import DailyStatsService
+from src.services.case_log import CaseLogService
 
 
 # =============================================================================
@@ -207,6 +210,24 @@ class OthmanBot(commands.Bot):
         # =================================================================
         self.alert_service = get_alert_service()
 
+        # =================================================================
+        # Interaction Logger
+        # DESIGN: Logs commands, debates, karma to Discord webhook
+        # =================================================================
+        self.interaction_logger: Optional[InteractionLogger] = None
+
+        # =================================================================
+        # Daily Stats Service
+        # DESIGN: Tracks daily activity and sends summaries at midnight EST
+        # =================================================================
+        self.daily_stats: Optional[DailyStatsService] = None
+
+        # =================================================================
+        # Case Log Service
+        # DESIGN: Logs ban/unban actions to forum threads in mods server
+        # =================================================================
+        self.case_log_service: Optional[CaseLogService] = None
+
     # =========================================================================
     # Properties
     # =========================================================================
@@ -225,9 +246,23 @@ class OthmanBot(commands.Bot):
         # Initialize debates service
         self.debates_service = DebatesService()
 
-        # Load command cogs
-        await self.load_extension("src.commands.debates")
-        await self.load_extension("src.commands.admin")
+        # Initialize interaction logger
+        self.interaction_logger = InteractionLogger(self)
+
+        # Initialize daily stats service
+        self.daily_stats = DailyStatsService()
+        self.daily_stats.bot = self
+
+        # Initialize case log service (for ban/unban logging to mods server)
+        self.case_log_service = CaseLogService(self)
+
+        # Load command cogs (each command in its own file)
+        await self.load_extension("src.commands.toggle")
+        await self.load_extension("src.commands.karma")
+        await self.load_extension("src.commands.disallow")
+        await self.load_extension("src.commands.allow")
+        await self.load_extension("src.commands.rename")
+        await self.load_extension("src.commands.cases")
 
         # Note: Commands will be synced in on_ready for instant guild-specific sync
         logger.info("Bot setup complete - commands will sync on ready")

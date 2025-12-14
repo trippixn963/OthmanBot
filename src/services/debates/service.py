@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import discord
 
 from src.core.logger import logger
+from src.core.config import NY_TZ
 from src.services.debates.database import DebatesDatabase, UserKarma
 
 if TYPE_CHECKING:
@@ -202,7 +203,7 @@ class DebatesService:
                 return None
 
             hot_debates: list[HotDebate] = []
-            cutoff_time = datetime.now() - timedelta(hours=24)
+            cutoff_time = datetime.now(NY_TZ) - timedelta(hours=24)
 
             for thread in threads:
                 if thread.archived:
@@ -219,7 +220,9 @@ class DebatesService:
                     top_contributor: Optional[tuple[int, str, int]] = None  # (user_id, name, karma)
 
                     async for message in thread.history(limit=None):
-                        if message.created_at.replace(tzinfo=None) > cutoff_time:
+                        # Discord message times are UTC-aware, convert for comparison
+                        msg_time = message.created_at.astimezone(NY_TZ)
+                        if msg_time > cutoff_time:
                             recent_replies += 1
 
                         # Calculate message karma from reactions

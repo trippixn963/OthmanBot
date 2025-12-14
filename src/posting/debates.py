@@ -103,12 +103,20 @@ async def post_hot_debate(bot: "OthmanBot") -> None:
             ("Score", f"{hot_debate.hotness_score:.1f}"),
         ])
 
+        # Log to webhook
+        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+            await bot.interaction_logger.log_hot_debate_posted(
+                hot_debate.thread.name, hot_debate.hotness_score,
+                general_channel.name, hot_debate.thread.jump_url
+            )
+
     except discord.HTTPException as e:
         logger.error("🔥 Failed To Post Hot Debate (Discord API Error)", [
+            ("Status", str(e.status)),
             ("Error", str(e)),
         ])
-    except Exception as e:
-        logger.error("🔥 Failed To Post Hot Debate", [
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        logger.error("🔥 Failed To Post Hot Debate (Data Error)", [
             ("Error", str(e)),
         ])
 

@@ -60,7 +60,7 @@ class Article:
     arabic_summary: str
     english_summary: str
     image_url: Optional[str]
-    published_date: datetime = None
+    published_date: Optional[datetime] = None
     source: str = ""
     source_emoji: str = ""
     # Optional fields for specific scrapers
@@ -235,6 +235,17 @@ class BaseScraper:
         """
         article_id: str = self._extract_article_id(url)
         self.fetched_urls.add(article_id)
+
+        # Enforce max cache size to prevent unbounded growth
+        if len(self.fetched_urls) > self.max_cached_urls:
+            # Keep only the most recent entries (arbitrary order, but consistent)
+            sorted_ids = sorted(list(self.fetched_urls))
+            self.fetched_urls = set(sorted_ids[-self.max_cached_urls:])
+            logger.info(f"{self.log_emoji} Trimmed Posted URLs Cache", [
+                ("Type", self.content_type.capitalize()),
+                ("New Size", str(len(self.fetched_urls))),
+            ])
+
         self._save_posted_urls()
 
     def is_already_posted(self, url: str) -> bool:

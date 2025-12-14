@@ -9,7 +9,7 @@ Server: discord.gg/syria
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, Dict, List, TYPE_CHECKING
 
 import discord
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from src.bot import OthmanBot
 
 from src.core.logger import logger
+from src.core.config import NY_TZ
 from src.utils import get_developer_avatar
 
 
@@ -123,7 +124,7 @@ async def calculate_debate_analytics(
         participants = set()
         reply_counts: Dict[int, int] = {}  # user_id -> count
         total_replies = 0
-        last_activity = datetime.min.replace(tzinfo=timezone.utc)  # Start with oldest possible
+        last_activity = datetime.min.replace(tzinfo=NY_TZ)  # Start with oldest possible
         hourly_activity: List[int] = [0] * 5  # Last 5 hours
         total_thread_karma = 0  # Track karma earned from votes in THIS thread
 
@@ -167,14 +168,14 @@ async def calculate_debate_analytics(
             reply_counts[user_id] = reply_counts.get(user_id, 0) + 1
 
             # Calculate hourly activity (for graph)
-            hours_ago = (datetime.now(timezone.utc) - message.created_at).total_seconds() / 3600
+            hours_ago = (datetime.now(NY_TZ) - message.created_at).total_seconds() / 3600
             if hours_ago < 5:
                 hour_index = int(hours_ago)
                 hourly_activity[hour_index] += 1
 
         # If no messages found, set last_activity to now
-        if last_activity == datetime.min.replace(tzinfo=timezone.utc):
-            last_activity = datetime.now(timezone.utc)
+        if last_activity == datetime.min.replace(tzinfo=NY_TZ):
+            last_activity = datetime.now(NY_TZ)
 
         # Find top contributor (by reply count, not including OP's starter message)
         top_contributor = None
@@ -209,7 +210,7 @@ async def calculate_debate_analytics(
             participants=0,
             total_replies=0,
             total_karma=0,
-            last_activity=datetime.now(timezone.utc),
+            last_activity=datetime.now(NY_TZ),
             activity_graph="⚪⚪⚪⚪⚪",
         )
 
@@ -263,7 +264,7 @@ async def generate_analytics_embed(bot: "OthmanBot", analytics: DebateAnalytics)
     )
 
     # Format last activity as relative time
-    now = datetime.now(timezone.utc)
+    now = datetime.now(NY_TZ)
     delta = now - analytics.last_activity
 
     if delta.total_seconds() < 60:

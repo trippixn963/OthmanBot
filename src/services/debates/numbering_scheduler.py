@@ -2,7 +2,7 @@
 Othman Discord Bot - Debate Numbering Reconciliation Scheduler
 ===============================================================
 
-Nightly scheduled debate numbering reconciliation at 00:15 EST.
+Nightly scheduled debate numbering reconciliation at 00:15 NY_TZ.
 Scans all non-deprecated debates and fixes any gaps in numbering.
 
 Author: حَـــــنَّـــــا
@@ -16,20 +16,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Awaitable, Optional
 
-from zoneinfo import ZoneInfo
-
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR
+from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR, NY_TZ
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
-
-
-# =============================================================================
-# Timezone
-# =============================================================================
-
-EST = ZoneInfo("America/New_York")
 
 
 # =============================================================================
@@ -213,7 +204,7 @@ class NumberingReconciliationScheduler:
     """
     Scheduler for nightly debate numbering reconciliation.
 
-    Runs at 00:00 EST every night to ensure debate numbers are sequential.
+    Runs at 00:00 NY_TZ every night to ensure debate numbers are sequential.
     """
 
     def __init__(self, callback: Callable[[], Awaitable[dict]]) -> None:
@@ -227,7 +218,7 @@ class NumberingReconciliationScheduler:
         self._task: asyncio.Task | None = None
         self._running = False
 
-        # Schedule time: 00:15 EST (15 minutes after midnight)
+        # Schedule time: 00:15 NY_TZ (15 minutes after midnight)
         self.schedule_hour = 0
         self.schedule_minute = 15
 
@@ -240,7 +231,7 @@ class NumberingReconciliationScheduler:
         self._running = True
         self._task = asyncio.create_task(self._scheduler_loop())
         logger.info("Numbering Reconciliation Scheduler Started", [
-            ("Schedule", "nightly at 00:15 EST"),
+            ("Schedule", "nightly at 00:15 NY_TZ"),
         ])
 
     async def stop(self) -> None:
@@ -259,8 +250,8 @@ class NumberingReconciliationScheduler:
         """Main scheduler loop."""
         while self._running:
             try:
-                # Calculate time until next 00:00 EST
-                now = datetime.now(EST)
+                # Calculate time until next 00:00 NY_TZ
+                now = datetime.now(NY_TZ)
                 target_time = now.replace(
                     hour=self.schedule_hour,
                     minute=self.schedule_minute,

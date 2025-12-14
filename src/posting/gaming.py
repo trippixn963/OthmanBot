@@ -148,6 +148,13 @@ async def post_gaming_article_to_forum(
             ("Title", article.title[:50]),
         ])
 
+        # Log to webhook
+        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+            thread_link = f"https://discord.com/channels/{thread.guild.id}/{thread.id}" if thread.guild else None
+            await bot.interaction_logger.log_news_posted(
+                "gaming", article.title, channel.name, article.source, thread_link
+            )
+
         # Send announcement
         if bot.general_channel_id:
             await send_gaming_announcement(bot, thread, article)

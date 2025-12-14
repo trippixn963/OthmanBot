@@ -4,6 +4,7 @@ Othman Discord Bot - Karma Reconciliation
 
 Reconciles karma based on actual Discord reactions.
 Runs on startup and nightly to catch any missed votes.
+Also ensures starter messages have vote reactions.
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
@@ -20,6 +21,10 @@ from src.core.config import DEBATES_FORUM_ID, DISCORD_ARCHIVED_THREADS_LIMIT
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
+
+# Vote emoji constants
+UPVOTE_EMOJI = "\u2b06\ufe0f"  # ⬆️
+DOWNVOTE_EMOJI = "\u2b07\ufe0f"  # ⬇️
 
 
 # =============================================================================
@@ -45,6 +50,7 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int = 7) -> dict:
         "messages_scanned": 0,
         "votes_added": 0,
         "votes_removed": 0,
+        "reactions_fixed": 0,
         "errors": 0,
     }
 
@@ -80,6 +86,10 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int = 7) -> dict:
 
         for thread in threads_to_scan:
             try:
+                # Ensure starter message has vote reactions
+                await _ensure_starter_reactions(thread, stats)
+
+                # Reconcile karma votes
                 await _reconcile_thread(bot, thread, stats)
                 stats["threads_scanned"] += 1
                 # Small delay to avoid rate limits
@@ -96,6 +106,7 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int = 7) -> dict:
             ("Messages", str(stats['messages_scanned'])),
             ("Added", f"+{stats['votes_added']}"),
             ("Removed", f"-{stats['votes_removed']}"),
+            ("Reactions Fixed", str(stats['reactions_fixed'])),
         ])
 
     except Exception as e:
@@ -105,6 +116,55 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int = 7) -> dict:
         stats["errors"] += 1
 
     return stats
+
+
+async def _ensure_starter_reactions(thread: discord.Thread, stats: dict) -> None:
+    """
+    Ensure the starter message has upvote and downvote reactions.
+
+    Args:
+        thread: Discord thread to check
+        stats: Stats dict to update
+    """
+    try:
+        # Fetch starter message (same ID as thread)
+        starter_message = await thread.fetch_message(thread.id)
+
+        # Check existing reactions
+        has_upvote = False
+        has_downvote = False
+
+        for reaction in starter_message.reactions:
+            emoji_str = str(reaction.emoji)
+            if emoji_str == UPVOTE_EMOJI:
+                has_upvote = True
+            elif emoji_str == DOWNVOTE_EMOJI:
+                has_downvote = True
+
+        # Add missing reactions
+        if not has_upvote:
+            await starter_message.add_reaction(UPVOTE_EMOJI)
+            stats["reactions_fixed"] += 1
+            logger.info("Added Missing Upvote Reaction", [
+                ("Thread", thread.name[:30]),
+            ])
+            await asyncio.sleep(0.3)
+
+        if not has_downvote:
+            await starter_message.add_reaction(DOWNVOTE_EMOJI)
+            stats["reactions_fixed"] += 1
+            logger.info("Added Missing Downvote Reaction", [
+                ("Thread", thread.name[:30]),
+            ])
+            await asyncio.sleep(0.3)
+
+    except discord.NotFound:
+        logger.debug(f"Starter message not found for thread {thread.id}")
+    except discord.HTTPException as e:
+        logger.warning("Failed To Fix Starter Reactions", [
+            ("Thread", thread.name[:30]),
+            ("Error", str(e)),
+        ])
 
 
 async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dict) -> None:

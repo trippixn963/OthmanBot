@@ -31,6 +31,15 @@ from src.services.webhook_alerts import (
     get_alert_service,
 )
 
+# Interaction Logger
+from src.services.interaction_logger import InteractionLogger
+
+# Daily Stats
+from src.services.daily_stats import DailyStatsService
+
+# Case Log
+from src.services.case_log import CaseLogService
+
 __all__ = [
     # Scrapers
     "BaseScraper",
@@ -46,4 +55,10 @@ __all__ = [
     # Webhook Alerts
     "WebhookAlertService",
     "get_alert_service",
+    # Interaction Logger
+    "InteractionLogger",
+    # Daily Stats
+    "DailyStatsService",
+    # Case Log
+    "CaseLogService",
 ]

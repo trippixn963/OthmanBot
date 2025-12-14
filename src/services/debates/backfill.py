@@ -18,20 +18,14 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Callable, Awaitable
 
 import discord
-from zoneinfo import ZoneInfo
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR
+from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR, NY_TZ
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
 
 
-# =============================================================================
-# Timezone
-# =============================================================================
-
-EST = ZoneInfo("America/New_York")
 
 
 async def backfill_debate_stats(bot: "OthmanBot") -> dict:
@@ -327,7 +321,7 @@ class StatsReconciliationScheduler:
         while self._running:
             try:
                 # Calculate time until next 00:30 EST
-                now = datetime.now(EST)
+                now = datetime.now(NY_TZ)
                 target_time = now.replace(
                     hour=self.schedule_hour,
                     minute=self.schedule_minute,
