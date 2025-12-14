@@ -140,13 +140,19 @@ class BanExpiryScheduler:
                         ("Error", str(e)),
                     ])
 
-            # Remove all expired bans
-            removed_count = db.remove_expired_bans()
+            # Remove all expired bans from database
+            try:
+                removed_count = db.remove_expired_bans()
 
-            if removed_count > 0:
-                logger.tree("Auto-Unban Complete", [
-                    ("Bans Removed", str(removed_count)),
-                ], emoji="✅")
+                if removed_count > 0:
+                    logger.tree("Auto-Unban Complete", [
+                        ("Bans Removed", str(removed_count)),
+                    ], emoji="✅")
+            except Exception as e:
+                logger.error("Failed to Remove Expired Bans from Database", [
+                    ("Expired Bans Count", str(len(expired_bans))),
+                    ("Error", str(e)),
+                ])
 
         except Exception as e:
             logger.error("Error In Ban Expiry Check", [
