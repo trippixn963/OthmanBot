@@ -249,9 +249,10 @@ class MiniTreeLogger:
             except RuntimeError:
                 # No event loop running, skip webhook
                 pass
-        except Exception:
-            # Don't let webhook errors break logging
-            pass
+        except Exception as e:
+            # Log webhook errors to stderr to avoid breaking main logging
+            import sys
+            print(f"[LOGGER] Webhook setup error: {e}", file=sys.stderr)
 
     async def _async_send_webhook(self, payload: dict) -> None:
         """Send webhook payload asynchronously."""
@@ -263,8 +264,10 @@ class MiniTreeLogger:
                     timeout=aiohttp.ClientTimeout(total=5)
                 ) as response:
                     pass  # Fire and forget
-        except Exception:
-            pass  # Silently ignore webhook errors
+        except Exception as e:
+            # Log webhook errors to stderr to avoid recursion
+            import sys
+            print(f"[LOGGER] Webhook send error: {e}", file=sys.stderr)
 
     # =========================================================================
     # Private Methods - Formatting
