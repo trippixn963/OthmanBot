@@ -852,6 +852,9 @@ Severe/Habitual          →  Permanent
         """
         Log when a user with a case thread rejoins the server.
 
+        If the user is still banned (disallowed), ping the moderator who banned them
+        to alert them that the user tried to rejoin thinking it would remove their ban.
+
         Args:
             member: The member who rejoined
         """
@@ -865,9 +868,27 @@ Severe/Habitual          →  Permanent
 
             case_thread = await self._get_case_thread(case['thread_id'])
             if case_thread:
+                # Check if user is still banned
+                active_bans = self.db.get_user_bans(member.id)
+                is_still_banned = len(active_bans) > 0
+
+                # Get the moderator(s) who banned them
+                banned_by_ids = set()
+                for ban in active_bans:
+                    if ban.get('banned_by'):
+                        banned_by_ids.add(ban['banned_by'])
+
+                # Choose embed color based on ban status
+                if is_still_banned:
+                    embed_color = discord.Color.red()  # Red - still banned
+                    title = "🚨 Banned User Rejoined Server"
+                else:
+                    embed_color = discord.Color.gold()  # Gold - normal rejoin
+                    title = "🔄 User Rejoined Server"
+
                 embed = discord.Embed(
-                    title="🔄 User Rejoined Server",
-                    color=discord.Color.gold(),
+                    title=title,
+                    color=embed_color,
                     description=f"**{member.display_name}** has rejoined the server"
                 )
                 embed.set_thumbnail(url=member.display_avatar.url)
@@ -891,12 +912,38 @@ Severe/Habitual          →  Permanent
                         inline=False
                     )
 
+                # If still banned, add prominent warning
+                if is_still_banned:
+                    ban_scopes = []
+                    for ban in active_bans:
+                        if ban.get('thread_id'):
+                            ban_scopes.append(f"Thread `{ban['thread_id']}`")
+                        else:
+                            ban_scopes.append("All Debates")
+
+                    embed.add_field(
+                        name="🚫 STILL BANNED",
+                        value=f"User rejoined while banned from: {', '.join(ban_scopes)}\n"
+                              f"Ban is **still active** - leaving does not remove bans!",
+                        inline=False
+                    )
+
                 await case_thread.send(embed=embed)
+
+                # If still banned, ping the moderator(s) who banned them
+                if is_still_banned and banned_by_ids:
+                    mod_pings = " ".join(f"<@{mod_id}>" for mod_id in banned_by_ids)
+                    await case_thread.send(
+                        f"{mod_pings} This user you banned has rejoined the server. "
+                        f"Their ban is still active - they may have thought leaving would remove it."
+                    )
 
                 logger.info("Case Log: User Rejoined Server Logged", [
                     ("User", f"{member.display_name} ({member.id})"),
                     ("Case ID", f"{case['case_id']:04d}"),
                     ("Previous Bans", str(ban_count)),
+                    ("Still Banned", "Yes" if is_still_banned else "No"),
+                    ("Mods Pinged", str(len(banned_by_ids)) if is_still_banned else "0"),
                 ])
 
         except Exception as e:
