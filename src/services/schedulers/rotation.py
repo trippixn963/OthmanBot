@@ -22,7 +22,7 @@ from typing import Optional, Callable, Any
 from enum import Enum
 
 from src.core.logger import logger
-from src.core.config import SCHEDULER_ERROR_RETRY
+from src.core.config import SCHEDULER_ERROR_RETRY, BOT_DISABLED_CHECK_INTERVAL
 
 
 # =============================================================================
@@ -227,7 +227,7 @@ class ContentRotationScheduler:
             try:
                 # Check if bot is disabled
                 if self.bot and getattr(self.bot, 'disabled', False):
-                    await asyncio.sleep(60)  # Check again in 1 minute
+                    await asyncio.sleep(BOT_DISABLED_CHECK_INTERVAL)
                     continue
 
                 next_post_time: datetime = self._calculate_next_post_time()
@@ -235,11 +235,11 @@ class ContentRotationScheduler:
 
                 if wait_seconds > 0:
                     emoji = self.emojis[self.next_content_type]
-                    logger.info(f"{emoji} Next Content Rotation Scheduled", [
+                    logger.tree("Next Content Rotation Scheduled", [
                         ("Content Type", self.next_content_type.value),
                         ("Time", next_post_time.strftime('%I:%M %p')),
                         ("In", f"{wait_seconds / 60:.1f} minutes"),
-                    ])
+                    ], emoji=emoji)
                     await asyncio.sleep(wait_seconds)
 
                 # Check again after sleep in case bot was disabled while waiting
@@ -279,18 +279,18 @@ class ContentRotationScheduler:
             callback = self.callbacks[content_type]
             scraper = self.scrapers[content_type]
 
-            logger.info(f"{emoji} Hourly Content Rotation Triggered", [
+            logger.tree("Hourly Content Rotation Triggered", [
                 ("Content Type", content_type.value),
-            ])
+            ], emoji=emoji)
 
             # Check if this content type has new unposted articles
             if scraper and await self._has_new_content(content_type, scraper):
                 # Post this content type
                 try:
                     await callback()
-                    logger.success(f"{emoji} Content Posted Successfully", [
+                    logger.tree("Content Posted Successfully", [
                         ("Content Type", content_type.value),
-                    ])
+                    ], emoji="✅")
 
                     # Move to next content type in rotation for next hour
                     self._rotate_to_next_type()
@@ -298,20 +298,20 @@ class ContentRotationScheduler:
                     return
 
                 except Exception as e:
-                    logger.error(f"{emoji} Failed to Post Content", [
+                    logger.tree("Failed to Post Content", [
                         ("Content Type", content_type.value),
                         ("Error", str(e)),
-                    ])
+                    ], emoji="❌")
                     # Still rotate even if posting failed
                     self._rotate_to_next_type()
                     self._save_state()
                     return
             else:
                 # No new content for this type, try next type
-                logger.info(f"{emoji} No New Content Available", [
+                logger.tree("No New Content Available", [
                     ("Content Type", content_type.value),
                     ("Action", "Skipping to next type"),
-                ])
+                ], emoji=emoji)
                 self._rotate_to_next_type()
                 attempts += 1
 

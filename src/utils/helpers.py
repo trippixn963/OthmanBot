@@ -8,6 +8,7 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import asyncio
 import os
 from typing import TYPE_CHECKING, Optional
 
@@ -140,13 +141,51 @@ async def get_developer_avatar(bot: "OthmanBot") -> str:
     developer_id_str = os.getenv("DEVELOPER_ID")
     if developer_id_str and developer_id_str.isdigit():
         try:
-            developer = await bot.fetch_user(int(developer_id_str))
-            if developer is not None:
-                developer_avatar_url = developer.display_avatar.url
-        except (discord.NotFound, discord.HTTPException):
+            async with asyncio.timeout(5.0):  # 5 second timeout for API call
+                developer = await bot.fetch_user(int(developer_id_str))
+                if developer is not None:
+                    developer_avatar_url = developer.display_avatar.url
+        except (discord.NotFound, discord.HTTPException, asyncio.TimeoutError):
             pass  # Use bot avatar as fallback
 
     return developer_avatar_url
+
+
+# =============================================================================
+# String Truncation Helpers
+# =============================================================================
+
+def truncate(text: str, max_length: int, ellipsis: str = "...") -> str:
+    """
+    Truncate text to a maximum length with optional ellipsis.
+
+    Args:
+        text: The text to truncate
+        max_length: Maximum length (including ellipsis if added)
+        ellipsis: String to append if truncated (default: "...")
+
+    Returns:
+        Truncated text with ellipsis if it exceeded max_length
+    """
+    if not text or len(text) <= max_length:
+        return text
+    return text[:max_length - len(ellipsis)] + ellipsis
+
+
+def truncate_for_log(text: str, max_length: int = 30) -> str:
+    """
+    Truncate text for logging purposes (no ellipsis).
+
+    Args:
+        text: The text to truncate
+        max_length: Maximum length (default: 30)
+
+    Returns:
+        Truncated text without ellipsis
+    """
+    if not text:
+        return ""
+    return text[:max_length]
 
 
 __all__ = [
@@ -154,4 +193,6 @@ __all__ = [
     "safe_fetch_message",
     "safe_fetch_member",
     "safe_fetch_user",
+    "truncate",
+    "truncate_for_log",
 ]

@@ -83,14 +83,41 @@ async def post_news(bot: "OthmanBot") -> None:
             ("Status", str(e.status)),
             ("Error", str(e)),
         ])
+        # Log to webhook
+        try:
+            if hasattr(bot, 'webhook_alerts') and bot.webhook_alerts:
+                await bot.webhook_alerts.send_error_alert(
+                    "News Posting Error (Discord API)",
+                    f"Status: {e.status}, Error: {str(e)}"
+                )
+        except Exception as webhook_err:
+            logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
     except aiohttp.ClientError as e:
         logger.error("📰 Network Error Fetching News", [
             ("Error", str(e)),
         ])
+        # Log to webhook
+        try:
+            if hasattr(bot, 'webhook_alerts') and bot.webhook_alerts:
+                await bot.webhook_alerts.send_error_alert(
+                    "News Posting Error (Network)",
+                    str(e)
+                )
+        except Exception as webhook_err:
+            logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
     except (ValueError, KeyError, TypeError) as e:
         logger.error("📰 Data Error Processing News", [
             ("Error", str(e)),
         ])
+        # Log to webhook
+        try:
+            if hasattr(bot, 'webhook_alerts') and bot.webhook_alerts:
+                await bot.webhook_alerts.send_error_alert(
+                    "News Posting Error (Data Processing)",
+                    str(e)
+                )
+        except Exception as webhook_err:
+            logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
 
 
 # =============================================================================
@@ -200,6 +227,15 @@ async def post_article_to_forum(
         logger.error("📰 Failed To Create Forum Post", [
             ("Error", str(e)),
         ])
+        # Log to webhook
+        try:
+            if hasattr(bot, 'webhook_alerts') and bot.webhook_alerts:
+                await bot.webhook_alerts.send_error_alert(
+                    "News Forum Post Failed",
+                    f"Article: {article.title[:50]}, Error: {str(e)}"
+                )
+        except Exception as webhook_err:
+            logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
     finally:
         cleanup_temp_file(temp_image_path)
         cleanup_temp_file(temp_video_path)

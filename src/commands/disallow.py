@@ -21,7 +21,10 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, NY_TZ
+from src.core.config import (
+    DEBATES_FORUM_ID, NY_TZ, BATCH_PROCESSING_DELAY, REACTION_DELAY,
+    DISCORD_API_DELAY, DISCORD_AUTOCOMPLETE_LIMIT
+)
 from src.utils import get_developer_avatar, remove_reaction_safe
 
 if TYPE_CHECKING:
@@ -134,7 +137,7 @@ async def thread_id_autocomplete(
     if current and current != "all" and current_lower != "all debates":
         choices.append(app_commands.Choice(name=f"Thread: {current}", value=current))
 
-    return choices[:25]
+    return choices[:DISCORD_AUTOCOMPLETE_LIMIT]
 
 
 async def duration_autocomplete(
@@ -156,7 +159,7 @@ async def duration_autocomplete(
         if current_lower not in [n.lower() for n, _ in DURATION_SUGGESTIONS]:
             choices.insert(0, app_commands.Choice(name=f"Custom: {current}", value=current))
 
-    return choices[:25]  # Discord limit
+    return choices[:DISCORD_AUTOCOMPLETE_LIMIT]  # Discord limit
 
 
 # =============================================================================
@@ -201,6 +204,15 @@ class DisallowCog(commands.Cog):
                 ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
                 ("Reason", "Debates service not initialized"),
             ])
+            # Log failure to webhook
+            try:
+                if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
+                    await self.bot.interaction_logger.log_command(
+                        interaction, "disallow", success=False,
+                        details="Debates service not initialized"
+                    )
+            except Exception as e:
+                logger.debug("Webhook log failed", [("Error", str(e))])
             await interaction.response.send_message(
                 "Debates system is not available.",
                 ephemeral=True
@@ -386,13 +398,16 @@ class DisallowCog(commands.Cog):
                         threads_to_process.append(thread)
                 except discord.NotFound:
                     # Thread was deleted
-                    logger.debug(f"Thread {thread_id} not found (deleted)")
+                    logger.debug("Thread Not Found (Deleted)", [
+                        ("Thread ID", str(thread_id)),
+                    ])
                 except discord.HTTPException as e:
-                    logger.warning(f"Failed to fetch thread {thread_id}", [
+                    logger.warning("Failed To Fetch Thread", [
+                        ("Thread ID", str(thread_id)),
                         ("Error", str(e)),
                     ])
                 # Small delay between fetches to avoid rate limits
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(BATCH_PROCESSING_DELAY)
 
             logger.info("Threads Fetched For Cleanup", [
                 ("User", f"{user.name} ({user.id})"),
@@ -407,14 +422,19 @@ class DisallowCog(commands.Cog):
                     analytics_msg_id = self.bot.debates_service.db.get_analytics_message(thread.id)
 
                     if not analytics_msg_id:
-                        logger.debug(f"No analytics message found for thread {thread.id}")
+                        logger.debug("No Analytics Message Found", [
+                            ("Thread ID", str(thread.id)),
+                        ])
                         continue
 
                     # Fetch the analytics message
                     try:
                         analytics_message = await thread.fetch_message(analytics_msg_id)
                     except discord.NotFound:
-                        logger.debug(f"Analytics message {analytics_msg_id} not found in thread {thread.id}")
+                        logger.debug("Analytics Message Not Found", [
+                            ("Message ID", str(analytics_msg_id)),
+                            ("Thread ID", str(thread.id)),
+                        ])
                         continue
 
                     # Log all reactions on this message for debugging
@@ -450,14 +470,17 @@ class DisallowCog(commands.Cog):
                                         ("Thread", thread.name[:30]),
                                         ("Thread ID", str(thread.id)),
                                     ])
-                            await asyncio.sleep(0.3)  # Rate limit delay
+                            await asyncio.sleep(REACTION_DELAY)  # Rate limit delay
                 except discord.NotFound:
-                    logger.debug(f"Message not found for thread {thread.id}")
+                    logger.debug("Message Not Found During Reaction Cleanup", [
+                        ("Thread ID", str(thread.id)),
+                    ])
                 except discord.HTTPException as e:
-                    logger.warning(f"Failed to process thread {thread.name[:30]}", [
+                    logger.warning("Failed To Process Thread", [
+                        ("Thread", thread.name[:30]),
                         ("Error", str(e)),
                     ])
-                await asyncio.sleep(0.5)  # Delay between threads
+                await asyncio.sleep(DISCORD_API_DELAY)  # Delay between threads
 
             logger.info("Ban Reactions Cleanup Complete", [
                 ("User", f"{user.name} ({user.id})"),

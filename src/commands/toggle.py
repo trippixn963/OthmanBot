@@ -19,7 +19,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DEVELOPER_ID, SYRIA_GUILD_ID, TOGGLE_CHANNEL_IDS
+from src.core.config import DEVELOPER_ID, SYRIA_GUILD_ID, TOGGLE_CHANNEL_IDS, CONTENT_PREVIEW_LENGTH
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -239,7 +239,7 @@ class ToggleCog(commands.Cog):
         except Exception as e:
             embed = discord.Embed(
                 title="Disable Failed",
-                description=f"Error during shutdown: {str(e)[:200]}",
+                description=f"Error during shutdown: {str(e)[:CONTENT_PREVIEW_LENGTH]}",
                 color=discord.Color.red()
             )
             embed.add_field(
@@ -359,7 +359,7 @@ class ToggleCog(commands.Cog):
         except Exception as e:
             embed = discord.Embed(
                 title="Enable Failed",
-                description=f"Error during enable: {str(e)[:200]}",
+                description=f"Error during enable: {str(e)[:CONTENT_PREVIEW_LENGTH]}",
                 color=discord.Color.red()
             )
             embed.add_field(

@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from typing import Optional, TYPE_CHECKING
 
 from src.core.logger import logger
-from src.core.config import NY_TZ
+from src.core.config import NY_TZ, STATUS_CHECK_INTERVAL
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -48,6 +48,30 @@ LATENCY_THRESHOLD_MS = 500  # Alert if latency exceeds this
 
 # Alert throttling (prevent spam for repeated errors)
 ERROR_THROTTLE_SECONDS = 300  # 5 minutes between same error type
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def _handle_task_exception(task: asyncio.Task) -> None:
+    """Handle exceptions from background asyncio tasks."""
+    try:
+        if not task.cancelled() and task.exception():
+            logger.debug("Background Webhook Task Failed", [
+                ("Error", str(task.exception())),
+            ])
+    except asyncio.InvalidStateError:
+        pass  # Task not yet done
+
+
+def _create_background_task(coro) -> asyncio.Task:
+    """Create a background task with error handling."""
+    task = asyncio.create_task(coro)
+    task.add_done_callback(_handle_task_exception)
+    return task
+
+
 LATENCY_THROTTLE_SECONDS = 600  # 10 minutes between latency alerts
 
 # Progress bar settings
@@ -321,7 +345,7 @@ class WebhookAlertService:
         ])
         color = COLOR_ONLINE if status == "Online" else COLOR_OFFLINE
         embed = self._create_status_embed(status, color, include_health=True)
-        asyncio.create_task(self._send_webhook(embed))
+        _create_background_task(self._send_webhook(embed))
 
     async def send_error_alert(self, error_type: str, error_message: str) -> None:
         """Send error alert (no ping, 5min cooldown) to error webhook."""
@@ -344,7 +368,7 @@ class WebhookAlertService:
         embed = self._create_status_embed("Error", COLOR_OFFLINE)
         embed["description"] = f"**Uptime:** {self._get_uptime()}\n\n**Error:** {error_type}\n```{error_message[:500]}```"
 
-        asyncio.create_task(self._send_webhook(embed, use_error_webhook=True))
+        _create_background_task(self._send_webhook(embed, use_error_webhook=True))
 
     async def send_shutdown_alert(self) -> None:
         """Send shutdown alert (awaited)."""
@@ -380,7 +404,7 @@ class WebhookAlertService:
             "Discord connection may be experiencing issues."
         )
 
-        asyncio.create_task(self._send_webhook(embed, use_logging_webhook=True))
+        _create_background_task(self._send_webhook(embed, use_logging_webhook=True))
 
     async def send_recovery_alert(self, recovery_type: str) -> None:
         """
@@ -399,7 +423,7 @@ class WebhookAlertService:
             f"**{recovery_type}** has recovered and is now healthy."
         )
 
-        asyncio.create_task(self._send_webhook(embed, use_logging_webhook=True))
+        _create_background_task(self._send_webhook(embed, use_logging_webhook=True))
 
     def check_latency(self) -> None:
         """Check latency and send alert if too high, or recovery if normalized."""
@@ -467,7 +491,7 @@ class WebhookAlertService:
                     break
                 except Exception as e:
                     logger.debug("Hourly Alert Error", [("Error", str(e))])
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(STATUS_CHECK_INTERVAL)
 
         self._hourly_task = asyncio.create_task(hourly_loop())
 

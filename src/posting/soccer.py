@@ -80,8 +80,18 @@ async def post_soccer_news(bot: "OthmanBot") -> None:
 
     except Exception as e:
         logger.error("⚽ Failed To Post Soccer News", [
+            ("Error Type", type(e).__name__),
             ("Error", str(e)),
         ])
+        # Log to webhook
+        try:
+            if hasattr(bot, 'webhook_alerts') and bot.webhook_alerts:
+                await bot.webhook_alerts.send_error_alert(
+                    "Soccer News Posting Error",
+                    f"{type(e).__name__}: {str(e)}"
+                )
+        except Exception as webhook_err:
+            logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
 
 
 # =============================================================================
@@ -171,6 +181,19 @@ async def post_soccer_article_to_forum(
         if bot.general_channel_id:
             await send_soccer_announcement(bot, thread, article, applied_tags)
 
+    except discord.HTTPException as e:
+        logger.error("⚽ Failed To Create Soccer Forum Post", [
+            ("Error", str(e)),
+        ])
+        # Log to webhook
+        try:
+            if hasattr(bot, 'webhook_alerts') and bot.webhook_alerts:
+                await bot.webhook_alerts.send_error_alert(
+                    "Soccer Forum Post Failed",
+                    f"Article: {article.title[:50]}, Error: {str(e)}"
+                )
+        except Exception as webhook_err:
+            logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
     finally:
         cleanup_temp_file(temp_image_path)
 

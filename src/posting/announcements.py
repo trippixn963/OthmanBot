@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 import discord
 
 from src.core.logger import logger
-from src.utils import get_developer_avatar
+from src.core.config import TEASER_LENGTH
+from src.utils import get_developer_avatar, truncate
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -51,7 +52,7 @@ async def send_general_announcement(
         return
 
     try:
-        teaser = article.english_summary[:100] + "..." if len(article.english_summary) > 100 else article.english_summary
+        teaser = truncate(article.english_summary, TEASER_LENGTH)
 
         embed = discord.Embed(
             title=article.title,
@@ -113,7 +114,7 @@ async def send_soccer_announcement(
         return
 
     try:
-        teaser = article.english_summary[:100] + "..." if len(article.english_summary) > 100 else article.english_summary
+        teaser = truncate(article.english_summary, TEASER_LENGTH)
 
         embed = discord.Embed(
             title=article.title,
@@ -171,7 +172,7 @@ async def send_gaming_announcement(
         return
 
     try:
-        teaser = article.english_summary[:100] + "..." if len(article.english_summary) > 100 else article.english_summary
+        teaser = truncate(article.english_summary, TEASER_LENGTH)
 
         embed = discord.Embed(
             title=article.title,

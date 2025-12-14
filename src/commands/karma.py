@@ -55,7 +55,7 @@ class KarmaCog(commands.Cog):
                 ("Reason", "Debates service not initialized"),
             ])
             # Log failure to webhook
-            if self.bot.interaction_logger:
+            if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
                 await self.bot.interaction_logger.log_command(
                     interaction, "karma", success=False, error="Debates service not initialized"
                 )
@@ -68,12 +68,24 @@ class KarmaCog(commands.Cog):
         target = user or interaction.user
         karma_data = self.bot.debates_service.get_karma(target.id)
         rank = self.bot.debates_service.get_rank(target.id)
+        analytics = self.bot.debates_service.db.get_user_analytics(target.id)
+        streak = self.bot.debates_service.db.get_user_streak(target.id)
+
+        # Calculate engagement ratio
+        total_votes = karma_data.upvotes_received + karma_data.downvotes_received
+        if total_votes > 0:
+            approval_rate = (karma_data.upvotes_received / total_votes) * 100
+            approval_display = f"`{approval_rate:.1f}%`"
+        else:
+            approval_display = "`N/A`"
 
         embed = discord.Embed(
             title=f"Karma for {target.display_name}",
             color=discord.Color.blue()
         )
         embed.set_thumbnail(url=target.display_avatar.url)
+
+        # Row 1: Core stats
         embed.add_field(
             name="Total Karma",
             value=f"`{karma_data.total_karma:,}`",
@@ -85,10 +97,51 @@ class KarmaCog(commands.Cog):
             inline=True
         )
         embed.add_field(
+            name="Approval Rate",
+            value=approval_display,
+            inline=True
+        )
+
+        # Row 2: Votes breakdown
+        embed.add_field(
             name="Votes Received",
-            value=f"Up `{karma_data.upvotes_received:,}` | Down `{karma_data.downvotes_received:,}`",
+            value=f"⬆️ `{karma_data.upvotes_received:,}` | ⬇️ `{karma_data.downvotes_received:,}`",
             inline=False
         )
+
+        # Row 3: Participation stats
+        embed.add_field(
+            name="Debates Participated",
+            value=f"`{analytics['debates_participated']:,}`",
+            inline=True
+        )
+        embed.add_field(
+            name="Debates Created",
+            value=f"`{analytics['debates_created']:,}`",
+            inline=True
+        )
+        embed.add_field(
+            name="Total Messages",
+            value=f"`{analytics['total_messages']:,}`",
+            inline=True
+        )
+
+        # Row 4: Streak stats
+        current_streak = streak['current_streak']
+        longest_streak = streak['longest_streak']
+        streak_emoji = "🔥" if current_streak >= 7 else "⚡" if current_streak >= 3 else "📅"
+        embed.add_field(
+            name=f"{streak_emoji} Daily Streak",
+            value=f"`{current_streak}` day{'s' if current_streak != 1 else ''}",
+            inline=True
+        )
+        embed.add_field(
+            name="🏆 Longest Streak",
+            value=f"`{longest_streak}` day{'s' if longest_streak != 1 else ''}",
+            inline=True
+        )
+        # Empty field for alignment
+        embed.add_field(name="\u200b", value="\u200b", inline=True)
 
         developer_avatar_url = await get_developer_avatar(self.bot)
         embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
@@ -98,8 +151,8 @@ class KarmaCog(commands.Cog):
             ("Target User", f"{target.name} ({target.id})"),
             ("Karma", str(karma_data.total_karma)),
             ("Rank", f"#{rank}"),
-            ("Upvotes", str(karma_data.upvotes_received)),
-            ("Downvotes", str(karma_data.downvotes_received)),
+            ("Approval", approval_display.strip('`')),
+            ("Debates", str(analytics['debates_participated'])),
         ])
 
         await interaction.response.send_message(embed=embed)

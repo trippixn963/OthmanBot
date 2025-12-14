@@ -16,9 +16,10 @@ import discord
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
+    from src.services.debates.database import DebatesDatabase
 
 from src.core.logger import logger
-from src.core.config import NY_TZ
+from src.core.config import NY_TZ, LOG_TITLE_PREVIEW_LENGTH
 from src.utils import get_developer_avatar
 
 
@@ -59,7 +60,7 @@ async def _collect_messages_with_timeout(
         await asyncio.wait_for(collect(), timeout=timeout)
     except asyncio.TimeoutError:
         logger.warning("Thread History Fetch Timed Out", [
-            ("Thread", thread.name[:30]),
+            ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
             ("Timeout", f"{timeout}s"),
             ("Messages Collected", str(len(messages))),
         ])
@@ -107,7 +108,7 @@ class DebateAnalytics:
 
 async def calculate_debate_analytics(
     thread: discord.Thread,
-    database
+    database: "DebatesDatabase"
 ) -> DebateAnalytics:
     """
     Calculate analytics for a debate thread.

@@ -14,7 +14,7 @@ from discord.ext import tasks
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, DISCORD_ARCHIVED_THREADS_LIMIT, NY_TZ
+from src.core.config import DEBATES_FORUM_ID, DISCORD_ARCHIVED_THREADS_LIMIT, NY_TZ, LOG_TITLE_PREVIEW_LENGTH
 from src.utils import edit_thread_with_retry
 from src.services.debates.tags import DEBATE_TAGS, should_add_hot_tag, should_remove_hot_tag
 
@@ -158,7 +158,7 @@ class HotTagManager:
                     # Add Hot tag
                     await self._add_hot_tag(thread)
                     logger.info("🔥 Added Hot Tag", [
-                        ("Thread", thread.name[:30]),
+                        ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
                         ("Messages", str(message_count)),
                         ("Age", f"{hours_since_creation:.1f}h"),
                     ])
@@ -174,7 +174,7 @@ class HotTagManager:
 
         except Exception as e:
             logger.error("Error Processing Thread", [
-                ("Thread", thread.name[:30]),
+                ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
                 ("Error", str(e)),
             ])
             return False
@@ -203,7 +203,7 @@ class HotTagManager:
             if should_remove_hot_tag(message_count, hours_since_last):
                 await self._remove_hot_tag(thread)
                 logger.info("🔥 Removed Hot Tag", [
-                    ("Thread", thread.name[:30]),
+                    ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
                     ("Inactive", f"{hours_since_last:.1f}h"),
                 ])
 
@@ -218,7 +218,7 @@ class HotTagManager:
 
         except Exception as e:
             logger.error("Error Checking Hot Tag Removal", [
-                ("Thread", thread.name[:30]),
+                ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
                 ("Error", str(e)),
             ])
             return False
@@ -294,7 +294,7 @@ class HotTagManager:
 
         except Exception as e:
             logger.error("Error Getting Last Message Time", [
-                ("Thread", thread.name[:30]),
+                ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
                 ("Error", str(e)),
             ])
             # Fallback to creation time
@@ -330,7 +330,7 @@ class HotTagManager:
 
         except Exception as e:
             logger.error("Failed To Add Hot Tag", [
-                ("Thread", thread.name[:30]),
+                ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
                 ("Error", str(e)),
             ])
 
@@ -350,7 +350,7 @@ class HotTagManager:
 
         except Exception as e:
             logger.error("Failed To Remove Hot Tag", [
-                ("Thread", thread.name[:30]),
+                ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
                 ("Error", str(e)),
             ])
 

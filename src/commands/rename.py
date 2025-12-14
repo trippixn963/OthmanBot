@@ -19,7 +19,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID
+from src.core.config import DEBATES_FORUM_ID, REACTION_DELAY, PIN_SYSTEM_MESSAGE_DELAY, LOG_TITLE_PREVIEW_LENGTH
 from src.utils import edit_thread_with_retry, send_message_with_retry, add_reactions_with_delay, delete_message_safe
 from src.handlers.debates import get_next_debate_number, is_english_only, PARTICIPATE_EMOJI
 from src.services.debates.tags import detect_debate_tags
@@ -229,7 +229,7 @@ class RenameCog(commands.Cog):
             for msg in messages_to_delete:
                 await delete_message_safe(msg)
                 deleted_count += 1
-                await asyncio.sleep(0.3)  # Small delay to avoid rate limits
+                await asyncio.sleep(REACTION_DELAY)  # Small delay to avoid rate limits
 
             if deleted_count > 0:
                 logger.info("Thread Cleanup Complete", [
@@ -257,7 +257,7 @@ class RenameCog(commands.Cog):
                         await analytics_message.pin()
 
                         # Delete the "pinned a message" system message
-                        await asyncio.sleep(1.0)  # Wait longer for Discord to create the system message
+                        await asyncio.sleep(PIN_SYSTEM_MESSAGE_DELAY)  # Wait for Discord to create the system message
                         async for msg in thread.history(limit=10):
                             if msg.type == discord.MessageType.pins_add:
                                 await delete_message_safe(msg)
@@ -288,7 +288,7 @@ class RenameCog(commands.Cog):
             if self.bot.interaction_logger:
                 await self.bot.interaction_logger.log_command(
                     interaction, "rename", success=True,
-                    debate=f"#{debate_number}", title=title[:30]
+                    debate=f"#{debate_number}", title=title[:LOG_TITLE_PREVIEW_LENGTH]
                 )
 
         except Exception as e:

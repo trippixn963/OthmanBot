@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, List
 import discord
 
 from src.core.logger import logger
-from src.core.config import SYRIA_GUILD_ID, ALLOWED_GUILD_IDS
+from src.core.config import SYRIA_GUILD_ID, ALLOWED_GUILD_IDS, BOT_STARTUP_DELAY
 from src.core.health import HealthCheckServer
 from src.core.presence import update_presence, presence_update_loop
 from src.core.backup import BackupScheduler
@@ -85,13 +85,16 @@ async def _safe_init(
             await init_func(bot)
         return True
     except asyncio.TimeoutError:
-        logger.error(f"Timeout Initializing {name}", [
+        logger.error("Timeout Initializing Service", [
+            ("Service", name),
             ("Timeout", f"{timeout}s"),
             ("Status", "Skipped - continuing startup"),
         ])
         return False
     except Exception as e:
-        logger.error(f"Failed To Initialize {name}", [
+        logger.error("Failed To Initialize Service", [
+            ("Service", name),
+            ("Error Type", type(e).__name__),
             ("Error", str(e)),
             ("Status", "Skipped - continuing startup"),
         ])
@@ -300,8 +303,9 @@ async def _init_karma_reconciliation(bot: "OthmanBot") -> None:
     reconciliation_task.add_done_callback(_handle_task_exception)
     if not hasattr(bot, '_background_tasks'):
         bot._background_tasks: List[asyncio.Task] = []
-    # Cleanup completed tasks to prevent memory leak
-    _cleanup_completed_tasks(bot)
+    # Cleanup completed tasks to prevent memory leak (cleanup more aggressively if list is large)
+    if len(bot._background_tasks) > 50:
+        _cleanup_completed_tasks(bot)
     bot._background_tasks.append(reconciliation_task)
 
     # Start nightly scheduler (pass bot for webhook alerts)
@@ -336,7 +340,7 @@ def _cleanup_completed_tasks(bot: "OthmanBot") -> None:
 async def _run_startup_reconciliation(bot: "OthmanBot") -> None:
     """Run startup karma reconciliation after a short delay."""
     # Wait a bit for bot to fully initialize
-    await asyncio.sleep(10)
+    await asyncio.sleep(BOT_STARTUP_DELAY)
 
     logger.info("🔄 Running Startup Karma Reconciliation")
     try:

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import discord
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, DISCORD_ARCHIVED_THREADS_LIMIT
+from src.core.config import DEBATES_FORUM_ID, DISCORD_ARCHIVED_THREADS_LIMIT, DISCORD_API_DELAY, REACTION_DELAY, LOG_TITLE_PREVIEW_LENGTH
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -93,7 +93,7 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int = 7) -> dict:
                 await _reconcile_thread(bot, thread, stats)
                 stats["threads_scanned"] += 1
                 # Small delay to avoid rate limits
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(DISCORD_API_DELAY)
             except Exception as e:
                 logger.error("Error Reconciling Thread", [
                     ("Thread ID", str(thread.id)),
@@ -146,23 +146,25 @@ async def _ensure_starter_reactions(thread: discord.Thread, stats: dict) -> None
             await starter_message.add_reaction(UPVOTE_EMOJI)
             stats["reactions_fixed"] += 1
             logger.info("Added Missing Upvote Reaction", [
-                ("Thread", thread.name[:30]),
+                ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
             ])
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(REACTION_DELAY)
 
         if not has_downvote:
             await starter_message.add_reaction(DOWNVOTE_EMOJI)
             stats["reactions_fixed"] += 1
             logger.info("Added Missing Downvote Reaction", [
-                ("Thread", thread.name[:30]),
+                ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
             ])
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(REACTION_DELAY)
 
     except discord.NotFound:
-        logger.debug(f"Starter message not found for thread {thread.id}")
+        logger.debug("Starter Message Not Found", [
+            ("Thread ID", str(thread.id)),
+        ])
     except discord.HTTPException as e:
         logger.warning("Failed To Fix Starter Reactions", [
-            ("Thread", thread.name[:30]),
+            ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
             ("Error", str(e)),
         ])
 

@@ -186,20 +186,20 @@ class BaseScraper:
                     data: dict[str, list[str]] = json.load(f)
                     url_list: list[str] = data.get("posted_urls", [])
                     self.fetched_urls = set(self._extract_article_id(url) for url in url_list)
-                    logger.info(f"{self.log_emoji} Loaded Posted Article IDs", [
+                    logger.tree("Loaded Posted Article IDs", [
                         ("Type", self.content_type.capitalize()),
                         ("Count", str(len(self.fetched_urls))),
-                    ])
+                    ], emoji=self.log_emoji)
             else:
-                logger.info(f"{self.log_emoji} No Cache Found", [
+                logger.tree("No Cache Found", [
                     ("Type", self.content_type.capitalize()),
                     ("Action", "Starting fresh"),
-                ])
+                ], emoji=self.log_emoji)
         except (json.JSONDecodeError, IOError, OSError) as e:
-            logger.warning(f"{self.log_emoji} Failed to Load Posted Article IDs", [
+            logger.tree("Failed to Load Posted Article IDs", [
                 ("Type", self.content_type.capitalize()),
                 ("Error", str(e)),
-            ])
+            ], emoji="⚠️")
             self.fetched_urls = set()
 
     def _save_posted_urls(self) -> None:
@@ -221,10 +221,10 @@ class BaseScraper:
                 ("Count", str(len(ids_to_save))),
             ])
         except (IOError, OSError) as e:
-            logger.warning(f"{self.log_emoji} Failed to Save Posted Article IDs", [
+            logger.tree("Failed to Save Posted Article IDs", [
                 ("Type", self.content_type.capitalize()),
                 ("Error", str(e)),
-            ])
+            ], emoji="⚠️")
 
     def add_posted_url(self, url: str) -> None:
         """
@@ -241,10 +241,10 @@ class BaseScraper:
             # Keep only the most recent entries (arbitrary order, but consistent)
             sorted_ids = sorted(list(self.fetched_urls))
             self.fetched_urls = set(sorted_ids[-self.max_cached_urls:])
-            logger.info(f"{self.log_emoji} Trimmed Posted URLs Cache", [
+            logger.tree("Trimmed Posted URLs Cache", [
                 ("Type", self.content_type.capitalize()),
                 ("New Size", str(len(self.fetched_urls))),
-            ])
+            ], emoji=self.log_emoji)
 
         self._save_posted_urls()
 

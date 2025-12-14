@@ -96,6 +96,14 @@ class CasesCog(commands.Cog):
             ("User Param", user),
         ])
 
+        # Guild check - command only works in servers
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
         if not hasattr(self.bot, 'debates_service') or self.bot.debates_service is None:
             logger.warning("/cases Command Failed - Service Unavailable", [
                 ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
@@ -157,7 +165,8 @@ class CasesCog(commands.Cog):
                 fetched_user = await self.bot.fetch_user(user_id)
                 display_name = fetched_user.display_name if fetched_user else f"User {user_id}"
                 avatar_url = fetched_user.display_avatar.url if fetched_user else None
-            except Exception:
+            except discord.HTTPException as e:
+                logger.debug("Failed to fetch user for case lookup", [("User ID", str(user_id)), ("Error", str(e))])
                 display_name = f"User {user_id}"
                 avatar_url = None
 

@@ -42,6 +42,8 @@ from src.core.config import (
     ANALYTICS_UPDATE_COOLDOWN,
     ANALYTICS_CACHE_MAX_SIZE,
     ANALYTICS_CACHE_CLEANUP_AGE,
+    DISCORD_API_DELAY,
+    REACTION_DELAY,
 )
 from src.services.debates.analytics import (
     calculate_debate_analytics,
@@ -297,10 +299,13 @@ def _get_next_debate_number_sync() -> int:
             finally:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
     except (json.JSONDecodeError, IOError, OSError) as e:
-        logger.warning("🔢 Failed To Get Debate Number", [
+        logger.error("🔢 Failed To Get Debate Number - Using Fallback", [
             ("Error", str(e)),
+            ("Fallback", "Returning timestamp-based number to avoid duplicates"),
         ])
-        return 1
+        # Use timestamp-based fallback to avoid duplicate debate numbers
+        import time
+        return int(time.time()) % 100000  # Unique fallback number
 
 
 async def get_next_debate_number() -> int:
@@ -381,10 +386,21 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
             await bot.debates_service.db.increment_participation_async(
                 message.channel.id, message.author.id
             )
+            # Also update daily streak
+            await bot.debates_service.db.update_user_streak_async(message.author.id)
         except sqlite3.Error as e:
             logger.warning("📊 Failed To Track Participation (DB Error)", [
                 ("Error", str(e)),
             ])
+            # Log to webhook for visibility
+            try:
+                if hasattr(bot, 'webhook_alerts') and bot.webhook_alerts:
+                    await bot.webhook_alerts.send_error_alert(
+                        "Database Error - Participation Tracking",
+                        f"User: {message.author.id}, Thread: {message.channel.id}, Error: {str(e)}"
+                    )
+            except Exception as webhook_err:
+                logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
         except (asyncio.TimeoutError, asyncio.CancelledError) as e:
             logger.warning("📊 Failed To Track Participation (Async Error)", [
                 ("Error", str(e)),
@@ -512,8 +528,8 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                                     )
                         except discord.HTTPException as e:
                             logger.warning("🔐 Failed To Enforce Access Control", [
-                            ("Error", str(e)),
-                        ])
+                                ("Error", str(e)),
+                            ])
                         return
 
                 except discord.NotFound:
@@ -612,7 +628,7 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
 
         # If not available, wait a moment and try fetching from thread
         if starter_message is None:
-            await asyncio.sleep(0.5)  # Small delay to let Discord populate the message
+            await asyncio.sleep(DISCORD_API_DELAY)  # Small delay to let Discord populate the message
 
             # Try to fetch the starter message from the thread itself
             # For forum threads, the thread ID is also the starter message ID
@@ -798,7 +814,7 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                     await analytics_message.pin()
 
                     # Delete the "pinned a message" system message using safe delete
-                    await asyncio.sleep(0.5)  # Wait for Discord to create the system message
+                    await asyncio.sleep(DISCORD_API_DELAY)  # Wait for Discord to create the system message
                     async for msg in thread.history(limit=5):
                         if msg.type == discord.MessageType.pins_add:
                             await delete_message_safe(msg)
@@ -822,6 +838,15 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                     logger.warning("📊 Failed To Track Debate Creator (DB Error)", [
                         ("Error", str(e)),
                     ])
+                    # Log to webhook for visibility
+                    try:
+                        if hasattr(bot, 'webhook_alerts') and bot.webhook_alerts:
+                            await bot.webhook_alerts.send_error_alert(
+                                "Database Error - Debate Creator Tracking",
+                                f"Thread: {thread.id}, Creator: {starter_message.author.id}, Error: {str(e)}"
+                            )
+                    except Exception as webhook_err:
+                        logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
                 except (asyncio.TimeoutError, asyncio.CancelledError) as e:
                     logger.warning("📊 Failed To Track Debate Creator (Async Error)", [
                         ("Error", str(e)),
@@ -1079,7 +1104,11 @@ async def on_member_remove_handler(bot: "OthmanBot", member: discord.Member) -> 
     """
     # Get the debates forum
     debates_forum = bot.get_channel(DEBATES_FORUM_ID)
-    if not debates_forum:
+    if not debates_forum or not isinstance(debates_forum, discord.ForumChannel):
+        logger.warning("Debates forum not available for cleanup", [
+            ("Forum ID", str(DEBATES_FORUM_ID)),
+            ("Type", type(debates_forum).__name__ if debates_forum else "None"),
+        ])
         return
 
     deleted_threads = 0
@@ -1113,10 +1142,10 @@ async def on_member_remove_handler(bot: "OthmanBot", member: discord.Member) -> 
                         success = await remove_reaction_safe(reaction, member)
                         if success:
                             reactions_removed += 1
-                        await asyncio.sleep(0.3)  # Rate limit delay between reaction removals
+                        await asyncio.sleep(REACTION_DELAY)  # Rate limit delay between reaction removals
             except discord.HTTPException:
                 pass
-            await asyncio.sleep(0.5)  # Delay between threads
+            await asyncio.sleep(DISCORD_API_DELAY)  # Delay between threads
 
         for thread in all_threads:
             # If user owns the thread, delete the entire thread
@@ -1142,7 +1171,7 @@ async def on_member_remove_handler(bot: "OthmanBot", member: discord.Member) -> 
                             success = await delete_message_safe(message)
                             if success:
                                 deleted_messages += 1
-                            await asyncio.sleep(0.5)  # Rate limit delay between message deletes
+                            await asyncio.sleep(DISCORD_API_DELAY)  # Rate limit delay between message deletes
                 except discord.HTTPException as e:
                     logger.warning("🔍 Failed To Scan Thread For Messages", [
                         ("Thread", thread.name),
@@ -1270,7 +1299,11 @@ async def _renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int
         Number of threads renumbered
     """
     debates_forum = bot.get_channel(DEBATES_FORUM_ID)
-    if not debates_forum:
+    if not debates_forum or not isinstance(debates_forum, discord.ForumChannel):
+        logger.warning("Debates forum not available for renumbering", [
+            ("Forum ID", str(DEBATES_FORUM_ID)),
+            ("Type", type(debates_forum).__name__ if debates_forum else "None"),
+        ])
         return 0
 
     renumbered_count = 0
@@ -1316,7 +1349,7 @@ async def _renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int
                     ("Thread", title_part if len(parts) == 2 else thread.name),
                     ("Thread ID", str(thread.id)),
                 ])
-                await asyncio.sleep(0.5)  # Rate limit protection
+                await asyncio.sleep(DISCORD_API_DELAY)  # Rate limit protection
             except discord.HTTPException as e:
                 logger.warning("🔢 Failed To Renumber Debate", [
                     ("Thread", thread.name),
