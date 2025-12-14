@@ -574,6 +574,82 @@ class InteractionLogger:
 
         await self._send_log(embed)
 
+    async def log_hot_tag_evaluation_summary(
+        self,
+        stats: dict,
+        duration: float,
+        added_threads: list,
+        removed_threads: list
+    ) -> None:
+        """Log the daily hot tag evaluation summary."""
+        now_est = datetime.now(NY_TZ)
+        time_str = now_est.strftime("%I:%M %p EST")
+        date_str = now_est.strftime("%Y-%m-%d")
+
+        embed = discord.Embed(
+            title="🔥 Daily Hot Tag Evaluation Complete",
+            color=COLOR_HOT,
+            description=f"**Date:** {date_str}\n**Duration:** {duration:.1f}s"
+        )
+
+        # Statistics
+        total_checked = stats.get("active_checked", 0) + stats.get("archived_checked", 0)
+        embed.add_field(
+            name="📊 Statistics",
+            value=(
+                f"**Threads Checked:** {total_checked}\n"
+                f"• Active: {stats.get('active_checked', 0)}\n"
+                f"• Archived: {stats.get('archived_checked', 0)}"
+            ),
+            inline=True
+        )
+
+        embed.add_field(
+            name="🏷️ Tag Changes",
+            value=(
+                f"**Added:** {stats.get('added', 0)}\n"
+                f"**Removed:** {stats.get('removed', 0)}\n"
+                f"**Kept:** {stats.get('kept', 0)}"
+            ),
+            inline=True
+        )
+
+        embed.add_field(
+            name="⏭️ Skipped",
+            value=(
+                f"**No Hot Tag:** {stats.get('skipped_no_change', 0)}\n"
+                f"**Deprecated:** {stats.get('skipped_deprecated', 0)}\n"
+                f"**Errors:** {stats.get('errors', 0)}"
+            ),
+            inline=True
+        )
+
+        # List threads that gained hot tag
+        if added_threads:
+            added_preview = ", ".join(added_threads[:5])
+            if len(added_threads) > 5:
+                added_preview += f" (+{len(added_threads) - 5} more)"
+            embed.add_field(
+                name=f"🔥 Gained Hot Tag ({len(added_threads)})",
+                value=f"`{added_preview}`",
+                inline=False
+            )
+
+        # List threads that lost hot tag
+        if removed_threads:
+            removed_preview = ", ".join(removed_threads[:5])
+            if len(removed_threads) > 5:
+                removed_preview += f" (+{len(removed_threads) - 5} more)"
+            embed.add_field(
+                name=f"❄️ Lost Hot Tag ({len(removed_threads)})",
+                value=f"`{removed_preview}`",
+                inline=False
+            )
+
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+
+        await self._send_log(embed)
+
     # =========================================================================
     # Leaderboard Events
     # =========================================================================

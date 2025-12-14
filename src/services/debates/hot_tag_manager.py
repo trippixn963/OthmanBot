@@ -250,6 +250,15 @@ class HotTagManager:
 
             logger.info("=" * 60)
 
+            # Send webhook summary
+            if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
+                await self.bot.interaction_logger.log_hot_tag_evaluation_summary(
+                    stats=stats,
+                    duration=duration,
+                    added_threads=added_threads,
+                    removed_threads=removed_threads
+                )
+
         except discord.HTTPException as e:
             logger.error("🔥 Hot Tag Evaluation FAILED - Discord API Error", [
                 ("Error", str(e)),
