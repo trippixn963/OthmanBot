@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Callable, Awaitable, Optional
 
 from src.core.logger import logger
 from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR, NY_TZ
+from src.utils import edit_thread_with_retry
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -123,7 +124,7 @@ async def reconcile_debate_numbering(bot: "OthmanBot") -> dict:
                     title = title_match.group(1)
                     new_name = f"{new_num} | {title}"
 
-                    await thread.edit(name=new_name)
+                    await edit_thread_with_retry(thread, name=new_name)
                     stats["threads_renumbered"] += 1
 
                     logger.success("✅ Renumbered Debate Thread", [
@@ -132,8 +133,8 @@ async def reconcile_debate_numbering(bot: "OthmanBot") -> dict:
                         ("Title", title[:40]),
                     ])
 
-                    # Rate limit protection
-                    await asyncio.sleep(1.0)
+                    # Rate limit protection (retry helper already handles some delay)
+                    await asyncio.sleep(0.5)
 
             except Exception as e:
                 logger.error("Failed To Renumber Thread", [

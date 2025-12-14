@@ -523,6 +523,16 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                         ("Message ID", str(analytics_message_id)),
                         ("Thread ID", str(message.channel.id)),
                     ])
+                except discord.Forbidden:
+                    logger.warning("🔐 No Permission to Fetch Analytics Message", [
+                        ("Message ID", str(analytics_message_id)),
+                        ("Thread ID", str(message.channel.id)),
+                    ])
+                except discord.HTTPException as e:
+                    logger.warning("🔐 Failed to Fetch Analytics Message", [
+                        ("Message ID", str(analytics_message_id)),
+                        ("Error", str(e)),
+                    ])
         except discord.HTTPException as e:
             logger.warning("🔐 Access Control HTTP Error", [
                 ("Error", str(e)),
@@ -784,15 +794,21 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                 await add_reactions_with_delay(analytics_message, [PARTICIPATE_EMOJI])
 
                 # Pin the analytics message
-                await analytics_message.pin()
+                try:
+                    await analytics_message.pin()
 
-                # Delete the "pinned a message" system message using safe delete
-                await asyncio.sleep(0.5)  # Wait for Discord to create the system message
-                async for msg in thread.history(limit=5):
-                    if msg.type == discord.MessageType.pins_add:
-                        await delete_message_safe(msg)
-                        logger.debug("🗑️ Deleted 'pinned a message' system message")
-                        break
+                    # Delete the "pinned a message" system message using safe delete
+                    await asyncio.sleep(0.5)  # Wait for Discord to create the system message
+                    async for msg in thread.history(limit=5):
+                        if msg.type == discord.MessageType.pins_add:
+                            await delete_message_safe(msg)
+                            logger.debug("🗑️ Deleted 'pinned a message' system message")
+                            break
+                except discord.HTTPException as e:
+                    logger.warning("📊 Failed to pin analytics message", [
+                        ("Thread", str(thread.id)),
+                        ("Error", str(e)),
+                    ])
 
                 # Store analytics message ID in database
                 bot.debates_service.db.set_analytics_message(thread.id, analytics_message.id)

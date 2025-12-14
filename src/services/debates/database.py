@@ -929,11 +929,18 @@ class DebatesDatabase:
                 )
                 conn.commit()
                 return True
-            except sqlite3.IntegrityError:
+            except sqlite3.IntegrityError as e:
                 # User already banned (unique constraint violation)
+                logger.debug("Ban Already Exists (Integrity Constraint)", [
+                    ("User ID", str(user_id)),
+                    ("Thread ID", str(thread_id) if thread_id else "all"),
+                    ("Error", str(e)),
+                ])
                 return False
             except sqlite3.OperationalError as e:
                 logger.warning("Database Operational Error In add_debate_ban", [
+                    ("User ID", str(user_id)),
+                    ("Thread ID", str(thread_id) if thread_id else "all"),
                     ("Error", str(e)),
                 ])
                 return False

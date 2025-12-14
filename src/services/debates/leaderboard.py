@@ -166,25 +166,35 @@ class LeaderboardManager:
         now = datetime.now()
         content = self._generate_month_content(now.year, now.month)
 
-        # Create thread with plain text content
-        thread, message = await forum.create_thread(
-            name="Leaderboard",
-            content=content,
-        )
+        try:
+            # Create thread with plain text content
+            thread, message = await forum.create_thread(
+                name="Leaderboard",
+                content=content,
+            )
 
-        # Lock and pin the thread so it stays at the top and can't be replied to
-        await edit_thread_with_retry(thread, locked=True, pinned=True, archived=False)
+            # Lock and pin the thread so it stays at the top and can't be replied to
+            await edit_thread_with_retry(thread, locked=True, pinned=True, archived=False)
 
-        # Save thread ID
-        self.db.set_leaderboard_thread(thread.id)
+            # Save thread ID
+            self.db.set_leaderboard_thread(thread.id)
 
-        # Save current month embed
-        self.db.set_month_embed(now.year, now.month, message.id)
+            # Save current month embed
+            self.db.set_month_embed(now.year, now.month, message.id)
 
-        self._thread = thread
-        logger.success("📊 Created New Leaderboard Thread", [
-            ("Thread ID", str(thread.id)),
-        ])
+            self._thread = thread
+            logger.success("📊 Created New Leaderboard Thread", [
+                ("Thread ID", str(thread.id)),
+            ])
+        except discord.Forbidden:
+            logger.error("📊 No Permission to Create Leaderboard Thread", [
+                ("Forum ID", str(DEBATES_FORUM_ID)),
+            ])
+        except discord.HTTPException as e:
+            logger.error("📊 Failed to Create Leaderboard Thread", [
+                ("Forum ID", str(DEBATES_FORUM_ID)),
+                ("Error", str(e)),
+            ])
 
     # -------------------------------------------------------------------------
     # Update Loop
