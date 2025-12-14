@@ -8,6 +8,7 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import asyncio
 import os
 import time
 from pathlib import Path
@@ -17,6 +18,7 @@ import aiohttp
 import discord
 
 from src.core.logger import logger
+from src.utils.retry import get_circuit_breaker, RETRYABLE_EXCEPTIONS
 
 
 # =============================================================================
@@ -31,6 +33,12 @@ TEMP_FILE_MAX_AGE_HOURS: int = 24
 
 DOWNLOAD_TIMEOUT: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=20, connect=10)
 """Timeout settings for media download sessions."""
+
+MEDIA_DOWNLOAD_RETRIES: int = 3
+"""Number of retry attempts for media downloads."""
+
+# Circuit breaker for media downloads (5 failures = 60s cooldown)
+_media_circuit = get_circuit_breaker("media_download", failure_threshold=5, recovery_timeout=60.0)
 
 
 # =============================================================================
@@ -60,39 +68,72 @@ async def download_media(
     DESIGN: Downloads media to temp directory then creates Discord file
     Uses hash-based filename to prevent collisions
     Returns both file object and path for cleanup
+    Uses circuit breaker to prevent hammering failing services
     """
-    TEMP_DIR.mkdir(parents=True, exist_ok=True)
-
-    try:
-        async with aiohttp.ClientSession(timeout=DOWNLOAD_TIMEOUT) as session:
-            async with session.get(url) as response:
-                if response.status != 200:
-                    return None, None
-
-                # Get file extension
-                ext: str = ".jpg"
-                if "." in url:
-                    url_ext = url.split(".")[-1].split("?")[0].lower()
-                    if url_ext in allowed_extensions:
-                        ext = f".{url_ext}"
-
-                # Save to temp file
-                temp_path = str(TEMP_DIR / f"temp_{prefix}_{url_hash}{ext}")
-                content: bytes = await response.read()
-
-                with open(temp_path, "wb") as f:
-                    f.write(content)
-
-                # Create Discord file object
-                discord_file = discord.File(temp_path, filename=f"{prefix}{ext}")
-                return discord_file, temp_path
-
-    except Exception as e:
-        logger.warning("📥 Failed To Download Media", [
+    # Check circuit breaker
+    if _media_circuit.is_open:
+        logger.debug("Media Download Skipped (Circuit Open)", [
             ("URL", url[:50]),
-            ("Error", str(e)),
         ])
         return None, None
+
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    last_error: Optional[Exception] = None
+
+    for attempt in range(MEDIA_DOWNLOAD_RETRIES):
+        try:
+            async with aiohttp.ClientSession(timeout=DOWNLOAD_TIMEOUT) as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        logger.debug("Media Download Non-200", [
+                            ("URL", url[:50]),
+                            ("Status", str(response.status)),
+                        ])
+                        return None, None
+
+                    # Get file extension
+                    ext: str = ".jpg"
+                    if "." in url:
+                        url_ext = url.split(".")[-1].split("?")[0].lower()
+                        if url_ext in allowed_extensions:
+                            ext = f".{url_ext}"
+
+                    # Save to temp file
+                    temp_path = str(TEMP_DIR / f"temp_{prefix}_{url_hash}{ext}")
+                    content: bytes = await response.read()
+
+                    with open(temp_path, "wb") as f:
+                        f.write(content)
+
+                    # Create Discord file object
+                    discord_file = discord.File(temp_path, filename=f"{prefix}{ext}")
+                    _media_circuit.record_success()
+                    return discord_file, temp_path
+
+        except RETRYABLE_EXCEPTIONS as e:
+            last_error = e
+            if attempt < MEDIA_DOWNLOAD_RETRIES - 1:
+                delay = 2 ** attempt  # 1s, 2s, 4s
+                logger.debug("Media Download Retry", [
+                    ("URL", url[:50]),
+                    ("Attempt", f"{attempt + 1}/{MEDIA_DOWNLOAD_RETRIES}"),
+                    ("Delay", f"{delay}s"),
+                ])
+                await asyncio.sleep(delay)
+            continue
+        except Exception as e:
+            last_error = e
+            break
+
+    # All retries failed
+    _media_circuit.record_failure()
+    logger.warning("📥 Failed To Download Media", [
+        ("URL", url[:50]),
+        ("Error", str(last_error) if last_error else "Unknown"),
+        ("Attempts", str(MEDIA_DOWNLOAD_RETRIES)),
+    ])
+    return None, None
 
 
 async def download_image(

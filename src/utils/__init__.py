@@ -6,7 +6,16 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
-from .retry import exponential_backoff
+from .retry import (
+    exponential_backoff,
+    retry_async,
+    CircuitBreaker,
+    CircuitOpenError,
+    get_circuit_breaker,
+    send_webhook_alert_safe,
+    RETRYABLE_EXCEPTIONS,
+    OPENAI_RETRYABLE_EXCEPTIONS,
+)
 from .ai_cache import AICache
 from .translate import translate_to_english
 from .helpers import (
@@ -34,7 +43,16 @@ from .discord_rate_limit import (
 )
 
 __all__ = [
+    # Retry and circuit breaker utilities
     "exponential_backoff",
+    "retry_async",
+    "CircuitBreaker",
+    "CircuitOpenError",
+    "get_circuit_breaker",
+    "send_webhook_alert_safe",
+    "RETRYABLE_EXCEPTIONS",
+    "OPENAI_RETRYABLE_EXCEPTIONS",
+    # AI utilities
     "AICache",
     "translate_to_english",
     "get_developer_avatar",
