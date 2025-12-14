@@ -61,6 +61,7 @@ Server: discord.gg/syria
 import asyncio
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
@@ -150,24 +151,35 @@ class DebatesDatabase:
 
     def close(self) -> None:
         """
-        Close the database connection.
+        Close the database connection and ensure all data is persisted.
 
         Should be called during graceful shutdown.
+        Raises sqlite3.Error if checkpoint fails (data may be at risk).
         """
         with self._lock:
             if self._connection:
+                checkpoint_success = False
                 try:
-                    # Checkpoint WAL before closing
+                    # Checkpoint WAL before closing to ensure all data is persisted
                     self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    checkpoint_success = True
                     self._connection.close()
                     logger.tree("Database Connection Closed", [
                         ("WAL", "Checkpointed"),
                         ("Status", "Clean"),
                     ], emoji="🗄️")
                 except sqlite3.Error as e:
-                    logger.warning("Error Closing Database", [
+                    logger.error("CRITICAL: Database Checkpoint Failed", [
                         ("Error", str(e)),
+                        ("Risk", "Recent data may not be persisted"),
                     ])
+                    # Still try to close connection to prevent corruption
+                    try:
+                        self._connection.close()
+                    except sqlite3.Error:
+                        pass
+                    if not checkpoint_success:
+                        raise  # Re-raise so caller knows data may be at risk
                 finally:
                     self._connection = None
 
@@ -528,12 +540,37 @@ class DebatesDatabase:
         voter_id: int,
         message_id: int,
         author_id: int,
-        vote_type: int
+        vote_type: int,
+        max_retries: int = 3
     ) -> bool:
-        """Async wrapper for add_vote - runs in thread pool."""
-        return await asyncio.to_thread(
-            self.add_vote, voter_id, message_id, author_id, vote_type
-        )
+        """
+        Async wrapper for add_vote with retry logic.
+        Retries on OperationalError (lock contention) with exponential backoff.
+        """
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                return await asyncio.to_thread(
+                    self.add_vote, voter_id, message_id, author_id, vote_type
+                )
+            except sqlite3.OperationalError as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    delay = 0.1 * (2 ** attempt)  # 0.1s, 0.2s, 0.4s
+                    logger.warning("Vote Transaction Retry", [
+                        ("Attempt", f"{attempt + 1}/{max_retries}"),
+                        ("Delay", f"{delay}s"),
+                        ("Voter", str(voter_id)),
+                    ])
+                    await asyncio.sleep(delay)
+
+        # All retries failed
+        logger.error("Vote Transaction Failed After Retries", [
+            ("Voter", str(voter_id)),
+            ("Message", str(message_id)),
+            ("Error", str(last_error)),
+        ])
+        return False
 
     def remove_vote(
         self,

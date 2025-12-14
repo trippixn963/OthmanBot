@@ -186,7 +186,7 @@ async def _update_counter(new_value: int) -> None:
     try:
         counter_file.parent.mkdir(exist_ok=True)
         with open(counter_file, "w") as f:
-            json.dump({"counter": new_value}, f)
+            json.dump({"count": new_value}, f)  # Use "count" to match debates.py
         logger.info("Updated Debate Counter", [
             ("Value", str(new_value)),
         ])
