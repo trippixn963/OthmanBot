@@ -771,6 +771,220 @@ class DebatesDatabase:
         """Async wrapper for get_user_karma - runs in thread pool."""
         return await asyncio.to_thread(self.get_user_karma, user_id)
 
+    def reset_user_karma(self, user_id: int) -> dict:
+        """
+        Reset karma for a user without deleting participation history.
+
+        Removes:
+        - User's karma record (total_karma, upvotes, downvotes)
+        - All votes cast BY this user (reversing karma effects on recipients)
+        - All votes received ON this user's messages
+
+        Preserves:
+        - debate_participation records (so user can be recognized on rejoin)
+        - debate_creators records
+        - Case log records
+        - Any active bans
+
+        Args:
+            user_id: User ID to reset karma for
+
+        Returns:
+            Dict with counts of affected records
+        """
+        logger.info("Starting User Karma Reset", [
+            ("User ID", str(user_id)),
+        ])
+
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            result = {"karma_reset": False, "votes_cast_removed": 0, "votes_received_removed": 0}
+
+            try:
+                # Begin transaction
+                cursor.execute("BEGIN IMMEDIATE")
+
+                # Get current karma before reset
+                cursor.execute(
+                    "SELECT total_karma FROM users WHERE user_id = ?",
+                    (user_id,)
+                )
+                row = cursor.fetchone()
+                old_karma = row[0] if row else 0
+
+                # Reset user's karma record to 0
+                cursor.execute(
+                    """UPDATE users SET
+                       total_karma = 0,
+                       upvotes_received = 0,
+                       downvotes_received = 0
+                       WHERE user_id = ?""",
+                    (user_id,)
+                )
+                result["karma_reset"] = cursor.rowcount > 0
+                result["old_karma"] = old_karma
+
+                # Get all votes this user made to reverse karma effects
+                cursor.execute(
+                    "SELECT author_id, vote_type FROM votes WHERE voter_id = ?",
+                    (user_id,)
+                )
+                votes_made = cursor.fetchall()
+                for author_id, vote_type in votes_made:
+                    # Reverse the karma effect on recipients
+                    if vote_type > 0:
+                        cursor.execute(
+                            """UPDATE users SET
+                               total_karma = total_karma - 1,
+                               upvotes_received = MAX(0, upvotes_received - 1)
+                               WHERE user_id = ?""",
+                            (author_id,)
+                        )
+                    else:
+                        cursor.execute(
+                            """UPDATE users SET
+                               total_karma = total_karma + 1,
+                               downvotes_received = MAX(0, downvotes_received - 1)
+                               WHERE user_id = ?""",
+                            (author_id,)
+                        )
+
+                # Delete votes cast by this user
+                cursor.execute("DELETE FROM votes WHERE voter_id = ?", (user_id,))
+                result["votes_cast_removed"] = cursor.rowcount
+
+                # Delete votes received on this user's messages
+                cursor.execute("DELETE FROM votes WHERE author_id = ?", (user_id,))
+                result["votes_received_removed"] = cursor.rowcount
+
+                conn.commit()
+
+                logger.info("User Karma Reset Complete", [
+                    ("User ID", str(user_id)),
+                    ("Old Karma", str(old_karma)),
+                    ("Votes Cast Removed", str(result["votes_cast_removed"])),
+                    ("Votes Received Removed", str(result["votes_received_removed"])),
+                ])
+
+                return result
+
+            except sqlite3.Error as e:
+                conn.rollback()
+                logger.error("User Karma Reset Failed - Rolled Back", [
+                    ("User ID", str(user_id)),
+                    ("Error", str(e)),
+                ])
+                return {"error": str(e), "karma_reset": False, "votes_cast_removed": 0, "votes_received_removed": 0}
+            finally:
+                cursor.close()
+
+    async def reset_user_karma_async(self, user_id: int) -> dict:
+        """Async wrapper for reset_user_karma - runs in thread pool."""
+        return await asyncio.to_thread(self.reset_user_karma, user_id)
+
+    def get_votes_by_user(self, user_id: int) -> list[dict]:
+        """
+        Get all votes cast by a user.
+
+        Args:
+            user_id: The voter's user ID
+
+        Returns:
+            List of dicts with message_id, author_id, vote_type
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    """SELECT message_id, author_id, vote_type
+                       FROM votes WHERE voter_id = ?""",
+                    (user_id,)
+                )
+                return [
+                    {"message_id": row[0], "author_id": row[1], "vote_type": row[2]}
+                    for row in cursor.fetchall()
+                ]
+            finally:
+                cursor.close()
+
+    def remove_votes_by_user(self, user_id: int) -> dict:
+        """
+        Remove all votes cast by a user and reverse karma effects.
+
+        Args:
+            user_id: The voter's user ID
+
+        Returns:
+            Dict with count of votes removed and karma changes
+        """
+        logger.info("Removing All Votes By User", [
+            ("User ID", str(user_id)),
+        ])
+
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            result = {"votes_removed": 0, "karma_reversed": []}
+
+            try:
+                cursor.execute("BEGIN IMMEDIATE")
+
+                # Get all votes this user made
+                cursor.execute(
+                    "SELECT message_id, author_id, vote_type FROM votes WHERE voter_id = ?",
+                    (user_id,)
+                )
+                votes = cursor.fetchall()
+
+                # Reverse karma for each affected user
+                for message_id, author_id, vote_type in votes:
+                    if vote_type > 0:
+                        cursor.execute(
+                            """UPDATE users SET
+                               total_karma = total_karma - 1,
+                               upvotes_received = MAX(0, upvotes_received - 1)
+                               WHERE user_id = ?""",
+                            (author_id,)
+                        )
+                    else:
+                        cursor.execute(
+                            """UPDATE users SET
+                               total_karma = total_karma + 1,
+                               downvotes_received = MAX(0, downvotes_received - 1)
+                               WHERE user_id = ?""",
+                            (author_id,)
+                        )
+                    result["karma_reversed"].append({
+                        "author_id": author_id,
+                        "change": -vote_type  # Reverse the vote effect
+                    })
+
+                # Delete all votes by this user
+                cursor.execute("DELETE FROM votes WHERE voter_id = ?", (user_id,))
+                result["votes_removed"] = cursor.rowcount
+
+                conn.commit()
+
+                logger.info("Votes Removed Successfully", [
+                    ("User ID", str(user_id)),
+                    ("Votes Removed", str(result["votes_removed"])),
+                    ("Users Affected", str(len(result["karma_reversed"]))),
+                ])
+
+                return result
+
+            except sqlite3.Error as e:
+                conn.rollback()
+                logger.error("Failed To Remove Votes By User", [
+                    ("User ID", str(user_id)),
+                    ("Error", str(e)),
+                ])
+                return {"error": str(e), "votes_removed": 0, "karma_reversed": []}
+            finally:
+                cursor.close()
+
     def get_leaderboard(self, limit: int = 10) -> list[UserKarma]:
         """
         Get top users by karma.
@@ -876,6 +1090,49 @@ class DebatesDatabase:
     async def get_user_analytics_async(self, user_id: int) -> dict:
         """Async wrapper for get_user_analytics - runs in thread pool."""
         return await asyncio.to_thread(self.get_user_analytics, user_id)
+
+    def has_debate_participation(self, user_id: int) -> bool:
+        """
+        Check if a user has ever participated in debates.
+
+        Args:
+            user_id: Discord user ID
+
+        Returns:
+            True if user has participated in at least one debate or created a debate
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            try:
+                # Check debate_participation table
+                cursor.execute(
+                    "SELECT 1 FROM debate_participation WHERE user_id = ? LIMIT 1",
+                    (user_id,)
+                )
+                if cursor.fetchone():
+                    return True
+
+                # Check debate_creators table
+                cursor.execute(
+                    "SELECT 1 FROM debate_creators WHERE user_id = ? LIMIT 1",
+                    (user_id,)
+                )
+                if cursor.fetchone():
+                    return True
+
+                # Check karma table (they might have received karma)
+                cursor.execute(
+                    "SELECT 1 FROM karma WHERE user_id = ? AND karma != 0 LIMIT 1",
+                    (user_id,)
+                )
+                if cursor.fetchone():
+                    return True
+
+                return False
+            finally:
+                cursor.close()
 
     # -------------------------------------------------------------------------
     # Streak Operations

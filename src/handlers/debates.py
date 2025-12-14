@@ -64,6 +64,13 @@ PARTICIPATE_EMOJI = "✅"  # Checkmark for participation access control
 DEBATE_COUNTER_FILE = Path("data/debate_counter.json")
 DEBATE_MANAGEMENT_ROLE_ID = MODERATOR_ROLE_ID  # Debate Management role - can post without reacting
 
+# Ban evasion detection - accounts younger than this are flagged
+BAN_EVASION_ACCOUNT_AGE_DAYS = 7
+
+# Track users we've already alerted about (to avoid spam)
+# Set of user IDs that have been flagged for potential ban evasion
+_ban_evasion_alerted_users: set[int] = set()
+
 
 # =============================================================================
 # Analytics Throttle Cache
@@ -407,6 +414,33 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
     # If bot is disabled, skip all other actions (reactions, access control, analytics)
     if bot_disabled:
         return
+
+    # BAN EVASION DETECTION: Check if this is a new account posting in debates
+    # Only alert once per user (tracked in _ban_evasion_alerted_users)
+    if message.author.id not in _ban_evasion_alerted_users:
+        # Calculate account age
+        account_created = message.author.created_at
+        now = datetime.now(account_created.tzinfo) if account_created.tzinfo else datetime.utcnow()
+        account_age_days = (now - account_created).days
+
+        if account_age_days < BAN_EVASION_ACCOUNT_AGE_DAYS:
+            # Flag this user - add to set so we don't alert again
+            _ban_evasion_alerted_users.add(message.author.id)
+
+            logger.warning("🚨 Potential Ban Evasion Detected", [
+                ("User", f"{message.author.name} ({message.author.id})"),
+                ("Account Age", f"{account_age_days} days"),
+                ("Thread", message.channel.name),
+            ])
+
+            # Alert via webhook with developer ping
+            if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+                await bot.interaction_logger.log_potential_ban_evasion(
+                    member=message.author,
+                    account_age_days=account_age_days,
+                    thread_name=message.channel.name,
+                    developer_id=DEVELOPER_ID
+                )
 
     # DEBATE BAN CHECK: Check if user is banned from this thread or all debates
     if hasattr(bot, 'debates_service') and bot.debates_service is not None:
@@ -1092,135 +1126,127 @@ async def on_member_remove_handler(bot: "OthmanBot", member: discord.Member) -> 
         bot: The OthmanBot instance
         member: The member who left
 
-    DESIGN: When a user leaves:
-    1. Delete all debate threads they created
-    2. Delete all their messages/replies in other debate threads
-    3. Reset their karma to 0 and remove all their data from database
+    DESIGN: Only tracks users who have participated in debates at least once.
+    When a debate participant leaves:
+    1. Check if they have debate participation history
+    2. Get their stats before cleanup
+    3. Reset their karma and get the old value
+    4. Log to webhook with karma removal status
+    5. Log to case thread if they have one
     """
-    # Get the debates forum
-    debates_forum = bot.get_channel(DEBATES_FORUM_ID)
-    if not debates_forum or not isinstance(debates_forum, discord.ForumChannel):
-        logger.warning("Debates forum not available for cleanup", [
-            ("Forum ID", str(DEBATES_FORUM_ID)),
-            ("Type", type(debates_forum).__name__ if debates_forum else "None"),
+    # Check if user has ever participated in debates
+    if not hasattr(bot, 'debates_service') or bot.debates_service is None:
+        return
+
+    db = bot.debates_service.db
+
+    # Check if this user is a debate participant
+    if not db.has_debate_participation(member.id):
+        logger.debug("Member Left (Not A Debate Participant)", [
+            ("User", f"{member.name} ({member.id})"),
         ])
         return
 
-    deleted_threads = 0
-    deleted_messages = 0
+    # Get user stats
+    user_analytics = db.get_user_analytics(member.id)
+    debates_participated = user_analytics.get('debates_participated', 0)
+    debates_created = user_analytics.get('debates_created', 0)
+
+    # Get current karma (preserved - their karma stays, but their votes on others are removed)
+    karma_data = db.get_user_karma(member.id)
+    current_karma = karma_data.total_karma
+
+    # Check if user has a case log
+    case_log = db.get_case_log(member.id)
+    case_id = case_log.get('case_id') if case_log else None
+
+    # Remove all votes cast by this user (their votes shouldn't count if they left)
+    # First get the votes so we can remove reactions from Discord
+    votes = db.get_votes_by_user(member.id)
+    votes_removed = 0
     reactions_removed = 0
-    deleted_data: dict = {}  # Initialize before try block for safe access later
 
-    try:
-        # Collect all threads (active + archived) to process with timeout
-        all_threads = list(debates_forum.threads)
-        try:
-            async with asyncio.timeout(30.0):  # 30s timeout for fetching archived threads
-                async for archived_thread in debates_forum.archived_threads(limit=100):
-                    all_threads.append(archived_thread)
-        except asyncio.TimeoutError:
-            logger.warning("👋 Timeout Fetching Archived Threads For Member Cleanup", [
-                ("User", member.name),
-                ("Threads Collected", str(len(all_threads))),
-            ])
+    if votes:
+        # Get debates forum to scan for reactions
+        debates_forum = bot.get_channel(DEBATES_FORUM_ID)
+        if debates_forum and isinstance(debates_forum, discord.ForumChannel):
+            # Remove reactions from Discord messages
+            for vote in votes:
+                try:
+                    message_id = vote["message_id"]
+                    vote_type = vote["vote_type"]
+                    emoji = UPVOTE_EMOJI if vote_type > 0 else DOWNVOTE_EMOJI
 
-        # First, remove user's reactions from all thread starter messages
-        for thread in all_threads:
-            try:
-                starter_message = thread.starter_message
-                if not starter_message:
-                    starter_message = await thread.fetch_message(thread.id)
-
-                if starter_message:
-                    for reaction in starter_message.reactions:
-                        # Use safe remove with delay between reactions
-                        success = await remove_reaction_safe(reaction, member)
-                        if success:
+                    # Find the message in active threads
+                    for thread in debates_forum.threads:
+                        try:
+                            message = await thread.fetch_message(message_id)
+                            # Remove the user's reaction
+                            # Note: member has left so we use a fake user object
+                            await message.remove_reaction(emoji, discord.Object(id=member.id))
                             reactions_removed += 1
-                        await asyncio.sleep(REACTION_DELAY)  # Rate limit delay between reaction removals
-            except discord.HTTPException:
-                pass
-            await asyncio.sleep(DISCORD_API_DELAY)  # Delay between threads
-
-        for thread in all_threads:
-            # If user owns the thread, delete the entire thread
-            if thread.owner_id == member.id:
-                try:
-                    await thread.delete()
-                    deleted_threads += 1
-                    logger.info("Debate Thread Deleted - User Left", [
-                        ("User", f"{member.name} ({member.id})"),
-                        ("Thread", f"{thread.name} ({thread.id})"),
-                    ])
-                except discord.HTTPException as e:
-                    logger.warning("🗑️ Failed To Delete Thread", [
-                        ("Thread", thread.name),
-                        ("Error", str(e)),
-                    ])
-            else:
-                # Delete all messages by this user in threads they don't own
-                try:
-                    async for message in thread.history(limit=500):
-                        if message.author.id == member.id:
-                            # Use safe delete with delay between deletes
-                            success = await delete_message_safe(message)
-                            if success:
-                                deleted_messages += 1
-                            await asyncio.sleep(DISCORD_API_DELAY)  # Rate limit delay between message deletes
-                except discord.HTTPException as e:
-                    logger.warning("🔍 Failed To Scan Thread For Messages", [
-                        ("Thread", thread.name),
+                            await asyncio.sleep(0.1)  # Rate limit protection
+                            break  # Found the message, move to next vote
+                        except discord.NotFound:
+                            continue  # Message not in this thread
+                        except discord.HTTPException:
+                            continue  # Can't remove reaction, continue
+                except Exception as e:
+                    logger.debug("Failed To Remove Reaction", [
+                        ("Message ID", str(vote.get("message_id"))),
                         ("Error", str(e)),
                     ])
 
-        # Reset karma and delete all database records for this user
-        if hasattr(bot, 'debates_service') and bot.debates_service is not None:
-            try:
-                deleted_data = bot.debates_service.db.delete_user_data(member.id)
-                logger.info("User Database Records Deleted", [
-                    ("User", f"{member.name} ({member.id})"),
-                    ("Karma", str(deleted_data.get('karma', 0))),
-                    ("Votes Cast", str(deleted_data.get('votes_cast', 0))),
-                    ("Votes Received", str(deleted_data.get('votes_received', 0))),
-                    ("Bans", str(deleted_data.get('bans', 0))),
-                ])
-            except (sqlite3.Error, AttributeError) as e:
-                logger.error("🗄️ Failed To Delete Database Records", [
-                    ("User", member.name),
-                    ("Error", str(e)),
-                ])
+        # Remove votes from database (reverses karma effects on recipients)
+        result = db.remove_votes_by_user(member.id)
+        votes_removed = result.get("votes_removed", 0)
 
-        # Update leaderboard to mark user as left
-        if hasattr(bot, 'leaderboard_manager') and bot.leaderboard_manager is not None:
-            try:
-                await bot.leaderboard_manager.on_member_leave(member.id)
-            except (discord.HTTPException, AttributeError) as e:
-                logger.error("📊 Failed To Update Leaderboard For Leaving Member", [
-                    ("User", member.name),
-                    ("Error", str(e)),
-                ])
+        logger.info("👋 Removed Leaving User's Votes", [
+            ("User", f"{member.name} ({member.id})"),
+            ("Votes Removed", str(votes_removed)),
+            ("Reactions Removed", str(reactions_removed)),
+        ])
 
-        # Log summary
-        if deleted_threads > 0 or deleted_messages > 0 or reactions_removed > 0:
-            logger.success("Member Leave Cleanup Complete", [
-                ("User", f"{member.name} ({member.id})"),
-                ("Threads Deleted", str(deleted_threads)),
-                ("Messages Deleted", str(deleted_messages)),
-                ("Reactions Removed", str(reactions_removed)),
+    # Update leaderboard to mark user as left
+    if hasattr(bot, 'leaderboard_manager') and bot.leaderboard_manager is not None:
+        try:
+            await bot.leaderboard_manager.on_member_leave(member.id)
+        except (discord.HTTPException, AttributeError) as e:
+            logger.warning("📊 Failed To Update Leaderboard For Leaving Member", [
+                ("User", member.name),
+                ("Error", str(e)),
             ])
 
-            # Log to webhook
-            if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
-                karma_reset = deleted_data.get('karma', 0)
-                await bot.interaction_logger.log_member_leave_cleanup(
-                    member.name, member.id, deleted_threads, deleted_messages, reactions_removed, karma_reset
-                )
+    # Log to main logs
+    logger.info("👋 Debate Participant Left Server", [
+        ("User", f"{member.name} ({member.id})"),
+        ("Debates Participated", str(debates_participated)),
+        ("Debates Created", str(debates_created)),
+        ("Karma", str(current_karma)),
+        ("Votes Removed", str(votes_removed)),
+        ("Has Case ID", f"[{case_id:04d}]" if case_id else "No"),
+    ])
 
-    except discord.HTTPException as e:
-        logger.error("👋 Discord Error Cleaning Up Debate Data", [
-            ("User", member.name),
-            ("Error", str(e)),
-        ])
+    # Log to webhook
+    if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+        await bot.interaction_logger.log_debate_participant_left(
+            user_name=member.name,
+            user_id=member.id,
+            user_avatar_url=member.display_avatar.url,
+            karma=current_karma,
+            debates_participated=debates_participated,
+            debates_created=debates_created,
+            votes_removed=votes_removed,
+            case_id=case_id
+        )
+
+    # Log to case thread if they have one
+    if hasattr(bot, 'case_log_service') and bot.case_log_service:
+        await bot.case_log_service.log_member_left(
+            user_id=member.id,
+            user_name=member.name,
+            user_avatar_url=member.display_avatar.url
+        )
 
 
 # =============================================================================
@@ -1235,9 +1261,36 @@ async def on_member_join_handler(bot: "OthmanBot", member: discord.Member) -> No
         bot: The OthmanBot instance
         member: The member who joined
 
-    DESIGN: When a user joins/rejoins:
-    1. If they were previously cached, update leaderboard to remove "(left)" suffix
+    DESIGN: Only tracks users who have participated in debates at least once.
+    When a debate participant rejoins:
+    1. Check if they have debate participation history
+    2. Get their stats
+    3. Update leaderboard to remove "(left)" suffix
+    4. Log to webhook with their stats
+    5. Log to case thread if they have one
     """
+    # Check if user has ever participated in debates
+    if not hasattr(bot, 'debates_service') or bot.debates_service is None:
+        return
+
+    db = bot.debates_service.db
+
+    # Check if this user is a debate participant
+    if not db.has_debate_participation(member.id):
+        logger.debug("Member Joined (Not A Debate Participant)", [
+            ("User", f"{member.name} ({member.id})"),
+        ])
+        return
+
+    # Get user stats
+    user_analytics = db.get_user_analytics(member.id)
+    debates_participated = user_analytics.get('debates_participated', 0)
+    debates_created = user_analytics.get('debates_created', 0)
+
+    # Check if user has a case log
+    case_log = db.get_case_log(member.id)
+    case_id = case_log.get('case_id') if case_log else None
+
     # Update leaderboard to mark user as rejoined (if they were previously cached)
     if hasattr(bot, 'leaderboard_manager') and bot.leaderboard_manager is not None:
         try:
@@ -1247,14 +1300,31 @@ async def on_member_join_handler(bot: "OthmanBot", member: discord.Member) -> No
                 member.display_name
             )
         except (discord.HTTPException, AttributeError) as e:
-            logger.error("📊 Failed To Update Leaderboard For Rejoining Member", [
+            logger.warning("📊 Failed To Update Leaderboard For Rejoining Member", [
                 ("User", member.name),
                 ("Error", str(e)),
             ])
 
+    # Log to main logs
+    logger.info("👋 Debate Participant Rejoined Server", [
+        ("User", f"{member.name} ({member.id})"),
+        ("Debates Participated", str(debates_participated)),
+        ("Debates Created", str(debates_created)),
+        ("Has Case ID", f"[{case_id:04d}]" if case_id else "No"),
+    ])
+
     # Log to webhook
     if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
-        await bot.interaction_logger.log_member_rejoin(member)
+        await bot.interaction_logger.log_debate_participant_rejoined(
+            member=member,
+            debates_participated=debates_participated,
+            debates_created=debates_created,
+            case_id=case_id
+        )
+
+    # Log to case thread if they have one
+    if hasattr(bot, 'case_log_service') and bot.case_log_service:
+        await bot.case_log_service.log_member_rejoined(member)
 
 
 # =============================================================================

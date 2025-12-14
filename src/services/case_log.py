@@ -791,6 +791,120 @@ Severe/Habitual          →  Permanent
 
         return " ".join(parts)
 
+    async def log_member_left(
+        self,
+        user_id: int,
+        user_name: str,
+        user_avatar_url: Optional[str] = None
+    ) -> None:
+        """
+        Log when a user with a case thread leaves the server.
+
+        Args:
+            user_id: The user's ID
+            user_name: The user's display name
+            user_avatar_url: The user's avatar URL
+        """
+        if not self.enabled:
+            return
+
+        try:
+            case = self.db.get_case_log(user_id)
+            if not case:
+                return  # No case thread for this user
+
+            case_thread = await self._get_case_thread(case['thread_id'])
+            if case_thread:
+                embed = discord.Embed(
+                    title="🚪 User Left Server",
+                    color=discord.Color.orange(),
+                    description=f"**{user_name}** has left the server"
+                )
+                if user_avatar_url:
+                    embed.set_thumbnail(url=user_avatar_url)
+
+                embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
+
+                now = datetime.now(NY_TZ)
+                embed.add_field(
+                    name="Time",
+                    value=f"<t:{int(now.timestamp())}:t> EST",
+                    inline=True
+                )
+
+                await case_thread.send(embed=embed)
+
+                logger.info("Case Log: User Left Server Logged", [
+                    ("User", f"{user_name} ({user_id})"),
+                    ("Case ID", f"{case['case_id']:04d}"),
+                ])
+
+        except Exception as e:
+            logger.warning("Case Log: Failed To Log Member Left", [
+                ("User ID", str(user_id)),
+                ("Error", str(e)),
+            ])
+
+    async def log_member_rejoined(
+        self,
+        member: discord.Member
+    ) -> None:
+        """
+        Log when a user with a case thread rejoins the server.
+
+        Args:
+            member: The member who rejoined
+        """
+        if not self.enabled:
+            return
+
+        try:
+            case = self.db.get_case_log(member.id)
+            if not case:
+                return  # No case thread for this user
+
+            case_thread = await self._get_case_thread(case['thread_id'])
+            if case_thread:
+                embed = discord.Embed(
+                    title="🔄 User Rejoined Server",
+                    color=discord.Color.gold(),
+                    description=f"**{member.display_name}** has rejoined the server"
+                )
+                embed.set_thumbnail(url=member.display_avatar.url)
+
+                embed.add_field(name="User", value=f"{member.mention}", inline=True)
+                embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
+
+                now = datetime.now(NY_TZ)
+                embed.add_field(
+                    name="Time",
+                    value=f"<t:{int(now.timestamp())}:t> EST",
+                    inline=True
+                )
+
+                # Add warning about previous moderation history
+                ban_count = case.get('ban_count', 0)
+                if ban_count > 0:
+                    embed.add_field(
+                        name="⚠️ Warning",
+                        value=f"User has **{ban_count}** previous ban(s) on record",
+                        inline=False
+                    )
+
+                await case_thread.send(embed=embed)
+
+                logger.info("Case Log: User Rejoined Server Logged", [
+                    ("User", f"{member.display_name} ({member.id})"),
+                    ("Case ID", f"{case['case_id']:04d}"),
+                    ("Previous Bans", str(ban_count)),
+                ])
+
+        except Exception as e:
+            logger.warning("Case Log: Failed To Log Member Rejoined", [
+                ("User ID", str(member.id)),
+                ("Error", str(e)),
+            ])
+
     async def archive_inactive_cases(self, days_inactive: int = 7) -> int:
         """
         Archive case threads that have been inactive for specified days.
