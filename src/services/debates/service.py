@@ -296,9 +296,21 @@ class DebatesService:
                         top_contributor_name=top_contributor[1] if top_contributor else "N/A"
                     ))
 
+                except discord.Forbidden:
+                    logger.warning("No Permission To Read Thread History", [
+                        ("Thread ID", str(thread.id)),
+                    ])
+                    continue
+                except discord.HTTPException as e:
+                    logger.warning("Discord API Error Analyzing Thread", [
+                        ("Thread ID", str(thread.id)),
+                        ("Error", str(e)),
+                    ])
+                    continue
                 except Exception as e:
                     logger.warning("Failed To Analyze Thread", [
                         ("Thread ID", str(thread.id)),
+                        ("Error Type", type(e).__name__),
                         ("Error", str(e)),
                     ])
                     continue
@@ -311,8 +323,16 @@ class DebatesService:
             hot_debates.sort(key=lambda x: x.hotness_score, reverse=True)
             return hot_debates[0]
 
+        except discord.HTTPException as e:
+            logger.error("Discord API Error Getting Hottest Debate", [
+                ("Forum ID", str(forum_id)),
+                ("Error", str(e)),
+            ])
+            return None
         except Exception as e:
             logger.error("Failed To Get Hottest Debate", [
+                ("Forum ID", str(forum_id)),
+                ("Error Type", type(e).__name__),
                 ("Error", str(e)),
             ])
             return None
