@@ -852,8 +852,8 @@ Severe/Habitual          →  Permanent
         """
         Log when a user with a case thread rejoins the server.
 
-        If the user is still banned (disallowed), ping the moderator who banned them
-        to alert them that the user tried to rejoin thinking it would remove their ban.
+        If the user is still disallowed, ping the moderator who disallowed them
+        to alert them that the user tried to rejoin thinking it would remove their restriction.
 
         Args:
             member: The member who rejoined
@@ -868,20 +868,20 @@ Severe/Habitual          →  Permanent
 
             case_thread = await self._get_case_thread(case['thread_id'])
             if case_thread:
-                # Check if user is still banned
-                active_bans = self.db.get_user_bans(member.id)
-                is_still_banned = len(active_bans) > 0
+                # Check if user is still disallowed
+                active_restrictions = self.db.get_user_bans(member.id)
+                is_still_disallowed = len(active_restrictions) > 0
 
-                # Get the moderator(s) who banned them
-                banned_by_ids = set()
-                for ban in active_bans:
-                    if ban.get('banned_by'):
-                        banned_by_ids.add(ban['banned_by'])
+                # Get the moderator(s) who disallowed them
+                disallowed_by_ids = set()
+                for restriction in active_restrictions:
+                    if restriction.get('banned_by'):
+                        disallowed_by_ids.add(restriction['banned_by'])
 
-                # Choose embed color based on ban status
-                if is_still_banned:
-                    embed_color = discord.Color.red()  # Red - still banned
-                    title = "🚨 Banned User Rejoined Server"
+                # Choose embed color based on disallow status
+                if is_still_disallowed:
+                    embed_color = discord.Color.red()  # Red - still disallowed
+                    title = "🚨 Disallowed User Rejoined Server"
                 else:
                     embed_color = discord.Color.gold()  # Gold - normal rejoin
                     title = "🔄 User Rejoined Server"
@@ -904,46 +904,46 @@ Severe/Habitual          →  Permanent
                 )
 
                 # Add warning about previous moderation history
-                ban_count = case.get('ban_count', 0)
-                if ban_count > 0:
+                disallow_count = case.get('ban_count', 0)
+                if disallow_count > 0:
                     embed.add_field(
                         name="⚠️ Warning",
-                        value=f"User has **{ban_count}** previous ban(s) on record",
+                        value=f"User has **{disallow_count}** previous disallow(s) on record",
                         inline=False
                     )
 
-                # If still banned, add prominent warning
-                if is_still_banned:
-                    ban_scopes = []
-                    for ban in active_bans:
-                        if ban.get('thread_id'):
-                            ban_scopes.append(f"Thread `{ban['thread_id']}`")
+                # If still disallowed, add prominent warning
+                if is_still_disallowed:
+                    restriction_scopes = []
+                    for restriction in active_restrictions:
+                        if restriction.get('thread_id'):
+                            restriction_scopes.append(f"Thread `{restriction['thread_id']}`")
                         else:
-                            ban_scopes.append("All Debates")
+                            restriction_scopes.append("All Debates")
 
                     embed.add_field(
-                        name="🚫 STILL BANNED",
-                        value=f"User rejoined while banned from: {', '.join(ban_scopes)}\n"
-                              f"Ban is **still active** - leaving does not remove bans!",
+                        name="🚫 STILL DISALLOWED",
+                        value=f"User rejoined while disallowed from: {', '.join(restriction_scopes)}\n"
+                              f"Restriction is **still active** - leaving does not remove it!",
                         inline=False
                     )
 
                 await case_thread.send(embed=embed)
 
-                # If still banned, ping the moderator(s) who banned them
-                if is_still_banned and banned_by_ids:
-                    mod_pings = " ".join(f"<@{mod_id}>" for mod_id in banned_by_ids)
+                # If still disallowed, ping the moderator(s) who disallowed them
+                if is_still_disallowed and disallowed_by_ids:
+                    mod_pings = " ".join(f"<@{mod_id}>" for mod_id in disallowed_by_ids)
                     await case_thread.send(
-                        f"{mod_pings} This user you banned has rejoined the server. "
-                        f"Their ban is still active - they may have thought leaving would remove it."
+                        f"{mod_pings} This user you disallowed has rejoined the server. "
+                        f"Their restriction is still active - they may have thought leaving would remove it."
                     )
 
                 logger.info("Case Log: User Rejoined Server Logged", [
                     ("User", f"{member.display_name} ({member.id})"),
                     ("Case ID", f"{case['case_id']:04d}"),
-                    ("Previous Bans", str(ban_count)),
-                    ("Still Banned", "Yes" if is_still_banned else "No"),
-                    ("Mods Pinged", str(len(banned_by_ids)) if is_still_banned else "0"),
+                    ("Previous Disallows", str(disallow_count)),
+                    ("Still Disallowed", "Yes" if is_still_disallowed else "No"),
+                    ("Mods Pinged", str(len(disallowed_by_ids)) if is_still_disallowed else "0"),
                 ])
 
         except Exception as e:
