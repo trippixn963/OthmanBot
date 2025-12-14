@@ -29,6 +29,7 @@ from src.utils import (
     is_primarily_arabic,
     get_min_message_length,
     is_english_only,
+    send_webhook_alert_safe,
 )
 
 if TYPE_CHECKING:
@@ -393,14 +394,11 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                 ("Error", str(e)),
             ])
             # Log to webhook for visibility
-            try:
-                if hasattr(bot, 'webhook_alerts') and bot.webhook_alerts:
-                    await bot.webhook_alerts.send_error_alert(
-                        "Database Error - Participation Tracking",
-                        f"User: {message.author.id}, Thread: {message.channel.id}, Error: {str(e)}"
-                    )
-            except Exception as webhook_err:
-                logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
+            await send_webhook_alert_safe(
+                bot,
+                "Database Error - Participation Tracking",
+                f"User: {message.author.id}, Thread: {message.channel.id}, Error: {str(e)}"
+            )
         except (asyncio.TimeoutError, asyncio.CancelledError) as e:
             logger.warning("📊 Failed To Track Participation (Async Error)", [
                 ("Error", str(e)),
@@ -839,14 +837,11 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                         ("Error", str(e)),
                     ])
                     # Log to webhook for visibility
-                    try:
-                        if hasattr(bot, 'webhook_alerts') and bot.webhook_alerts:
-                            await bot.webhook_alerts.send_error_alert(
-                                "Database Error - Debate Creator Tracking",
-                                f"Thread: {thread.id}, Creator: {starter_message.author.id}, Error: {str(e)}"
-                            )
-                    except Exception as webhook_err:
-                        logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
+                    await send_webhook_alert_safe(
+                        bot,
+                        "Database Error - Debate Creator Tracking",
+                        f"Thread: {thread.id}, Creator: {starter_message.author.id}, Error: {str(e)}"
+                    )
                 except (asyncio.TimeoutError, asyncio.CancelledError) as e:
                     logger.warning("📊 Failed To Track Debate Creator (Async Error)", [
                         ("Error", str(e)),
