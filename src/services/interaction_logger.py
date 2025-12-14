@@ -127,7 +127,7 @@ class InteractionLogger:
 
         # Get NY_TZ time
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title=f"⚡ /{command_name}",
@@ -168,7 +168,7 @@ class InteractionLogger:
     ) -> None:
         """Log when a debate thread is created."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="📝 Debate Created",
@@ -195,7 +195,7 @@ class InteractionLogger:
     ) -> None:
         """Log when a debate thread is deleted."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="🗑️ Debate Deleted",
@@ -226,7 +226,7 @@ class InteractionLogger:
     ) -> None:
         """Log when karma is given/removed."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         is_upvote = change > 0
         emoji = "⬆️" if is_upvote else "⬇️"
@@ -259,7 +259,7 @@ class InteractionLogger:
     ) -> None:
         """Log when a user is banned from debates."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="🚫 User Banned from Debates",
@@ -285,7 +285,7 @@ class InteractionLogger:
     ) -> None:
         """Log when a user is unbanned from debates."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="✅ User Unbanned from Debates",
@@ -306,7 +306,7 @@ class InteractionLogger:
     ) -> None:
         """Log when a user's ban expires automatically."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="⏰ Ban Expired (Auto-Unban)",
@@ -332,7 +332,7 @@ class InteractionLogger:
     ) -> None:
         """Log when news/content is posted."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         emoji_map = {
             "news": "📰",
@@ -366,7 +366,7 @@ class InteractionLogger:
     ) -> None:
         """Log when a hot debate is posted to general."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="🔥 Hot Debate Posted",
@@ -395,7 +395,7 @@ class InteractionLogger:
     ) -> None:
         """Log when vote reactions are added to a message."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="🗳️ Vote Reactions Added",
@@ -418,7 +418,7 @@ class InteractionLogger:
     ) -> None:
         """Log when a self-vote is blocked."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="🚫 Self-Vote Blocked",
@@ -444,7 +444,7 @@ class InteractionLogger:
     ) -> None:
         """Log when a user is blocked from posting (no participation react)."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="🔐 Access Blocked",
@@ -466,7 +466,7 @@ class InteractionLogger:
     ) -> None:
         """Log when a banned user's message is deleted."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="🚫 Banned User Message Deleted",
@@ -656,7 +656,7 @@ class InteractionLogger:
     ) -> None:
         """Log when Hot tag is added to a debate."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="🔥 Hot Tag Added",
@@ -677,7 +677,7 @@ class InteractionLogger:
     ) -> None:
         """Log when Hot tag is removed from a debate."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="❄️ Hot Tag Removed",
@@ -777,7 +777,7 @@ class InteractionLogger:
     ) -> None:
         """Log when the leaderboard is updated."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="📊 Leaderboard Updated",
@@ -810,7 +810,7 @@ class InteractionLogger:
     ) -> None:
         """Log when a non-English title debate is blocked."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title="🌐 Non-English Title Blocked",
@@ -844,7 +844,7 @@ class InteractionLogger:
 
         # Get NY_TZ time
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
             title=f"{title} {status}",
