@@ -12,21 +12,51 @@ Server: discord.gg/syria
 """
 
 import asyncio
-from typing import TYPE_CHECKING
+import sqlite3
+from typing import Optional, TYPE_CHECKING
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, REACTION_DELAY, PIN_SYSTEM_MESSAGE_DELAY, LOG_TITLE_PREVIEW_LENGTH
-from src.utils import edit_thread_with_retry, send_message_with_retry, add_reactions_with_delay, delete_message_safe
+from src.core.config import (
+    DEBATES_FORUM_ID,
+    REACTION_DELAY,
+    PIN_SYSTEM_MESSAGE_DELAY,
+    LOG_TITLE_PREVIEW_LENGTH,
+    DISCORD_THREAD_NAME_LIMIT,
+)
+from src.utils import (
+    edit_thread_with_retry,
+    send_message_with_retry,
+    add_reactions_with_delay,
+    delete_message_safe,
+    send_webhook_alert_safe,
+)
 from src.handlers.debates import get_next_debate_number, is_english_only, PARTICIPATE_EMOJI
 from src.services.debates.tags import detect_debate_tags
 from src.services.debates.analytics import calculate_debate_analytics, generate_analytics_embed
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
+
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+SUGGESTED_TITLE_SEARCH_LIMIT: int = 50
+"""Maximum messages to search for suggested title."""
+
+CLEANUP_MESSAGE_LIMIT: int = 100
+"""Maximum messages to scan during thread cleanup."""
+
+PIN_SYSTEM_MESSAGE_SEARCH_LIMIT: int = 10
+"""Maximum messages to search for 'pinned a message' system message."""
+
+TITLE_TRUNCATION_SUFFIX: str = "..."
+"""Suffix to append when title is truncated."""
 
 
 # =============================================================================
@@ -47,7 +77,7 @@ class RenameCog(commands.Cog):
     async def rename(
         self,
         interaction: discord.Interaction,
-        title: str = None
+        title: Optional[str] = None
     ) -> None:
         """
         Rename a locked debate thread with proper numbering.
@@ -99,7 +129,7 @@ class RenameCog(commands.Cog):
 
         # If no title provided, try to extract suggested title from bot's moderation message
         if title is None:
-            async for message in thread.history(limit=50):
+            async for message in thread.history(limit=SUGGESTED_TITLE_SEARCH_LIMIT):
                 if message.author.id == self.bot.user.id and "Suggested Title:" in message.content:
                     # Extract suggested title from message using more robust parsing
                     lines = message.content.split("\n")
@@ -145,8 +175,23 @@ class RenameCog(commands.Cog):
             # Get next debate number
             debate_number = await get_next_debate_number()
 
+            # Calculate available space for title (Discord limit minus number prefix)
+            number_prefix = f"{debate_number} | "
+            available_length = DISCORD_THREAD_NAME_LIMIT - len(number_prefix)
+
+            # Truncate title if needed to fit Discord's thread name limit
+            original_title = title
+            if len(title) > available_length:
+                truncate_length = available_length - len(TITLE_TRUNCATION_SUFFIX)
+                title = title[:truncate_length] + TITLE_TRUNCATION_SUFFIX
+                logger.info("Title Truncated For Discord Limit", [
+                    ("Original Length", str(len(original_title))),
+                    ("Truncated Length", str(len(title))),
+                    ("Max Allowed", str(available_length)),
+                ])
+
             # Create new title with number prefix
-            new_title = f"{debate_number} | {title}"
+            new_title = f"{number_prefix}{title}"
 
             # Rename, unlock, and unarchive the thread
             success = await edit_thread_with_retry(
@@ -205,7 +250,7 @@ class RenameCog(commands.Cog):
                                 ("Debate", f"#{debate_number}"),
                                 ("Tags", ", ".join(t.name for t in tags_to_apply)),
                             ])
-            except Exception as e:
+            except (discord.HTTPException, KeyError, AttributeError) as e:
                 logger.warning("Failed to auto-tag renamed debate", [("Error", str(e))])
 
             # Delete ALL messages except the original post (first message / thread starter)
@@ -219,7 +264,7 @@ class RenameCog(commands.Cog):
                 original_post_id = message.id
                 break
 
-            async for message in thread.history(limit=100):
+            async for message in thread.history(limit=CLEANUP_MESSAGE_LIMIT):
                 # Skip the original post (the oldest message, which is the thread starter)
                 if message.id == original_post_id:
                     continue
@@ -258,7 +303,7 @@ class RenameCog(commands.Cog):
 
                         # Delete the "pinned a message" system message
                         await asyncio.sleep(PIN_SYSTEM_MESSAGE_DELAY)  # Wait for Discord to create the system message
-                        async for msg in thread.history(limit=10):
+                        async for msg in thread.history(limit=PIN_SYSTEM_MESSAGE_SEARCH_LIMIT):
                             if msg.type == discord.MessageType.pins_add:
                                 await delete_message_safe(msg)
                                 logger.debug("Deleted 'pinned a message' system message")
@@ -275,8 +320,22 @@ class RenameCog(commands.Cog):
                             ("Pinned", "Yes"),
                             ("Stored in DB", "Yes"),
                         ])
-                except Exception as e:
+                except (discord.HTTPException, sqlite3.Error) as e:
                     logger.warning("Failed to post analytics for renamed debate", [("Error", str(e))])
+
+            # Track debate creator (thread owner) in database
+            if hasattr(self.bot, 'debates_service') and self.bot.debates_service is not None:
+                try:
+                    if thread.owner_id:
+                        await self.bot.debates_service.db.set_debate_creator_async(
+                            thread.id, thread.owner_id
+                        )
+                        logger.debug("Debate Creator Tracked For Renamed Thread", [
+                            ("Debate", f"#{debate_number}"),
+                            ("Creator ID", str(thread.owner_id)),
+                        ])
+                except sqlite3.Error as e:
+                    logger.warning("Failed to track debate creator", [("Error", str(e))])
 
             # Send success message
             await interaction.followup.send(
@@ -291,9 +350,10 @@ class RenameCog(commands.Cog):
                     debate=f"#{debate_number}", title=title[:LOG_TITLE_PREVIEW_LENGTH]
                 )
 
-        except Exception as e:
+        except (discord.HTTPException, discord.Forbidden, sqlite3.Error, ValueError) as e:
             logger.error("Failed to rename debate thread", [
                 ("Error", str(e)),
+                ("Error Type", type(e).__name__),
                 ("Thread ID", str(thread.id)),
             ])
             await interaction.followup.send(
