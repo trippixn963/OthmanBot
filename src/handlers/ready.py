@@ -304,9 +304,10 @@ async def _init_karma_reconciliation(bot: "OthmanBot") -> None:
     _cleanup_completed_tasks(bot)
     bot._background_tasks.append(reconciliation_task)
 
-    # Start nightly scheduler
+    # Start nightly scheduler (pass bot for webhook alerts)
     bot.karma_reconciliation_scheduler = KarmaReconciliationScheduler(
-        lambda: reconcile_karma(bot)
+        lambda: reconcile_karma(bot),
+        bot=bot
     )
     await bot.karma_reconciliation_scheduler.start()
 
@@ -360,7 +361,8 @@ async def _init_numbering_reconciliation(bot: "OthmanBot") -> None:
     - Updates the counter file
     """
     bot.numbering_reconciliation_scheduler = NumberingReconciliationScheduler(
-        lambda: reconcile_debate_numbering(bot)
+        lambda: reconcile_debate_numbering(bot),
+        bot=bot
     )
     await bot.numbering_reconciliation_scheduler.start()
 

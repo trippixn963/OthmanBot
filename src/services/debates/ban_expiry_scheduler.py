@@ -165,6 +165,15 @@ class BanExpiryScheduler:
             logger.error("Error In Ban Expiry Check", [
                 ("Error", str(e)),
             ])
+            # Send to webhook for critical scheduler errors
+            try:
+                if hasattr(self.bot, 'webhook_alerts') and self.bot.webhook_alerts:
+                    await self.bot.webhook_alerts.send_error_alert(
+                        "Ban Expiry Scheduler Error",
+                        str(e)
+                    )
+            except Exception:
+                pass  # Don't fail on webhook error
 
     @_check_expired_bans.before_loop
     async def _before_check(self) -> None:

@@ -211,6 +211,19 @@ class CasesCog(commands.Cog):
             ("Looked Up By", f"{interaction.user.name}"),
         ], emoji="📋")
 
+        # Log to webhook
+        try:
+            if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
+                await self.bot.interaction_logger.log_command(
+                    interaction, "cases",
+                    success=True,
+                    details=f"Case [{case['case_id']:04d}] for {display_name}"
+                )
+        except Exception as e:
+            logger.warning("Failed to log /cases command to webhook", [
+                ("Error", str(e)),
+            ])
+
 
 # =============================================================================
 # Setup Function

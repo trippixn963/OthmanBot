@@ -10,7 +10,7 @@ Server: discord.gg/syria
 
 import asyncio
 from datetime import datetime, time, timedelta
-from typing import TYPE_CHECKING, Callable, Awaitable
+from typing import TYPE_CHECKING, Callable, Awaitable, Optional
 
 from src.core.logger import logger
 from src.core.config import SECONDS_PER_HOUR, NY_TZ
@@ -30,14 +30,20 @@ class KarmaReconciliationScheduler:
     Runs at 00:30 NY_TZ every night to ensure karma is accurate.
     """
 
-    def __init__(self, callback: Callable[[], Awaitable[dict]]) -> None:
+    def __init__(
+        self,
+        callback: Callable[[], Awaitable[dict]],
+        bot: Optional["OthmanBot"] = None
+    ) -> None:
         """
         Initialize scheduler.
 
         Args:
             callback: Async function to call for reconciliation (returns stats dict)
+            bot: Optional bot reference for webhook alerts on errors
         """
         self.callback = callback
+        self.bot = bot
         self._task: asyncio.Task | None = None
         self._running = False
 
@@ -110,6 +116,8 @@ class KarmaReconciliationScheduler:
                             ("Error Type", type(e).__name__),
                             ("Error", str(e)),
                         ])
+                        # Send to webhook for reconciliation errors
+                        await self._send_error_webhook("Karma Reconciliation Failed", str(e))
 
             except asyncio.CancelledError:
                 break
@@ -118,8 +126,18 @@ class KarmaReconciliationScheduler:
                     ("Error Type", type(e).__name__),
                     ("Error", str(e)),
                 ])
+                # Send to webhook for scheduler errors
+                await self._send_error_webhook("Karma Scheduler Error", str(e))
                 # Wait 1 hour before retrying on error
                 await asyncio.sleep(SECONDS_PER_HOUR)
+
+    async def _send_error_webhook(self, error_type: str, error_msg: str) -> None:
+        """Send error to webhook if bot is available."""
+        try:
+            if self.bot and hasattr(self.bot, 'webhook_alerts') and self.bot.webhook_alerts:
+                await self.bot.webhook_alerts.send_error_alert(error_type, error_msg)
+        except Exception:
+            pass  # Don't fail on webhook error
 
 
 # =============================================================================
