@@ -111,6 +111,8 @@ class HotTagManager:
 
             # Process all active threads
             for thread in debates_forum.threads:
+                if thread is None:
+                    continue
                 result = await self._evaluate_thread(thread)
                 if result == "added":
                     added_count += 1
@@ -119,9 +121,13 @@ class HotTagManager:
                 elif result == "kept":
                     kept_count += 1
                 checked_count += 1
+                # Small delay to avoid rate limits
+                await asyncio.sleep(0.5)
 
             # Process recently archived threads
             async for thread in debates_forum.archived_threads(limit=DISCORD_ARCHIVED_THREADS_LIMIT):
+                if thread is None:
+                    continue
                 result = await self._evaluate_thread(thread)
                 if result == "added":
                     added_count += 1
@@ -130,6 +136,8 @@ class HotTagManager:
                 elif result == "kept":
                     kept_count += 1
                 checked_count += 1
+                # Small delay to avoid rate limits
+                await asyncio.sleep(0.5)
 
             logger.success("🔥 Daily Hot Tag Evaluation Complete", [
                 ("Threads Checked", str(checked_count)),
@@ -282,19 +290,23 @@ class HotTagManager:
 
             now = datetime.now(NY_TZ)
 
+            # Convert to timezone-aware if needed
             if last_activity.tzinfo is None:
-                last_activity = last_activity.replace(tzinfo=NY_TZ)
+                # Discord timestamps are UTC, convert properly
+                from datetime import timezone
+                last_activity = last_activity.replace(tzinfo=timezone.utc)
 
-            delta = now - last_activity
-            return delta.total_seconds() / 3600
+            # Convert both to UTC for accurate comparison
+            delta = now.astimezone(NY_TZ) - last_activity.astimezone(NY_TZ)
+            return max(0.0, delta.total_seconds() / 3600)
 
         except Exception as e:
             logger.warning("Error Getting Last Message Time", [
                 ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
                 ("Error", str(e)),
             ])
-            # Fallback: assume 24 hours (won't get hot tag)
-            return 24.0
+            # Fallback: return value that won't qualify for hot tag
+            return 999.0
 
     # -------------------------------------------------------------------------
     # Tag Operations

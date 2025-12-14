@@ -137,8 +137,8 @@ Tags:"""
 HOT_MIN_MESSAGES: int = 50
 """Minimum messages required to be considered hot."""
 
-HOT_MAX_INACTIVITY_HOURS: float = 12.0
-"""Maximum hours since last message to keep hot tag."""
+HOT_MAX_INACTIVITY_HOURS: float = 24.0
+"""Maximum hours since last message to keep hot tag (1 day)."""
 
 
 def should_have_hot_tag(message_count: int, hours_since_last_message: float) -> bool:
@@ -147,7 +147,7 @@ def should_have_hot_tag(message_count: int, hours_since_last_message: float) -> 
 
     Evaluated once daily at midnight EST. A thread is "hot" if:
     1. It has at least HOT_MIN_MESSAGES (50) messages
-    2. It had activity within HOT_MAX_INACTIVITY_HOURS (12 hours)
+    2. It had activity within the last 24 hours
 
     Args:
         message_count: Total messages in the thread
@@ -157,10 +157,11 @@ def should_have_hot_tag(message_count: int, hours_since_last_message: float) -> 
         True if thread deserves the "Hot" tag
 
     DESIGN:
-    - Simple criteria: high message count + recent activity
-    - Evaluated daily to prevent notification spam
+    - Simple criteria: high message count + active within last day
+    - Evaluated daily at midnight to prevent notification spam
     - 50 messages is a meaningful threshold for engagement
-    - 12 hour inactivity window is generous but still relevant
+    - 24 hour window ensures any activity that day counts
+    - Thread keeps hot tag if it had activity since last midnight
     """
     has_enough_messages = message_count >= HOT_MIN_MESSAGES
     is_recently_active = hours_since_last_message <= HOT_MAX_INACTIVITY_HOURS
