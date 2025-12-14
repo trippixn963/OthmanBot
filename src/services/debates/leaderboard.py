@@ -9,13 +9,17 @@ Server: discord.gg/syria
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Optional
 
 import discord
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR, SCHEDULER_ERROR_RETRY
+from src.core.config import (
+    DEBATES_FORUM_ID, SCHEDULER_ERROR_RETRY, NY_TZ, DISCORD_API_DELAY,
+    DISCORD_ERROR_THREAD_ARCHIVED, LEADERBOARD_TOP_USERS, LEADERBOARD_TOP_ITEMS,
+    THREAD_NAME_PREVIEW_LENGTH
+)
 from src.utils import send_message_with_retry, edit_message_with_retry, edit_thread_with_retry
 from src.services.debates.database import DebatesDatabase, UserKarma
 
@@ -201,17 +205,32 @@ class LeaderboardManager:
     # -------------------------------------------------------------------------
 
     async def _update_loop(self) -> None:
-        """Update leaderboard every hour."""
+        """Update leaderboard at exact hour marks (EST)."""
         while True:
             try:
-                # Wait 1 hour
-                await asyncio.sleep(SECONDS_PER_HOUR)
+                # Calculate seconds until next exact hour (EST)
+                now = datetime.now(NY_TZ)
+                next_hour = now.replace(minute=0, second=0, microsecond=0)
+                # Move to next hour
+                next_hour = next_hour + timedelta(hours=1)
+                wait_seconds = (next_hour - now).total_seconds()
+
+                logger.info("📊 Next Leaderboard Update Scheduled", [
+                    ("Time", next_hour.strftime('%I:%M %p EST')),
+                    ("Wait", f"{wait_seconds / 60:.1f} minutes"),
+                ])
+
+                await asyncio.sleep(wait_seconds)
 
                 # Ensure thread is healthy (pinned, not archived)
                 await self._ensure_thread_healthy()
 
                 # Update current month
                 await self._update_current_month()
+
+                logger.info("📊 Leaderboard Updated At Hour Mark", [
+                    ("Time", datetime.now(NY_TZ).strftime('%I:%M %p EST')),
+                ])
 
             except asyncio.CancelledError:
                 break
@@ -249,7 +268,7 @@ class LeaderboardManager:
                 # Message was deleted, create new one
                 await self._post_new_month_message(year, month)
             except discord.HTTPException as e:
-                if e.code == 50083:  # Thread is archived
+                if e.code == DISCORD_ERROR_THREAD_ARCHIVED:
                     logger.warning("📊 Leaderboard Thread Is Archived - Attempting To Unarchive")
                     try:
                         await edit_thread_with_retry(self._thread, archived=False)
@@ -320,6 +339,9 @@ class LeaderboardManager:
         # Get debate starters (top 3)
         debate_starters = self.db.get_top_debate_starters(limit=3)
 
+        # Get streak leaders (top 3)
+        streak_leaders = self.db.get_top_streaks(limit=3)
+
         # Get monthly stats
         monthly_stats = self.db.get_monthly_stats(year, month)
 
@@ -327,23 +349,30 @@ class LeaderboardManager:
         lines = []
         separator = "══════════════════════"
 
-        # Current Month section
+        # Current Month section with approval rates
         month_name = MONTH_NAMES[month]
         lines.append(f"### 📅 {month_name} {year}")
-        lines.append(self._format_top_users(monthly))
+        lines.append(self._format_top_users_enhanced(monthly))
         lines.append("")
         lines.append(separator)
         lines.append("")
 
-        # All-Time section
+        # All-Time section with approval rates
         lines.append("### 🏆 All-Time Champions")
-        lines.append(self._format_top_users(all_time))
+        lines.append(self._format_top_users_enhanced(all_time))
+        lines.append("")
+        lines.append(separator)
+        lines.append("")
+
+        # Streak Leaders section (NEW)
+        lines.append("### 🔥 Streak Leaders")
+        lines.append(self._format_streak_leaders(streak_leaders))
         lines.append("")
         lines.append(separator)
         lines.append("")
 
         # Most Active Debates section
-        lines.append("### 🔥 Most Active Debates")
+        lines.append("### 💥 Most Active Debates")
         lines.append(self._format_active_debates(active_debates))
         lines.append("")
         lines.append(separator)
@@ -390,7 +419,7 @@ class LeaderboardManager:
         medals = ["🥇", "🥈", "🥉"]
         lines = []
 
-        for i, user in enumerate(users[:10]):
+        for i, user in enumerate(users[:LEADERBOARD_TOP_USERS]):
             karma_sign = "+" if user.total_karma >= 0 else ""
             # Use medals for top 3, numbers for 4-10
             if i < 3:
@@ -401,6 +430,86 @@ class LeaderboardManager:
             lines.append(
                 f"{prefix} <@{user.user_id}> — **{karma_sign}{user.total_karma}** "
                 f"(↑{user.upvotes_received} ↓{user.downvotes_received})"
+            )
+
+        return "\n".join(lines)
+
+    def _format_top_users_enhanced(self, users: list[UserKarma]) -> str:
+        """
+        Format top users with karma and approval rate (top 3 only).
+
+        Args:
+            users: List of UserKarma (up to 10)
+
+        Returns:
+            Formatted string with approval percentage for top 3
+        """
+        if not users:
+            return "*No data yet*"
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+
+        for i, user in enumerate(users[:LEADERBOARD_TOP_USERS]):
+            karma_sign = "+" if user.total_karma >= 0 else ""
+
+            # Calculate approval rate (only show for top 3)
+            total_votes = user.upvotes_received + user.downvotes_received
+            if total_votes > 0 and i < 3:
+                approval = (user.upvotes_received / total_votes) * 100
+                approval_str = f" • {approval:.0f}%"
+            else:
+                approval_str = ""
+
+            # Use medals for top 3, numbers for 4-10
+            if i < 3:
+                prefix = medals[i]
+            else:
+                prefix = f"`{i + 1}.`"
+
+            lines.append(
+                f"{prefix} <@{user.user_id}> — **{karma_sign}{user.total_karma}**{approval_str}"
+            )
+
+        return "\n".join(lines)
+
+    def _format_streak_leaders(self, streaks: list[dict]) -> str:
+        """
+        Format streak leaders with streak count and flame emoji progression.
+
+        Args:
+            streaks: List of dicts with user_id, current_streak, longest_streak
+
+        Returns:
+            Formatted string with streak info
+        """
+        if not streaks:
+            return "*No active streaks*"
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+
+        for i, streak in enumerate(streaks[:LEADERBOARD_TOP_ITEMS]):
+            current = streak['current_streak']
+            longest = streak['longest_streak']
+
+            # Streak intensity emoji
+            if current >= 30:
+                intensity = "🔥🔥🔥"
+            elif current >= 14:
+                intensity = "🔥🔥"
+            elif current >= 7:
+                intensity = "🔥"
+            elif current >= 3:
+                intensity = "⚡"
+            else:
+                intensity = "📅"
+
+            # Personal best indicator
+            pb_indicator = " 👑" if current == longest and current > 1 else ""
+
+            lines.append(
+                f"{medals[i]} <@{streak['user_id']}> — {intensity} **{current}** day{'s' if current != 1 else ''}{pb_indicator}"
             )
 
         return "\n".join(lines)
@@ -420,7 +529,7 @@ class LeaderboardManager:
 
         fire_medals = ["🥇", "🥈", "🥉"]
         lines = []
-        for i, debate in enumerate(debates[:3]):
+        for i, debate in enumerate(debates[:LEADERBOARD_TOP_ITEMS]):
             thread_id = debate["thread_id"]
             msg_count = debate["message_count"]
             # Use Discord thread link format with fire medals
@@ -443,7 +552,7 @@ class LeaderboardManager:
 
         medals = ["🥇", "🥈", "🥉"]
         lines = []
-        for i, p in enumerate(participants[:3]):
+        for i, p in enumerate(participants[:LEADERBOARD_TOP_ITEMS]):
             user_id = p["user_id"]
             msg_count = p["message_count"]
             lines.append(f"{medals[i]} <@{user_id}> — **{msg_count}** messages")
@@ -465,7 +574,7 @@ class LeaderboardManager:
 
         medals = ["🥇", "🥈", "🥉"]
         lines = []
-        for i, s in enumerate(starters[:3]):
+        for i, s in enumerate(starters[:LEADERBOARD_TOP_ITEMS]):
             user_id = s["user_id"]
             debate_count = s["debate_count"]
             lines.append(f"{medals[i]} <@{user_id}> — **{debate_count}** debates started")
@@ -540,12 +649,12 @@ class LeaderboardManager:
                     message = await self._thread.fetch_message(embed_data["message_id"])
                     content = self._generate_month_content(embed_data["year"], embed_data["month"])
                     await edit_message_with_retry(message, content=content, embed=None)
-                    await asyncio.sleep(0.5)  # Rate limit delay between edits
+                    await asyncio.sleep(DISCORD_API_DELAY)  # Rate limit delay between edits
                 except discord.NotFound:
                     # Message deleted, remove from db
                     self.db.delete_month_embed(embed_data["year"], embed_data["month"])
                 except discord.HTTPException as e:
-                    if e.code == 50083:  # Thread is archived
+                    if e.code == DISCORD_ERROR_THREAD_ARCHIVED:
                         try:
                             await edit_thread_with_retry(self._thread, archived=False)
                             message = await self._thread.fetch_message(embed_data["message_id"])

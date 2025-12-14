@@ -11,7 +11,7 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
-from typing import List, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING
 
 import discord
 from discord import app_commands
@@ -33,32 +33,68 @@ async def banned_user_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> List[app_commands.Choice[str]]:
-    """Autocomplete for banned users in /allow command."""
+    """Autocomplete for banned users in /allow command - shows expiry info."""
+    from datetime import datetime
+    from src.core.config import NY_TZ
+
     bot = interaction.client
 
     if not hasattr(bot, 'debates_service') or bot.debates_service is None:
         return []
 
-    # Get all banned user IDs
-    banned_ids = bot.debates_service.db.get_all_banned_users()
+    # Get banned users with expiry info
+    banned_info = bot.debates_service.db.get_banned_users_with_info()
 
     choices = []
-    for user_id in banned_ids[:DISCORD_AUTOCOMPLETE_LIMIT]:
+    seen_users = set()  # Track users to avoid duplicates
+
+    for ban in banned_info[:DISCORD_AUTOCOMPLETE_LIMIT * 2]:  # Get more to filter
+        user_id = ban['user_id']
+        if user_id in seen_users:
+            continue
+        seen_users.add(user_id)
+
         # Try to get the member from the guild
-        member = interaction.guild.get_member(user_id)
+        member: Optional[discord.Member] = interaction.guild.get_member(user_id) if interaction.guild else None
+
+        # Format expiry info
+        if ban['expires_at']:
+            try:
+                expiry = datetime.fromisoformat(ban['expires_at'].replace('Z', '+00:00'))
+                now = datetime.now(NY_TZ)
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=NY_TZ)
+                time_left = expiry - now
+                if time_left.days > 0:
+                    expiry_str = f"{time_left.days}d left"
+                elif time_left.seconds > 3600:
+                    expiry_str = f"{time_left.seconds // 3600}h left"
+                else:
+                    expiry_str = f"{time_left.seconds // 60}m left"
+            except (ValueError, TypeError) as e:
+                logger.debug("Failed to parse ban expiry", [("Error", str(e))])
+                expiry_str = "Temp"
+        else:
+            expiry_str = "Permanent"
+
+        # Format scope
+        scope = "All" if ban['thread_id'] is None else f"Thread"
+
         if member:
             name = member.display_name
             # Filter by current input
             if current.lower() in name.lower() or current in str(user_id):
+                display = f"{name} ({scope}, {expiry_str})"
                 choices.append(app_commands.Choice(
-                    name=f"{name} (Banned)",
+                    name=display[:100],  # Discord limit
                     value=str(user_id)
                 ))
         else:
             # User left the server but still in ban list
-            if current in str(user_id):
+            if current in str(user_id) or not current:
+                display = f"User {user_id} ({scope}, {expiry_str})"
                 choices.append(app_commands.Choice(
-                    name=f"User ID: {user_id} (Left server)",
+                    name=display[:100],
                     value=str(user_id)
                 ))
 
@@ -123,6 +159,15 @@ class AllowCog(commands.Cog):
                 ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
                 ("Reason", "Debates service not initialized"),
             ])
+            # Log failure to webhook
+            try:
+                if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
+                    await self.bot.interaction_logger.log_command(
+                        interaction, "allow", success=False,
+                        details="Debates service not initialized"
+                    )
+            except Exception as e:
+                logger.debug("Webhook log failed", [("Error", str(e))])
             await interaction.response.send_message(
                 "Debates system is not available.",
                 ephemeral=True

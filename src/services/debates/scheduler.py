@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional, Callable, Any
 
 from src.core.logger import logger
-from src.core.config import SCHEDULER_ERROR_RETRY
+from src.core.config import SCHEDULER_ERROR_RETRY, BOT_DISABLED_CHECK_INTERVAL
 
 
 # =============================================================================
@@ -157,7 +157,7 @@ class DebatesScheduler:
             try:
                 # Check if bot is disabled
                 if self.bot and getattr(self.bot, 'disabled', False):
-                    await asyncio.sleep(60)  # Check again in 1 minute
+                    await asyncio.sleep(BOT_DISABLED_CHECK_INTERVAL)
                     continue
 
                 next_post_time: datetime = self._calculate_next_post_time()
@@ -180,8 +180,18 @@ class DebatesScheduler:
                         await self.post_callback()
                     except Exception as e:
                         logger.error("Failed To Post Hot Debate", [
+                            ("Error Type", type(e).__name__),
                             ("Error", str(e)),
                         ])
+                        # Send webhook alert
+                        try:
+                            if self.bot and hasattr(self.bot, 'webhook_alerts') and self.bot.webhook_alerts:
+                                await self.bot.webhook_alerts.send_error_alert(
+                                    "Scheduler Error - Hot Debate Posting",
+                                    f"{type(e).__name__}: {str(e)}"
+                                )
+                        except Exception:
+                            pass
 
             except asyncio.CancelledError:
                 logger.info("Debates scheduler loop cancelled")

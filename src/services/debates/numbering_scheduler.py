@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Awaitable, Optional, Any
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR, NY_TZ
+from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR, NY_TZ, DISCORD_API_DELAY, LOG_TITLE_PREVIEW_LENGTH, THREAD_NAME_PREVIEW_LENGTH
 from src.utils import edit_thread_with_retry
 
 if TYPE_CHECKING:
@@ -99,7 +99,7 @@ async def reconcile_debate_numbering(bot: "OthmanBot") -> dict:
                 logger.info("🔍 Gap Detected", [
                     ("Current", f"#{current_num}"),
                     ("Expected", f"#{expected_num}"),
-                    ("Thread", thread.name[:40]),
+                    ("Thread", thread.name[:THREAD_NAME_PREVIEW_LENGTH]),
                 ])
             expected_num += 1
 
@@ -130,15 +130,15 @@ async def reconcile_debate_numbering(bot: "OthmanBot") -> dict:
                     logger.success("✅ Renumbered Debate Thread", [
                         ("Old", f"#{old_num}"),
                         ("New", f"#{new_num}"),
-                        ("Title", title[:40]),
+                        ("Title", title[:THREAD_NAME_PREVIEW_LENGTH]),
                     ])
 
                     # Rate limit protection (retry helper already handles some delay)
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(DISCORD_API_DELAY)
 
             except Exception as e:
                 logger.error("Failed To Renumber Thread", [
-                    ("Thread", thread.name[:30]),
+                    ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
                     ("Error", str(e)),
                 ])
                 stats["errors"] += 1

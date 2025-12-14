@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Callable, Awaitable
 import discord
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR, NY_TZ
+from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR, NY_TZ, DISCORD_API_DELAY, LOG_TITLE_PREVIEW_LENGTH, LOG_ERROR_MESSAGE_LENGTH
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -120,18 +120,18 @@ async def backfill_debate_stats(bot: "OthmanBot") -> dict:
                     )
 
                 logger.debug("📊 Thread Scanned", [
-                    ("Thread", thread.name[:30]),
+                    ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
                     ("Messages", str(sum(message_counts.values()))),
                     ("Users", str(len(message_counts))),
                 ])
 
                 # Rate limit protection
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(DISCORD_API_DELAY)
 
             except discord.HTTPException as e:
                 logger.warning("📊 Error Scanning Thread", [
-                    ("Thread", thread.name[:30]),
-                    ("Error", str(e)[:100]),
+                    ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+                    ("Error", str(e)[:LOG_ERROR_MESSAGE_LENGTH]),
                 ])
                 stats["errors"] += 1
                 continue
@@ -237,12 +237,12 @@ async def reconcile_debate_stats(bot: "OthmanBot") -> dict:
                     )
 
                 # Rate limit protection
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(DISCORD_API_DELAY)
 
             except discord.HTTPException as e:
                 logger.warning("📊 Error Scanning Thread", [
-                    ("Thread", thread.name[:30]),
-                    ("Error", str(e)[:100]),
+                    ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+                    ("Error", str(e)[:LOG_ERROR_MESSAGE_LENGTH]),
                 ])
                 stats["errors"] += 1
                 continue

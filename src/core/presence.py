@@ -15,6 +15,7 @@ from typing import Optional, TYPE_CHECKING
 import discord
 
 from src.core.logger import logger
+from src.core.config import PRESENCE_UPDATE_INTERVAL
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -38,7 +39,7 @@ async def presence_update_loop(bot: "OthmanBot") -> None:
     """
     while True:
         try:
-            await asyncio.sleep(60)
+            await asyncio.sleep(PRESENCE_UPDATE_INTERVAL)
             await update_presence(bot)
         except asyncio.CancelledError:
             logger.info("Presence update loop cancelled")
@@ -98,14 +99,27 @@ async def update_presence(bot: "OthmanBot", status_text: Optional[str] = None) -
     )
     try:
         await bot.change_presence(activity=activity)
+    except discord.HTTPException as e:
+        # Discord API errors (rate limits, server issues)
+        logger.warning("Failed To Update Presence (HTTP)", [
+            ("Error", str(e)),
+        ])
+    except ConnectionError as e:
+        # Connection issues during shutdown/reconnection
+        logger.debug("Presence Update Skipped (Connection Issue)", [
+            ("Error", str(e)),
+        ])
     except Exception as e:
-        # Ignore connection errors during shutdown/reconnection
+        # Ignore other connection errors during shutdown/reconnection
         # Common errors: "Cannot write to closing transport", "Not connected"
         error_msg = str(e).lower()
         if "transport" in error_msg or "not connected" in error_msg or "closed" in error_msg:
-            logger.debug(f"Presence update skipped (connection issue): {e}")
+            logger.debug("Presence Update Skipped (Connection Issue)", [
+                ("Error", str(e)),
+            ])
         else:
             logger.warning("Failed To Update Presence", [
+                ("Error Type", type(e).__name__),
                 ("Error", str(e)),
             ])
 

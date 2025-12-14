@@ -22,6 +22,7 @@ from typing import Callable, Any, Optional, List, Union
 import discord
 
 from src.core.logger import logger
+from src.core.config import LOG_TITLE_PREVIEW_LENGTH
 
 
 # =============================================================================
@@ -312,7 +313,7 @@ async def edit_thread_with_retry(
             if e.status == 429:
                 retry_after = getattr(e, 'retry_after', RateLimitConfig.BASE_DELAY * (2 ** attempt))
                 logger.warning("Rate Limited on Thread Edit", [
-                    ("Thread", thread.name[:30] if thread.name else str(thread.id)),
+                    ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH] if thread.name else str(thread.id)),
                     ("Attempt", f"{attempt + 1}/{max_retries}"),
                     ("Retry After", f"{retry_after:.1f}s"),
                 ])
@@ -320,13 +321,13 @@ async def edit_thread_with_retry(
                     await asyncio.sleep(retry_after + 0.5)
                     continue
             logger.error("Failed to Edit Thread", [
-                ("Thread", thread.name[:30] if thread.name else str(thread.id)),
+                ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH] if thread.name else str(thread.id)),
                 ("Error", str(e)),
             ])
             return False
         except Exception as e:
             logger.error("Unexpected Error Editing Thread", [
-                ("Thread", thread.name[:30] if thread.name else str(thread.id)),
+                ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH] if thread.name else str(thread.id)),
                 ("Error", str(e)),
             ])
             return False

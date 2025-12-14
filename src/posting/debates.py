@@ -115,10 +115,29 @@ async def post_hot_debate(bot: "OthmanBot") -> None:
             ("Status", str(e.status)),
             ("Error", str(e)),
         ])
+        # Log to webhook
+        try:
+            if hasattr(bot, 'webhook_alerts') and bot.webhook_alerts:
+                await bot.webhook_alerts.send_error_alert(
+                    "Hot Debate Posting Error (Discord API)",
+                    f"Status: {e.status}, Error: {str(e)}"
+                )
+        except Exception as webhook_err:
+            logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
     except (ValueError, KeyError, TypeError, AttributeError) as e:
         logger.error("🔥 Failed To Post Hot Debate (Data Error)", [
+            ("Error Type", type(e).__name__),
             ("Error", str(e)),
         ])
+        # Log to webhook
+        try:
+            if hasattr(bot, 'webhook_alerts') and bot.webhook_alerts:
+                await bot.webhook_alerts.send_error_alert(
+                    "Hot Debate Posting Error (Data)",
+                    f"{type(e).__name__}: {str(e)}"
+                )
+        except Exception as webhook_err:
+            logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
 
 
 # =============================================================================

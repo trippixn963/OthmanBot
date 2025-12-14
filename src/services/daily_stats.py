@@ -28,7 +28,7 @@ import aiohttp
 import discord
 
 from src.core.logger import logger
-from src.core.config import NY_TZ
+from src.core.config import NY_TZ, STATUS_CHECK_INTERVAL
 
 # Database path
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
@@ -94,7 +94,7 @@ class DailyStatsService:
                     commands_used INTEGER DEFAULT 0,
                     users_banned INTEGER DEFAULT 0,
                     users_unbanned INTEGER DEFAULT 0,
-                    created_at TEXT DEFAULT CURRENT_TIMNY_TZAMP,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(date)
                 )
             """)
@@ -109,7 +109,7 @@ class DailyStatsService:
                     messages INTEGER DEFAULT 0,
                     karma_received INTEGER DEFAULT 0,
                     debates_started INTEGER DEFAULT 0,
-                    created_at TEXT DEFAULT CURRENT_TIMNY_TZAMP,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(date, user_id)
                 )
             """)
@@ -127,7 +127,7 @@ class DailyStatsService:
                     participants INTEGER DEFAULT 0,
                     upvotes INTEGER DEFAULT 0,
                     downvotes INTEGER DEFAULT 0,
-                    created_at TEXT DEFAULT CURRENT_TIMNY_TZAMP,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(date, thread_id)
                 )
             """)
@@ -183,8 +183,8 @@ class DailyStatsService:
             """, (date,))
             conn.commit()
             conn.close()
-        except Exception:
-            pass
+        except sqlite3.Error as e:
+            logger.debug("Stats DB Insert Error", [("Error", str(e))])
 
     # =========================================================================
     # Tracking Methods
@@ -266,8 +266,8 @@ class DailyStatsService:
 
             conn.commit()
             conn.close()
-        except Exception:
-            pass
+        except sqlite3.Error as e:
+            logger.debug("Stats DB Debate Activity Error", [("Error", str(e))])
 
     def record_karma_vote(self, recipient_id: int, recipient_name: str, is_upvote: bool) -> None:
         """Record a karma vote."""
@@ -307,8 +307,8 @@ class DailyStatsService:
 
             conn.commit()
             conn.close()
-        except Exception:
-            pass
+        except sqlite3.Error as e:
+            logger.debug("Stats DB Karma Vote Error", [("Error", str(e))])
 
     def record_news_posted(self, content_type: str = "news") -> None:
         """Record a news/content post."""
@@ -331,8 +331,8 @@ class DailyStatsService:
 
             conn.commit()
             conn.close()
-        except Exception:
-            pass
+        except sqlite3.Error as e:
+            logger.debug("Stats DB News Posted Error", [("Error", str(e))])
 
     def record_command_used(self, command_name: str) -> None:
         """Record a command usage."""
@@ -363,8 +363,8 @@ class DailyStatsService:
 
             conn.commit()
             conn.close()
-        except Exception:
-            pass
+        except sqlite3.Error as e:
+            logger.debug("Stats DB Command Usage Error", [("Error", str(e))])
 
     def record_user_banned(self) -> None:
         """Record a user ban."""
@@ -380,8 +380,8 @@ class DailyStatsService:
             cursor.execute("UPDATE daily_activity SET users_banned = users_banned + 1 WHERE date = ?", (date,))
             conn.commit()
             conn.close()
-        except Exception:
-            pass
+        except sqlite3.Error as e:
+            logger.debug("Stats DB User Banned Error", [("Error", str(e))])
 
     def record_user_unbanned(self) -> None:
         """Record a user unban."""
@@ -397,8 +397,8 @@ class DailyStatsService:
             cursor.execute("UPDATE daily_activity SET users_unbanned = users_unbanned + 1 WHERE date = ?", (date,))
             conn.commit()
             conn.close()
-        except Exception:
-            pass
+        except sqlite3.Error as e:
+            logger.debug("Stats DB User Unbanned Error", [("Error", str(e))])
 
     # =========================================================================
     # Query Methods
@@ -737,7 +737,7 @@ class DailyStatsService:
                     break
                 except Exception as e:
                     logger.error("Stats Scheduler Error", [("Error", str(e))])
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(STATUS_CHECK_INTERVAL)
 
         self._scheduler_task = asyncio.create_task(scheduler_loop())
         logger.info("Stats Scheduler Started", [

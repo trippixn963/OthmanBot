@@ -14,6 +14,8 @@ from .helpers import (
     safe_fetch_message,
     safe_fetch_member,
     safe_fetch_user,
+    truncate,
+    truncate_for_log,
 )
 from .language import (
     is_primarily_arabic,
@@ -40,6 +42,9 @@ __all__ = [
     "safe_fetch_message",
     "safe_fetch_member",
     "safe_fetch_user",
+    # String truncation helpers
+    "truncate",
+    "truncate_for_log",
     # Language utilities
     "is_primarily_arabic",
     "get_min_message_length",

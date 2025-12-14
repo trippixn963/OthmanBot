@@ -42,14 +42,25 @@ async def _safe_cleanup(name: str, cleanup_coro: Any) -> bool:
     """
     try:
         await cleanup_coro
-        logger.debug(f"Cleanup Complete: {name}")
+        logger.debug("Cleanup Complete", [
+            ("Task", name),
+        ])
         return True
     except asyncio.CancelledError:
-        logger.debug(f"Cleanup Cancelled: {name}")
+        logger.debug("Cleanup Cancelled", [
+            ("Task", name),
+        ])
         return True
+    except asyncio.TimeoutError:
+        logger.warning("Cleanup Timed Out", [
+            ("Task", name),
+        ])
+        return False
     except Exception as e:
+        # Catch remaining exceptions but exclude system exit signals
         logger.warning("Cleanup Failed", [
             ("Task", name),
+            ("Error Type", type(e).__name__),
             ("Error", str(e)),
         ])
         return False

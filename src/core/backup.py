@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from src.core.logger import logger
-from src.core.config import NY_TZ
+from src.core.config import NY_TZ, BACKUP_ERROR_RETRY_INTERVAL
 
 
 # =============================================================================
@@ -52,8 +52,8 @@ def create_backup() -> Optional[Path]:
     # Ensure backup directory exists
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Generate backup filename with timestamp
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    # Generate backup filename with timestamp (timezone-aware)
+    timestamp = datetime.now(NY_TZ).strftime("%Y-%m-%d_%H-%M-%S")
     backup_filename = f"debates_{timestamp}.db"
     backup_path = BACKUP_DIR / backup_filename
 
@@ -103,7 +103,9 @@ def cleanup_old_backups() -> int:
             if file_date < cutoff_date:
                 backup_file.unlink()
                 removed_count += 1
-                logger.debug(f"Removed old backup: {backup_file.name}")
+                logger.debug("Removed Old Backup", [
+                    ("File", backup_file.name),
+                ])
 
         except (ValueError, IndexError):
             # Skip files with unexpected naming
@@ -229,8 +231,8 @@ class BackupScheduler:
                 logger.error("Backup Scheduler Error", [
                     ("Error", str(e)),
                 ])
-                # Wait 1 hour before retrying on error
-                await asyncio.sleep(3600)
+                # Wait before retrying on error
+                await asyncio.sleep(BACKUP_ERROR_RETRY_INTERVAL)
 
     def _seconds_until_next_backup(self) -> float:
         """Calculate seconds until next scheduled backup time."""

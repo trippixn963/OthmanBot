@@ -62,6 +62,7 @@ import asyncio
 import sqlite3
 import threading
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
@@ -204,13 +205,13 @@ class DebatesDatabase:
                     ])
 
     # Current schema version - increment when adding migrations
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     # Valid table names for SQL injection prevention
     VALID_TABLES = frozenset({
         'votes', 'users', 'debate_threads', 'debate_bans',
         'debate_participation', 'debate_creators', 'case_logs',
-        'analytics_messages', 'schema_version'
+        'analytics_messages', 'schema_version', 'user_streaks'
     })
 
     def _init_database(self) -> None:
@@ -414,6 +415,20 @@ class DebatesDatabase:
             logger.info("Migration 3: Added index on debate_bans.expires_at")
             migrations_run += 1
 
+        # Migration 4: Add user_streaks table for tracking daily participation streaks
+        if current_version < 4:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_streaks (
+                    user_id INTEGER PRIMARY KEY,
+                    current_streak INTEGER DEFAULT 0,
+                    longest_streak INTEGER DEFAULT 0,
+                    last_active_date TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            logger.info("Migration 4: Added user_streaks table")
+            migrations_run += 1
+
         # Update schema version
         if migrations_run > 0:
             cursor.execute(
@@ -428,6 +443,9 @@ class DebatesDatabase:
         # Validate table name to prevent SQL injection
         if table not in self.VALID_TABLES:
             raise ValueError(f"Invalid table name: {table}")
+        # Additional validation: ensure table name is a valid identifier
+        if not table.isidentifier():
+            raise ValueError(f"Invalid table name format: {table}")
         cursor.execute(f"PRAGMA table_info({table})")
         columns = [col[1] for col in cursor.fetchall()]
         return column in columns
@@ -811,6 +829,240 @@ class DebatesDatabase:
         """Async wrapper for get_user_rank - runs in thread pool."""
         return await asyncio.to_thread(self.get_user_rank, user_id)
 
+    def get_user_analytics(self, user_id: int) -> dict:
+        """
+        Get detailed analytics for a user's debate participation.
+
+        Args:
+            user_id: Discord user ID
+
+        Returns:
+            Dict with debates_participated, debates_created, total_messages
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            try:
+                # Count debates participated in
+                cursor.execute(
+                    "SELECT COUNT(*) FROM debate_participation WHERE user_id = ?",
+                    (user_id,)
+                )
+                debates_participated = cursor.fetchone()[0] or 0
+
+                # Count debates created
+                cursor.execute(
+                    "SELECT COUNT(*) FROM debate_creators WHERE user_id = ?",
+                    (user_id,)
+                )
+                debates_created = cursor.fetchone()[0] or 0
+
+                # Sum total messages across all debates
+                cursor.execute(
+                    "SELECT COALESCE(SUM(message_count), 0) FROM debate_participation WHERE user_id = ?",
+                    (user_id,)
+                )
+                total_messages = cursor.fetchone()[0] or 0
+
+                return {
+                    "debates_participated": debates_participated,
+                    "debates_created": debates_created,
+                    "total_messages": total_messages,
+                }
+            finally:
+                cursor.close()
+
+    async def get_user_analytics_async(self, user_id: int) -> dict:
+        """Async wrapper for get_user_analytics - runs in thread pool."""
+        return await asyncio.to_thread(self.get_user_analytics, user_id)
+
+    # -------------------------------------------------------------------------
+    # Streak Operations
+    # -------------------------------------------------------------------------
+
+    def update_user_streak(self, user_id: int) -> dict:
+        """
+        Update a user's daily participation streak.
+
+        Called when user participates in a debate. Checks if they've
+        already been active today, and updates streak accordingly.
+
+        Args:
+            user_id: Discord user ID
+
+        Returns:
+            Dict with current_streak, longest_streak, streak_extended (bool)
+        """
+        from datetime import datetime
+        from src.core.config import NY_TZ
+
+        today = datetime.now(NY_TZ).strftime("%Y-%m-%d")
+
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            try:
+                # Get current streak data
+                cursor.execute(
+                    "SELECT current_streak, longest_streak, last_active_date FROM user_streaks WHERE user_id = ?",
+                    (user_id,)
+                )
+                row = cursor.fetchone()
+
+                if row:
+                    current_streak, longest_streak, last_active_date = row
+
+                    if last_active_date == today:
+                        # Already active today, no change
+                        return {
+                            "current_streak": current_streak,
+                            "longest_streak": longest_streak,
+                            "streak_extended": False,
+                        }
+
+                    # Check if yesterday was active (streak continues)
+                    yesterday = (datetime.now(NY_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+                    if last_active_date == yesterday:
+                        # Streak continues
+                        new_streak = current_streak + 1
+                    else:
+                        # Streak broken, start fresh
+                        new_streak = 1
+
+                    new_longest = max(longest_streak, new_streak)
+
+                    cursor.execute(
+                        """UPDATE user_streaks
+                           SET current_streak = ?, longest_streak = ?, last_active_date = ?,
+                               updated_at = CURRENT_TIMESTAMP
+                           WHERE user_id = ?""",
+                        (new_streak, new_longest, today, user_id)
+                    )
+                else:
+                    # First time participation
+                    new_streak = 1
+                    new_longest = 1
+                    cursor.execute(
+                        """INSERT INTO user_streaks (user_id, current_streak, longest_streak, last_active_date)
+                           VALUES (?, 1, 1, ?)""",
+                        (user_id, today)
+                    )
+
+                conn.commit()
+
+                return {
+                    "current_streak": new_streak,
+                    "longest_streak": new_longest,
+                    "streak_extended": True,
+                }
+            finally:
+                cursor.close()
+
+    async def update_user_streak_async(self, user_id: int) -> dict:
+        """Async wrapper for update_user_streak - runs in thread pool."""
+        return await asyncio.to_thread(self.update_user_streak, user_id)
+
+    def get_user_streak(self, user_id: int) -> dict:
+        """
+        Get a user's current streak data.
+
+        Args:
+            user_id: Discord user ID
+
+        Returns:
+            Dict with current_streak, longest_streak
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            try:
+                cursor.execute(
+                    "SELECT current_streak, longest_streak, last_active_date FROM user_streaks WHERE user_id = ?",
+                    (user_id,)
+                )
+                row = cursor.fetchone()
+
+                if row:
+                    current_streak, longest_streak, last_active_date = row
+
+                    # Check if streak is still active (was active yesterday or today)
+                    from datetime import datetime
+                    from src.core.config import NY_TZ
+
+                    today = datetime.now(NY_TZ).strftime("%Y-%m-%d")
+                    yesterday = (datetime.now(NY_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+                    if last_active_date not in (today, yesterday):
+                        # Streak has expired
+                        current_streak = 0
+
+                    return {
+                        "current_streak": current_streak,
+                        "longest_streak": longest_streak,
+                    }
+
+                return {
+                    "current_streak": 0,
+                    "longest_streak": 0,
+                }
+            finally:
+                cursor.close()
+
+    async def get_user_streak_async(self, user_id: int) -> dict:
+        """Async wrapper for get_user_streak - runs in thread pool."""
+        return await asyncio.to_thread(self.get_user_streak, user_id)
+
+    def get_top_streaks(self, limit: int = 3) -> list[dict]:
+        """
+        Get users with the highest current streaks.
+
+        Args:
+            limit: Maximum number of users to return
+
+        Returns:
+            List of dicts with user_id, current_streak, longest_streak
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            try:
+                # Only include users with active streaks (participated today or yesterday)
+                from src.core.config import NY_TZ
+                today = datetime.now(NY_TZ).strftime('%Y-%m-%d')
+                yesterday = (datetime.now(NY_TZ) - timedelta(days=1)).strftime('%Y-%m-%d')
+
+                cursor.execute(
+                    """SELECT user_id, current_streak, longest_streak
+                       FROM user_streaks
+                       WHERE current_streak > 0
+                       AND last_active_date IN (?, ?)
+                       ORDER BY current_streak DESC, longest_streak DESC
+                       LIMIT ?""",
+                    (today, yesterday, limit)
+                )
+                rows = cursor.fetchall()
+
+                return [
+                    {
+                        'user_id': row[0],
+                        'current_streak': row[1],
+                        'longest_streak': row[2]
+                    }
+                    for row in rows
+                ]
+            except Exception as e:
+                logger.error("DB: Failed To Get Top Streaks", [
+                    ("Error", str(e)),
+                ])
+                return []
+            finally:
+                cursor.close()
+
     # -------------------------------------------------------------------------
     # Debate Thread Operations
     # -------------------------------------------------------------------------
@@ -1065,6 +1317,26 @@ class DebatesDatabase:
                    WHERE expires_at IS NULL OR expires_at > datetime('now')"""
             )
             return [row[0] for row in cursor.fetchall()]
+
+    def get_banned_users_with_info(self) -> list[dict]:
+        """
+        Get all banned users with their ban details for autocomplete.
+
+        Returns:
+            List of dicts with user_id, expires_at, thread_id
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT user_id, expires_at, thread_id FROM debate_bans
+                   WHERE expires_at IS NULL OR expires_at > datetime('now')
+                   ORDER BY expires_at ASC NULLS LAST"""
+            )
+            return [
+                {"user_id": row[0], "expires_at": row[1], "thread_id": row[2]}
+                for row in cursor.fetchall()
+            ]
 
     def get_expired_bans(self) -> list[dict]:
         """

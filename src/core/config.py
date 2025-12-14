@@ -205,7 +205,36 @@ DISCORD_MESSAGE_LIMIT: int = 2000  # Max message content length
 
 DISCORD_API_DELAY: float = 0.5  # Delay between Discord API calls (seconds)
 REACTION_DELAY: float = 0.3  # Delay between adding reactions (seconds)
+BATCH_PROCESSING_DELAY: float = 0.1  # Delay between batch operations (seconds)
+PIN_SYSTEM_MESSAGE_DELAY: float = 1.0  # Delay after pinning for system message to appear (seconds)
+BOT_STARTUP_DELAY: int = 10  # Initial delay before startup tasks (seconds)
+PRESENCE_UPDATE_INTERVAL: int = 60  # Interval between presence updates (seconds)
+BOT_DISABLED_CHECK_INTERVAL: int = 60  # Check interval when bot is disabled (seconds)
+BACKUP_ERROR_RETRY_INTERVAL: int = 3600  # Wait time after backup error (1 hour)
+STATUS_CHECK_INTERVAL: int = 60  # Interval for periodic status checks (seconds)
 
+
+# =============================================================================
+# Discord Error Codes
+# =============================================================================
+
+DISCORD_ERROR_THREAD_ARCHIVED: int = 50083  # Thread is archived and cannot be modified
+DISCORD_ERROR_UNKNOWN_MESSAGE: int = 10008  # Unknown message
+DISCORD_ERROR_MISSING_ACCESS: int = 50001  # Missing access
+
+# =============================================================================
+# String Truncation Limits
+# =============================================================================
+
+LOG_TITLE_PREVIEW_LENGTH: int = 30  # Title preview length in logs
+LOG_ERROR_MESSAGE_LENGTH: int = 100  # Error message length in logs
+THREAD_NAME_PREVIEW_LENGTH: int = 40  # Thread name preview in logs
+CONTENT_PREVIEW_LENGTH: int = 200  # Content preview for errors/logs
+DISCORD_THREAD_NAME_LIMIT: int = 100  # Discord thread name character limit
+TEASER_LENGTH: int = 100  # Summary teaser length for embeds
+LEADERBOARD_TOP_USERS: int = 10  # Top users to show in leaderboards
+LEADERBOARD_TOP_ITEMS: int = 3  # Top items (streaks, debates, etc.)
+DISCORD_AUTOCOMPLETE_LIMIT: int = 25  # Discord autocomplete max choices
 
 # =============================================================================
 # Cache Constants
@@ -424,6 +453,27 @@ __all__ = [
     # Rate Limiting Constants
     "DISCORD_API_DELAY",
     "REACTION_DELAY",
+    "BATCH_PROCESSING_DELAY",
+    "PIN_SYSTEM_MESSAGE_DELAY",
+    "BOT_STARTUP_DELAY",
+    "PRESENCE_UPDATE_INTERVAL",
+    "BOT_DISABLED_CHECK_INTERVAL",
+    "BACKUP_ERROR_RETRY_INTERVAL",
+    "STATUS_CHECK_INTERVAL",
+    # Discord Error Codes
+    "DISCORD_ERROR_THREAD_ARCHIVED",
+    "DISCORD_ERROR_UNKNOWN_MESSAGE",
+    "DISCORD_ERROR_MISSING_ACCESS",
+    # String Truncation Limits
+    "LOG_TITLE_PREVIEW_LENGTH",
+    "LOG_ERROR_MESSAGE_LENGTH",
+    "THREAD_NAME_PREVIEW_LENGTH",
+    "CONTENT_PREVIEW_LENGTH",
+    "DISCORD_THREAD_NAME_LIMIT",
+    "TEASER_LENGTH",
+    "LEADERBOARD_TOP_USERS",
+    "LEADERBOARD_TOP_ITEMS",
+    "DISCORD_AUTOCOMPLETE_LIMIT",
     # Cache Constants
     "AI_CACHE_MAX_ENTRIES",
     "CACHE_CLEANUP_RATIO",
