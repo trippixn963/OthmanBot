@@ -130,50 +130,42 @@ Tags:"""
 
 
 # =============================================================================
-# Hot Tag Management
+# Hot Tag Management (Daily Evaluation at Midnight EST)
 # =============================================================================
 
-def should_add_hot_tag(message_count: int, time_elapsed_hours: float) -> bool:
+# Hot tag thresholds
+HOT_MIN_MESSAGES: int = 50
+"""Minimum messages required to be considered hot."""
+
+HOT_MAX_INACTIVITY_HOURS: float = 12.0
+"""Maximum hours since last message to keep hot tag."""
+
+
+def should_have_hot_tag(message_count: int, hours_since_last_message: float) -> bool:
     """
-    Determine if a debate thread should get the "Hot" tag.
+    Determine if a debate thread should have the "Hot" tag.
 
-    Args:
-        message_count: Number of messages in the thread
-        time_elapsed_hours: Hours since thread creation
-
-    Returns:
-        True if thread is "hot" (high activity)
-
-    DESIGN:
-    - "Hot" criteria: >= 10 messages in first hour, or >= 20 messages in first 6 hours
-    - Encourages active, engaging debates
-    """
-    if time_elapsed_hours < 1:
-        return message_count >= 10
-    elif time_elapsed_hours < 6:
-        return message_count >= 20
-    elif time_elapsed_hours < 24:
-        return message_count >= 40
-    else:
-        return message_count >= 100
-
-
-def should_remove_hot_tag(message_count: int, hours_since_last_message: float) -> bool:
-    """
-    Determine if a debate thread should lose the "Hot" tag.
+    Evaluated once daily at midnight EST. A thread is "hot" if:
+    1. It has at least HOT_MIN_MESSAGES (50) messages
+    2. It had activity within HOT_MAX_INACTIVITY_HOURS (12 hours)
 
     Args:
         message_count: Total messages in the thread
         hours_since_last_message: Hours since last activity
 
     Returns:
-        True if thread is no longer "hot"
+        True if thread deserves the "Hot" tag
 
     DESIGN:
-    - Remove "Hot" if no activity for 6+ hours
-    - Keeps the tag fresh and relevant
+    - Simple criteria: high message count + recent activity
+    - Evaluated daily to prevent notification spam
+    - 50 messages is a meaningful threshold for engagement
+    - 12 hour inactivity window is generous but still relevant
     """
-    return hours_since_last_message >= 6
+    has_enough_messages = message_count >= HOT_MIN_MESSAGES
+    is_recently_active = hours_since_last_message <= HOT_MAX_INACTIVITY_HOURS
+
+    return has_enough_messages and is_recently_active
 
 
 # =============================================================================
@@ -184,6 +176,7 @@ __all__ = [
     "DEBATE_TAGS",
     "TAG_DESCRIPTIONS",
     "detect_debate_tags",
-    "should_add_hot_tag",
-    "should_remove_hot_tag",
+    "should_have_hot_tag",
+    "HOT_MIN_MESSAGES",
+    "HOT_MAX_INACTIVITY_HOURS",
 ]
