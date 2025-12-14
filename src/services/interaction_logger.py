@@ -484,49 +484,165 @@ class InteractionLogger:
     # Member Events
     # =========================================================================
 
-    async def log_member_leave_cleanup(
+    async def log_debate_participant_left(
         self,
         user_name: str,
         user_id: int,
-        threads_deleted: int,
-        messages_deleted: int,
-        reactions_removed: int,
-        karma_reset: int
+        user_avatar_url: Optional[str],
+        karma: int,
+        debates_participated: int,
+        debates_created: int,
+        votes_removed: int = 0,
+        case_id: Optional[int] = None
     ) -> None:
-        """Log when a member leaves and their data is cleaned up."""
+        """Log when a debate participant leaves the server."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
-            title="👋 Member Left - Cleanup Complete",
+            title="👋 Debate Participant Left",
             color=COLOR_CLEANUP,
+            description=f"**{user_name}** has left the server"
         )
-        embed.add_field(name="User", value=f"`{user_name}` `[{user_id}]`", inline=True)
+
+        if user_avatar_url:
+            embed.set_thumbnail(url=user_avatar_url)
+
+        embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
-        embed.add_field(name="Threads Deleted", value=f"`{threads_deleted}`", inline=True)
-        embed.add_field(name="Messages Deleted", value=f"`{messages_deleted}`", inline=True)
-        embed.add_field(name="Reactions Removed", value=f"`{reactions_removed}`", inline=True)
-        embed.add_field(name="Karma Reset", value=f"`{karma_reset}`", inline=True)
+        embed.add_field(name="Karma", value=f"`{karma}` (preserved)", inline=True)
+
+        # Participation stats
+        embed.add_field(name="Debates Participated", value=f"`{debates_participated}`", inline=True)
+        embed.add_field(name="Debates Created", value=f"`{debates_created}`", inline=True)
+
+        # Votes removed (their votes on others no longer count)
+        if votes_removed > 0:
+            embed.add_field(name="Votes Removed", value=f"`{votes_removed}` (reversed)", inline=True)
+
+        # Case ID if they have one
+        if case_id:
+            embed.add_field(name="Case ID", value=f"`[{case_id:04d}]`", inline=True)
 
         await self._send_log(embed)
 
-    async def log_member_rejoin(
+    async def log_debate_participant_rejoined(
         self,
-        member: discord.Member
+        member: discord.Member,
+        debates_participated: int,
+        debates_created: int,
+        case_id: Optional[int] = None
     ) -> None:
-        """Log when a member rejoins the server."""
+        """Log when a debate participant rejoins the server."""
         now_est = datetime.now(NY_TZ)
-        time_str = now_est.strftime("%I:%M %p NY_TZ")
+        time_str = now_est.strftime("%I:%M %p EST")
 
         embed = discord.Embed(
-            title="🔄 Member Rejoined",
+            title="🔄 Debate Participant Rejoined",
             color=COLOR_SUCCESS,
+            description=f"**{member.name}** has rejoined the server"
         )
         embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name="User", value=f"{member.mention} `[{member.id}]`", inline=True)
+
+        embed.add_field(name="User", value=f"{member.mention}", inline=True)
+        embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
 
+        # Previous participation stats (from before they left)
+        embed.add_field(name="Previous Debates", value=f"`{debates_participated}`", inline=True)
+        embed.add_field(name="Previous Created", value=f"`{debates_created}`", inline=True)
+
+        # Case ID if they have one
+        if case_id:
+            embed.add_field(name="Case ID", value=f"`[{case_id:04d}]`", inline=True)
+            embed.add_field(name="⚠️ Note", value="User has moderation history", inline=False)
+
         await self._send_log(embed)
+
+    async def log_potential_ban_evasion(
+        self,
+        member: discord.Member,
+        account_age_days: int,
+        thread_name: str,
+        developer_id: int
+    ) -> None:
+        """
+        Alert about potential ban evasion - new account posting in debates.
+
+        Args:
+            member: The suspicious member
+            account_age_days: How old their account is in days
+            thread_name: The debate thread they posted in
+            developer_id: Developer ID to ping
+        """
+        now_est = datetime.now(NY_TZ)
+        time_str = now_est.strftime("%I:%M %p EST")
+
+        embed = discord.Embed(
+            title="🚨 Potential Ban Evasion Detected",
+            color=0xFF0000,  # Red - high priority
+            description=f"**New account** posting in debates"
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+
+        embed.add_field(name="User", value=f"{member.mention}", inline=True)
+        embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
+        embed.add_field(name="Account Age", value=f"`{account_age_days} days`", inline=True)
+
+        # Account creation date
+        embed.add_field(
+            name="Account Created",
+            value=f"<t:{int(member.created_at.timestamp())}:F>",
+            inline=True
+        )
+
+        # Server join date
+        if member.joined_at:
+            embed.add_field(
+                name="Server Joined",
+                value=f"<t:{int(member.joined_at.timestamp())}:R>",
+                inline=True
+            )
+
+        embed.add_field(name="Thread", value=f"`{thread_name[:40]}`", inline=True)
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+
+        # Warning message
+        embed.add_field(
+            name="⚠️ Action Required",
+            value="Review this user's activity. New accounts immediately participating in debates may be evading a previous ban.",
+            inline=False
+        )
+
+        # Send with developer ping
+        await self._send_log_with_content(embed, f"<@{developer_id}>")
+
+    async def _send_log_with_content(self, embed: discord.Embed, content: str = "") -> None:
+        """Send a log embed via webhook with optional text content (for pings)."""
+        if not LOG_WEBHOOK_URL:
+            return
+
+        try:
+            session = await self._get_session()
+
+            embed_dict = embed.to_dict()
+
+            payload = {
+                "content": content,
+                "embeds": [embed_dict]
+            }
+
+            async with session.post(LOG_WEBHOOK_URL, json=payload) as resp:
+                if resp.status not in (200, 204):
+                    logger.warning("Interaction Webhook Error", [
+                        ("Status", str(resp.status)),
+                        ("Action", "Log not delivered"),
+                    ])
+        except Exception as e:
+            logger.warning("Interaction Webhook Failed", [
+                ("Error", str(e)),
+                ("Action", "Log not delivered"),
+            ])
 
     # =========================================================================
     # Hot Tag Events
