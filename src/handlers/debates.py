@@ -1041,6 +1041,21 @@ async def on_debate_reaction_remove(
         ("Message ID", str(reaction.message.id)),
     ])
 
+    # Log to webhook - vote removal (negative karma change)
+    try:
+        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+            karma_data = bot.debates_service.get_karma(reaction.message.author.id)
+            # Vote removal = negative change (removing upvote = -1, removing downvote = +1)
+            change = -1 if emoji == UPVOTE_EMOJI else 1
+            await bot.interaction_logger.log_karma_change(
+                reaction.message.author, user, change,
+                karma_data.total_karma, reaction.message.channel.name
+            )
+    except Exception as e:
+        logger.warning("Failed to log vote removal to webhook", [
+            ("Error", str(e)),
+        ])
+
     # Update analytics embed
     await update_analytics_embed(bot, reaction.message.channel)
 
