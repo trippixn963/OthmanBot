@@ -578,17 +578,8 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                         thread_id=message.channel.id
                     )
 
-                # Send ephemeral-style DM to user with rate limit handling
-                try:
-                    await send_message_with_retry(
-                        message.author,
-                        content=(
-                            f"🚫 You are banned from posting in this debate thread.\n"
-                            f"Contact a moderator if you believe this is a mistake."
-                        )
-                    )
-                except discord.Forbidden:
-                    pass  # User has DMs disabled
+                # Note: No additional DM sent here - user already received detailed ban notification
+                # with appeal button when they were originally banned
             except discord.HTTPException as e:
                 logger.warning("🚫 Failed To Delete Banned User Message", [
                     ("Error", str(e)),
