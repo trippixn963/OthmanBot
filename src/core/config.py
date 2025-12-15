@@ -330,6 +330,7 @@ if MODS_GUILD_ID:
 
 MODERATOR_ROLE_ID: int = _load_required_id("MODERATOR_ROLE_ID")
 DEVELOPER_ID: int = _load_required_id("DEVELOPER_ID")
+DEBATES_MANAGEMENT_ROLE_ID: Optional[int] = _load_optional_id("DEBATES_MANAGEMENT_ROLE_ID")
 
 
 # =============================================================================
@@ -423,6 +424,43 @@ def load_general_channel_id() -> Optional[int]:
 
 
 # =============================================================================
+# Role Check Helper
+# =============================================================================
+
+def has_debates_management_role(member) -> bool:
+    """
+    Check if a member has the Debates Management role or is the developer.
+
+    Args:
+        member: Discord Member or User object
+
+    Returns:
+        True if member is the developer, has the role, or if role is not configured
+
+    DESIGN: Centralized role check for debates management commands.
+    - Developer always has access (bypass)
+    - If DEBATES_MANAGEMENT_ROLE_ID is configured, check for it
+    - Falls back to manage_messages permission if role not configured
+    """
+    import discord
+
+    # Developer bypass - always allow
+    if member.id == DEVELOPER_ID:
+        return True
+
+    # For non-Member objects (e.g., User in DMs), only developer has access
+    if not isinstance(member, discord.Member):
+        return False
+
+    # If role ID is configured, check for it
+    if DEBATES_MANAGEMENT_ROLE_ID:
+        return any(role.id == DEBATES_MANAGEMENT_ROLE_ID for role in member.roles)
+
+    # Fallback to manage_messages permission
+    return member.guild_permissions.manage_messages
+
+
+# =============================================================================
 # Module Export
 # =============================================================================
 
@@ -501,4 +539,8 @@ __all__ = [
     "load_soccer_channel_id",
     "load_gaming_channel_id",
     "load_general_channel_id",
+    # Role IDs
+    "DEBATES_MANAGEMENT_ROLE_ID",
+    # Role check helpers
+    "has_debates_management_role",
 ]

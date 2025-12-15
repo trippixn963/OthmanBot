@@ -18,6 +18,7 @@ import discord
 
 from src.core.logger import logger
 from src.core.config import NY_TZ
+from src.views.appeals import AppealButtonView
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -171,8 +172,16 @@ class BanNotifier:
                 icon_url=self.bot.user.display_avatar.url if self.bot.user else None
             )
 
-            # Send DM
-            await user.send(embed=embed)
+            # Create appeal button view
+            # Use user_id as action_id - when appeal is approved, all bans for this user are removed
+            appeal_view = AppealButtonView(
+                action_type="disallow",
+                action_id=user.id,
+                user_id=user.id,
+            )
+
+            # Send DM with appeal button
+            await user.send(embed=embed, view=appeal_view)
 
             logger.success("Ban Notification DM Sent Successfully", [
                 ("User", f"{user.name} ({user.id})"),
