@@ -531,6 +531,244 @@ async def _handle_review_button(
 
 
 # =============================================================================
+# Standalone Interaction Handlers (for on_interaction routing)
+# =============================================================================
+
+async def handle_appeal_button_interaction(
+    interaction: discord.Interaction,
+    custom_id: str
+) -> None:
+    """
+    Handle appeal button click from on_interaction.
+
+    This is called from bot.on_interaction for persistent button handling.
+    """
+    # Parse custom_id: appeal:{action_type}:{action_id}:{user_id}
+    parts = custom_id.split(":")
+    if len(parts) != 4 or parts[0] != "appeal":
+        logger.error("Invalid Appeal Button Custom ID", [
+            ("Custom ID", custom_id),
+        ])
+        await interaction.response.send_message(
+            "This appeal button is invalid.",
+            ephemeral=True
+        )
+        return
+
+    _, action_type, action_id_str, user_id_str = parts
+
+    # Handle generic placeholder
+    if action_type == "generic":
+        await interaction.response.send_message(
+            "This appeal button is no longer valid.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        action_id = int(action_id_str)
+        expected_user_id = int(user_id_str)
+    except ValueError:
+        logger.error("Invalid Appeal Button IDs", [
+            ("Action ID", action_id_str),
+            ("User ID", user_id_str),
+        ])
+        await interaction.response.send_message(
+            "This appeal button is invalid.",
+            ephemeral=True
+        )
+        return
+
+    # Determine source (DM or Thread/Channel)
+    is_dm = interaction.guild is None
+    source = "DM" if is_dm else f"#{interaction.channel.name if interaction.channel else 'Unknown'}"
+
+    logger.info("Appeal Button Clicked", [
+        ("User", f"{interaction.user.name} ({interaction.user.id})"),
+        ("Action Type", action_type),
+        ("Action ID", str(action_id)),
+        ("Expected User", str(expected_user_id)),
+        ("Source", source),
+    ])
+
+    # Get bot instance for webhook logging
+    from src.bot import OthmanBot
+    bot: "OthmanBot" = interaction.client  # type: ignore
+
+    # Log to webhook
+    try:
+        if bot.interaction_logger:
+            await bot.interaction_logger.log_appeal_button_clicked(
+                user=interaction.user,
+                action_type=action_type,
+                action_id=action_id,
+                source=source,
+                is_dm=is_dm,
+            )
+    except Exception as e:
+        logger.warning("Failed to log appeal button click to webhook", [
+            ("Error", str(e)),
+        ])
+
+    # Verify user is the one who should appeal
+    if interaction.user.id != expected_user_id:
+        logger.warning("Appeal Button Rejected - Wrong User", [
+            ("Clicked By", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Expected User", str(expected_user_id)),
+            ("Action Type", action_type),
+        ])
+        await interaction.response.send_message(
+            "You cannot submit an appeal for another user.",
+            ephemeral=True
+        )
+        return
+
+    # Check if appeal already exists
+    if bot.debates_service and bot.debates_service.db:
+        if bot.debates_service.db.has_appeal(
+            user_id=interaction.user.id,
+            action_type=action_type,
+            action_id=action_id
+        ):
+            await interaction.response.send_message(
+                "You have already submitted an appeal for this action. "
+                "Please wait for a moderator to review it.",
+                ephemeral=True
+            )
+            return
+
+    # Show the appeal modal
+    modal = AppealModal(
+        action_type=action_type,
+        action_id=action_id,
+        user_id=interaction.user.id,
+        bot=bot,
+    )
+    await interaction.response.send_modal(modal)
+
+
+async def handle_review_button_interaction(
+    interaction: discord.Interaction,
+    custom_id: str
+) -> None:
+    """
+    Handle appeal review button click (Approve/Deny) from on_interaction.
+
+    This is called from bot.on_interaction for persistent button handling.
+    """
+    # Parse custom_id: appeal_review:{appeal_id}:{action}
+    parts = custom_id.split(":")
+    if len(parts) != 3 or parts[0] != "appeal_review":
+        logger.error("Invalid Review Button Custom ID", [
+            ("Custom ID", custom_id),
+        ])
+        await interaction.response.send_message(
+            "This button is invalid.",
+            ephemeral=True
+        )
+        return
+
+    _, appeal_id_str, action = parts
+
+    # Handle generic placeholder
+    if appeal_id_str == "0":
+        await interaction.response.send_message(
+            "This button is no longer valid.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        appeal_id = int(appeal_id_str)
+    except ValueError:
+        logger.error("Invalid Appeal ID in Review Button", [
+            ("Appeal ID", appeal_id_str),
+        ])
+        await interaction.response.send_message(
+            "This button is invalid.",
+            ephemeral=True
+        )
+        return
+
+    logger.info("Appeal Review Button Clicked", [
+        ("Moderator", f"{interaction.user.name} ({interaction.user.id})"),
+        ("Appeal ID", str(appeal_id)),
+        ("Action", action),
+    ])
+
+    # Check if user has Debates Management role
+    if not has_debates_management_role(interaction.user):
+        logger.warning("Appeal Review Denied - Missing Role", [
+            ("User", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Appeal ID", str(appeal_id)),
+        ])
+        await interaction.response.send_message(
+            "You don't have permission to review appeals. "
+            "Only users with the Debates Management role can approve or deny appeals.",
+            ephemeral=True
+        )
+        return
+
+    # Defer while processing
+    await interaction.response.defer(ephemeral=True)
+
+    # Get bot instance
+    from src.bot import OthmanBot
+    bot: "OthmanBot" = interaction.client  # type: ignore
+
+    # Get appeal service
+    if not bot.appeal_service:
+        logger.error("Appeal service not initialized")
+        await interaction.followup.send(
+            "The appeal system is currently unavailable.",
+            ephemeral=True
+        )
+        return
+
+    # Process the review
+    if action == "approve":
+        result = await bot.appeal_service.approve_appeal(
+            appeal_id=appeal_id,
+            reviewed_by=interaction.user,
+        )
+    else:
+        result = await bot.appeal_service.deny_appeal(
+            appeal_id=appeal_id,
+            reviewed_by=interaction.user,
+        )
+
+    if result["success"]:
+        # Disable buttons on the message
+        try:
+            if interaction.message:
+                view = discord.ui.View(timeout=None)
+                for child in interaction.message.components[0].children if interaction.message.components else []:
+                    button = discord.ui.Button(
+                        style=discord.ButtonStyle.secondary,
+                        label=child.label,
+                        emoji=child.emoji,
+                        disabled=True,
+                        custom_id=child.custom_id,
+                    )
+                    view.add_item(button)
+                await interaction.message.edit(view=view)
+        except Exception as e:
+            logger.warning("Failed to disable review buttons", [
+                ("Error", str(e)),
+            ])
+
+        await interaction.followup.send(
+            f"Appeal {action}d successfully. The user has been notified.",
+            ephemeral=True
+        )
+    else:
+        await interaction.followup.send(
+            result.get("error", f"Failed to {action} appeal."),
+            ephemeral=True
+        )
+
+
+# =============================================================================
 # Module Export
 # =============================================================================
 
@@ -539,4 +777,6 @@ __all__ = [
     "AppealButtonView",
     "AppealReviewView",
     "ACTION_TYPE_LABELS",
+    "handle_appeal_button_interaction",
+    "handle_review_button_interaction",
 ]
