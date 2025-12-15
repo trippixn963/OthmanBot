@@ -635,7 +635,7 @@ Severe/Habitual          →  Permanent
         now = datetime.now(NY_TZ)
         embed.add_field(
             name="Time",
-            value=f"<t:{int(now.timestamp())}:t> EST",
+            value=f"<t:{int(now.timestamp())}:f>",
             inline=True
         )
 
@@ -675,7 +675,7 @@ Severe/Habitual          →  Permanent
         now = datetime.now(NY_TZ)
         embed.add_field(
             name="Time",
-            value=f"<t:{int(now.timestamp())}:t> EST",
+            value=f"<t:{int(now.timestamp())}:f>",
             inline=True
         )
 
@@ -710,7 +710,7 @@ Severe/Habitual          →  Permanent
         now = datetime.now(NY_TZ)
         embed.add_field(
             name="Time",
-            value=f"<t:{int(now.timestamp())}:t> EST",
+            value=f"<t:{int(now.timestamp())}:f>",
             inline=True
         )
 
@@ -850,7 +850,7 @@ Severe/Habitual          →  Permanent
                 now = datetime.now(NY_TZ)
                 embed.add_field(
                     name="Time",
-                    value=f"<t:{int(now.timestamp())}:t> EST",
+                    value=f"<t:{int(now.timestamp())}:f>",
                     inline=True
                 )
 
@@ -921,7 +921,7 @@ Severe/Habitual          →  Permanent
                 now = datetime.now(NY_TZ)
                 embed.add_field(
                     name="Time",
-                    value=f"<t:{int(now.timestamp())}:t> EST",
+                    value=f"<t:{int(now.timestamp())}:f>",
                     inline=True
                 )
 
@@ -1167,7 +1167,7 @@ Severe/Habitual          →  Permanent
         now = datetime.now(NY_TZ)
         embed.add_field(
             name="Time",
-            value=f"<t:{int(now.timestamp())}:t> EST",
+            value=f"<t:{int(now.timestamp())}:f>",
             inline=True
         )
 
@@ -1228,7 +1228,7 @@ Severe/Habitual          →  Permanent
                 now = datetime.now(NY_TZ)
                 embed.add_field(
                     name="Time",
-                    value=f"<t:{int(now.timestamp())}:t> EST",
+                    value=f"<t:{int(now.timestamp())}:f>",
                     inline=True
                 )
 

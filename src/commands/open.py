@@ -11,6 +11,8 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import asyncio
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -20,7 +22,7 @@ from discord.ext import commands
 
 from src.core.logger import logger
 from src.core.config import DEBATES_FORUM_ID, NY_TZ
-from src.utils import get_developer_avatar, edit_thread_with_retry
+from src.utils import edit_thread_with_retry, get_developer_avatar
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -89,71 +91,50 @@ class OpenCog(commands.Cog):
                 ("Thread", f"{thread.name} ({thread.id})"),
             ])
             await interaction.response.send_message(
-                "This debate is not closed.",
+                "This debate is not closed. Use /close first.",
                 ephemeral=True
             )
             return
-
-        # Get the debate owner from the starter message
-        owner = None
-        try:
-            # For forum threads, the thread ID is also the starter message ID
-            starter_message = await thread.fetch_message(thread.id)
-            if starter_message and not starter_message.author.bot:
-                owner = starter_message.author
-        except discord.NotFound:
-            logger.warning("/open Could Not Find Starter Message", [
-                ("Thread ID", str(thread.id)),
-            ])
-        except discord.HTTPException as e:
-            logger.warning("/open Failed To Fetch Starter Message", [
-                ("Thread ID", str(thread.id)),
-                ("Error", str(e)),
-            ])
 
         # Store original name for logging
         original_name = thread.name
 
-        # Rename thread: Remove [CLOSED] | prefix
-        # Format: [CLOSED] | N | Title -> N | Title
-        new_name = thread.name
-        if new_name.startswith("[CLOSED] | "):
-            new_name = new_name[11:]  # Remove "[CLOSED] | "
-        elif new_name.startswith("[CLOSED]"):
-            new_name = new_name[8:].lstrip(" |")  # Handle variations
+        # Extract the title from the closed thread name
+        # Format: [CLOSED] | Title -> Title
+        title = thread.name
+        if title.startswith("[CLOSED] | "):
+            title = title[11:]  # Remove "[CLOSED] | "
+        elif title.startswith("[CLOSED]"):
+            title = title[8:].lstrip(" |")  # Handle variations
 
-        # Rename, unarchive, and unlock the thread
-        rename_success = await edit_thread_with_retry(
-            thread,
-            name=new_name,
-            archived=False,
-            locked=False
-        )
+        # Handle legacy format where number was kept: "13 | Title" -> "Title"
+        legacy_match = re.match(r'^\d+\s*\|\s*(.+)$', title)
+        if legacy_match:
+            title = legacy_match.group(1)
 
-        if not rename_success:
-            logger.error("/open Command Failed - Thread Edit Failed", [
-                ("Thread", f"{thread.name} ({thread.id})"),
-            ])
-            await interaction.response.send_message(
-                "Failed to reopen the debate. Please try again.",
-                ephemeral=True
-            )
-            return
+        # Get the next debate number from the database
+        next_num = 1
+        if self.bot.debates_service and self.bot.debates_service.db:
+            next_num = self.bot.debates_service.db.get_next_debate_number()
 
-        # Build the public embed
+        # Rename thread with new number: N | Title
+        new_name = f"{next_num} | {title}"
+        if len(new_name) > 100:
+            new_name = new_name[:97] + "..."
+
+        # Build the public embed (no slow operations before response)
         now = datetime.now(NY_TZ)
         embed = discord.Embed(
             title="🔓 Debate Reopened",
             color=discord.Color.green()
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
-        # Truncate fields to stay within Discord's embed field limits (1024 chars)
         debate_display = new_name[:100] + "..." if len(new_name) > 100 else new_name
         reason_display = reason[:1000] + "..." if len(reason) > 1000 else reason
 
         embed.add_field(name="Debate", value=debate_display, inline=False)
         embed.add_field(name="Reopened By", value=interaction.user.mention, inline=True)
-        embed.add_field(name="Time", value=f"<t:{int(now.timestamp())}:t> EST", inline=True)
+        embed.add_field(name="Time", value=f"<t:{int(now.timestamp())}:f>", inline=True)
         embed.add_field(name="Reason", value=reason_display, inline=False)
 
         developer_avatar_url = await get_developer_avatar(self.bot)
@@ -162,46 +143,93 @@ class OpenCog(commands.Cog):
         # Send the embed
         await interaction.response.send_message(embed=embed)
 
-        # Log success
-        logger.tree("Debate Reopened", [
-            ("Thread", f"{new_name} ({thread.id})"),
-            ("Reopened By", f"{interaction.user.name} ({interaction.user.id})"),
-            ("Owner", f"{owner.name} ({owner.id})" if owner else "Unknown"),
-            ("Reason", reason),
-        ], emoji="🔓")
+        # Do all slow operations in background
+        asyncio.create_task(self._open_thread_background(
+            thread=thread,
+            new_name=new_name,
+            original_name=original_name,
+            reason=reason,
+            reopened_by=interaction.user
+        ))
 
-        # Log to webhook
+    async def _open_thread_background(
+        self,
+        thread: discord.Thread,
+        new_name: str,
+        original_name: str,
+        reason: str,
+        reopened_by: discord.User
+    ) -> None:
+        """Handle all slow open operations in background."""
         try:
-            if self.bot.interaction_logger:
-                await self.bot.interaction_logger.log_debate_reopened(
-                    thread=thread,
-                    reopened_by=interaction.user,
-                    owner=owner,
-                    original_name=original_name,
-                    new_name=new_name,
-                    reason=reason
-                )
-        except Exception as e:
-            logger.warning("Failed to log debate reopen to webhook", [
-                ("Error", str(e)),
-            ])
-
-        # Log to case system (if owner has a case)
-        if owner:
+            # Get the debate owner from the starter message
+            owner = None
             try:
-                if self.bot.case_log_service:
-                    await self.bot.case_log_service.log_debate_reopened(
+                starter_message = await thread.fetch_message(thread.id)
+                if starter_message and not starter_message.author.bot:
+                    owner = starter_message.author
+            except Exception as e:
+                logger.warning("/open Could Not Find Starter Message", [
+                    ("Thread ID", str(thread.id)),
+                    ("Error", str(e)),
+                ])
+
+            # Rename and unlock the thread
+            try:
+                await edit_thread_with_retry(thread, name=new_name, archived=False, locked=False)
+            except Exception as e:
+                logger.warning("/open Thread Edit Failed", [
+                    ("Thread", f"{original_name} ({thread.id})"),
+                    ("Error", str(e)),
+                ])
+
+            # Log success
+            logger.tree("Debate Reopened", [
+                ("Thread", f"{new_name} ({thread.id})"),
+                ("Reopened By", f"{reopened_by.name} ({reopened_by.id})"),
+                ("Owner", f"{owner.name} ({owner.id})" if owner else "Unknown"),
+                ("Reason", reason),
+            ], emoji="🔓")
+
+            # Log to webhook
+            try:
+                if self.bot.interaction_logger:
+                    await self.bot.interaction_logger.log_debate_reopened(
                         thread=thread,
-                        reopened_by=interaction.user,
+                        reopened_by=reopened_by,
                         owner=owner,
                         original_name=original_name,
                         new_name=new_name,
                         reason=reason
                     )
             except Exception as e:
-                logger.warning("Failed to log debate reopen to case system", [
+                logger.warning("Failed to log debate reopen to webhook", [
                     ("Error", str(e)),
                 ])
+
+            # Log to case system (if owner has a case)
+            if owner:
+                try:
+                    if self.bot.case_log_service:
+                        await self.bot.case_log_service.log_debate_reopened(
+                            thread=thread,
+                            reopened_by=reopened_by,
+                            owner=owner,
+                            original_name=original_name,
+                            new_name=new_name,
+                            reason=reason
+                        )
+                except Exception as e:
+                    logger.warning("Failed to log debate reopen to case system", [
+                        ("Error", str(e)),
+                    ])
+
+        except Exception as e:
+            logger.error("/open Background Task Failed", [
+                ("Thread", f"{original_name} ({thread.id})"),
+                ("Error Type", type(e).__name__),
+                ("Error", str(e)),
+            ])
 
 
 # =============================================================================
