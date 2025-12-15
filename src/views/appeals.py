@@ -17,6 +17,7 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 import discord
@@ -365,13 +366,16 @@ class AppealReviewView(discord.ui.View):
         if appeal_id:
             approve_id = f"appeal_review:{appeal_id}:approve"
             deny_id = f"appeal_review:{appeal_id}:deny"
+            info_id = f"appeal_review:{appeal_id}:info"
         else:
             # Generic pattern for registration
             approve_id = "appeal_review:0:approve"
             deny_id = "appeal_review:0:deny"
+            info_id = "appeal_review:0:info"
 
         self.add_item(ApproveButton(custom_id=approve_id))
         self.add_item(DenyButton(custom_id=deny_id))
+        self.add_item(MoreInfoButton(custom_id=info_id))
 
 
 class ApproveButton(discord.ui.Button):
@@ -404,6 +408,23 @@ class DenyButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction) -> None:
         """Handle deny button click."""
         await _handle_review_button(interaction, self.custom_id, "deny")
+
+
+class MoreInfoButton(discord.ui.Button):
+    """More Info button - shows ban details to moderators."""
+
+    def __init__(self, custom_id: str) -> None:
+        super().__init__(
+            style=discord.ButtonStyle.secondary,
+            label="More Info",
+            emoji="\u2139\ufe0f",  # info emoji
+            custom_id=custom_id,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        """Handle more info button click."""
+        # This is handled by on_interaction for persistence
+        pass
 
 
 async def _handle_review_button(
@@ -768,6 +789,259 @@ async def handle_review_button_interaction(
         )
 
 
+async def handle_info_button_interaction(
+    interaction: discord.Interaction,
+    custom_id: str
+) -> None:
+    """
+    Handle "More Info" button click from on_interaction.
+
+    Shows moderators detailed info about the user and their ban.
+    """
+    # Parse custom_id: appeal_review:{appeal_id}:info
+    parts = custom_id.split(":")
+    if len(parts) != 3 or parts[0] != "appeal_review" or parts[2] != "info":
+        logger.error("Invalid Info Button Custom ID", [
+            ("Custom ID", custom_id),
+        ])
+        await interaction.response.send_message(
+            "This button is invalid.",
+            ephemeral=True
+        )
+        return
+
+    _, appeal_id_str, _ = parts
+
+    # Handle generic placeholder
+    if appeal_id_str == "0":
+        await interaction.response.send_message(
+            "This button is no longer valid.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        appeal_id = int(appeal_id_str)
+    except ValueError:
+        logger.error("Invalid Appeal ID in Info Button", [
+            ("Appeal ID", appeal_id_str),
+        ])
+        await interaction.response.send_message(
+            "This button is invalid.",
+            ephemeral=True
+        )
+        return
+
+    logger.info("More Info Button Clicked", [
+        ("Moderator", f"{interaction.user.name} ({interaction.user.id})"),
+        ("Appeal ID", str(appeal_id)),
+    ])
+
+    # Check if user has Debates Management role
+    if not has_debates_management_role(interaction.user):
+        logger.warning("More Info Denied - Missing Role", [
+            ("User", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Appeal ID", str(appeal_id)),
+        ])
+        await interaction.response.send_message(
+            "You don't have permission to view this information.",
+            ephemeral=True
+        )
+        return
+
+    # Defer while fetching info
+    await interaction.response.defer(ephemeral=True)
+
+    # Get bot instance
+    from src.bot import OthmanBot
+    bot: "OthmanBot" = interaction.client  # type: ignore
+
+    # Get appeal data
+    if not bot.debates_service or not bot.debates_service.db:
+        await interaction.followup.send(
+            "The database is currently unavailable.",
+            ephemeral=True
+        )
+        return
+
+    appeal = bot.debates_service.db.get_appeal(appeal_id)
+    if not appeal:
+        await interaction.followup.send(
+            "This appeal was not found in the database.",
+            ephemeral=True
+        )
+        return
+
+    user_id = appeal["user_id"]
+    action_type = appeal["action_type"]
+    action_id = appeal["action_id"]
+
+    # Build detailed info embed
+    embed = discord.Embed(
+        title="📋 Appeal Details",
+        color=discord.Color.blue(),
+    )
+
+    # Get user info
+    try:
+        user = await bot.fetch_user(user_id)
+        embed.add_field(
+            name="User",
+            value=f"{user.mention} ({user.name})\nID: `{user_id}`",
+            inline=True
+        )
+        embed.set_thumbnail(url=user.display_avatar.url)
+    except Exception:
+        embed.add_field(
+            name="User",
+            value=f"ID: `{user_id}`\n(Could not fetch user)",
+            inline=True
+        )
+
+    embed.add_field(
+        name="Action Type",
+        value=ACTION_TYPE_LABELS.get(action_type, action_type),
+        inline=True
+    )
+
+    # Get action-specific details
+    if action_type == "disallow":
+        # Get ban details from database
+        bans = bot.debates_service.db.get_user_bans(user_id)
+        if bans:
+            ban = bans[0]  # Get the most recent ban
+
+            # Get moderator who banned
+            banned_by_id = ban.get("banned_by")
+            if banned_by_id:
+                try:
+                    banned_by = await bot.fetch_user(banned_by_id)
+                    embed.add_field(
+                        name="Banned By",
+                        value=f"{banned_by.mention} ({banned_by.name})",
+                        inline=True
+                    )
+                except Exception:
+                    embed.add_field(
+                        name="Banned By",
+                        value=f"ID: `{banned_by_id}`",
+                        inline=True
+                    )
+
+            # Get ban reason
+            ban_reason = ban.get("reason") or "No reason provided"
+            embed.add_field(
+                name="Ban Reason",
+                value=ban_reason[:1024],  # Discord limit
+                inline=False
+            )
+
+            # Get thread if specific thread ban
+            thread_id = ban.get("thread_id")
+            if thread_id:
+                try:
+                    thread = bot.get_channel(thread_id)
+                    if thread:
+                        embed.add_field(
+                            name="Banned From Thread",
+                            value=f"{thread.mention}\n({thread.name})",
+                            inline=True
+                        )
+                    else:
+                        embed.add_field(
+                            name="Banned From Thread",
+                            value=f"ID: `{thread_id}` (deleted or inaccessible)",
+                            inline=True
+                        )
+                except Exception:
+                    embed.add_field(
+                        name="Banned From Thread",
+                        value=f"ID: `{thread_id}`",
+                        inline=True
+                    )
+            else:
+                embed.add_field(
+                    name="Ban Scope",
+                    value="All Debates (Global)",
+                    inline=True
+                )
+
+            # Get ban date
+            created_at = ban.get("created_at")
+            if created_at:
+                embed.add_field(
+                    name="Banned On",
+                    value=f"<t:{int(datetime.fromisoformat(created_at).timestamp())}:F>",
+                    inline=True
+                )
+
+            # Get expiry
+            expires_at = ban.get("expires_at")
+            if expires_at:
+                embed.add_field(
+                    name="Expires",
+                    value=f"<t:{int(datetime.fromisoformat(expires_at).timestamp())}:R>",
+                    inline=True
+                )
+            else:
+                embed.add_field(
+                    name="Duration",
+                    value="Permanent",
+                    inline=True
+                )
+        else:
+            embed.add_field(
+                name="Ban Status",
+                value="No active ban found (may have been lifted)",
+                inline=False
+            )
+
+    elif action_type == "close":
+        # Get thread info
+        thread_id = action_id
+        try:
+            thread = bot.get_channel(thread_id)
+            if thread:
+                embed.add_field(
+                    name="Closed Thread",
+                    value=f"{thread.mention}\n({thread.name})",
+                    inline=True
+                )
+            else:
+                embed.add_field(
+                    name="Closed Thread",
+                    value=f"ID: `{thread_id}` (deleted or inaccessible)",
+                    inline=True
+                )
+        except Exception:
+            embed.add_field(
+                name="Closed Thread",
+                value=f"ID: `{thread_id}`",
+                inline=True
+            )
+
+    # Add appeal info
+    appeal_created = appeal.get("created_at")
+    if appeal_created:
+        try:
+            ts = int(datetime.fromisoformat(appeal_created).timestamp())
+            embed.add_field(
+                name="Appeal Submitted",
+                value=f"<t:{ts}:F> (<t:{ts}:R>)",
+                inline=False
+            )
+        except Exception:
+            embed.add_field(
+                name="Appeal Submitted",
+                value=appeal_created,
+                inline=False
+            )
+
+    embed.set_footer(text=f"Appeal #{appeal_id}")
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
 # =============================================================================
 # Module Export
 # =============================================================================
@@ -779,4 +1053,5 @@ __all__ = [
     "ACTION_TYPE_LABELS",
     "handle_appeal_button_interaction",
     "handle_review_button_interaction",
+    "handle_info_button_interaction",
 ]

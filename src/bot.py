@@ -100,6 +100,7 @@ from src.views.appeals import (
     AppealReviewView,
     handle_appeal_button_interaction,
     handle_review_button_interaction,
+    handle_info_button_interaction,
 )
 
 
@@ -409,7 +410,11 @@ class OthmanBot(commands.Bot):
 
         # Route appeal review button clicks (check first - more specific prefix)
         if custom_id.startswith("appeal_review:"):
-            await handle_review_button_interaction(interaction, custom_id)
+            # Check if this is the "More Info" button
+            if custom_id.endswith(":info"):
+                await handle_info_button_interaction(interaction, custom_id)
+            else:
+                await handle_review_button_interaction(interaction, custom_id)
             return
 
         # Route appeal button clicks
