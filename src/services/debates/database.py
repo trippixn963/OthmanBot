@@ -1115,6 +1115,43 @@ class DebatesDatabase:
             finally:
                 cursor.close()
 
+    def get_votes_today(self) -> int:
+        """
+        Get total number of votes cast today.
+
+        Returns:
+            Count of votes cast today
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    """SELECT COUNT(*) FROM votes
+                       WHERE DATE(created_at) = DATE('now')"""
+                )
+                return cursor.fetchone()[0]
+            finally:
+                cursor.close()
+
+    def get_active_debate_count(self) -> int:
+        """
+        Get count of tracked debate threads.
+
+        Returns:
+            Count of debate threads
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    """SELECT COUNT(*) FROM debate_threads"""
+                )
+                return cursor.fetchone()[0]
+            finally:
+                cursor.close()
+
     def remove_votes_by_user(self, user_id: int) -> dict:
         """
         Remove all votes cast by a user and reverse karma effects.
