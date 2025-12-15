@@ -280,6 +280,52 @@ class WebhookAlertService:
         ])
         return False
 
+    def _get_bot_stats(self) -> dict:
+        """Get OthmanBot-specific stats (debates, karma, votes)."""
+        stats = {
+            "total_debates": 0,
+            "total_karma": 0,
+            "total_votes": 0,
+        }
+
+        if not self._bot:
+            return stats
+
+        try:
+            # Get stats from debates database
+            if self._bot.debates_service and self._bot.debates_service.db:
+                db = self._bot.debates_service.db
+                conn = db._connection
+
+                if conn:
+                    # Count total debates from debate_participation table (unique thread_ids)
+                    cursor = conn.execute(
+                        "SELECT COUNT(DISTINCT thread_id) FROM debate_participation"
+                    )
+                    result = cursor.fetchone()
+                    stats["total_debates"] = result[0] if result else 0
+
+                    # Get total votes cast
+                    cursor = conn.execute(
+                        "SELECT COUNT(*) FROM votes"
+                    )
+                    result = cursor.fetchone()
+                    stats["total_votes"] = result[0] if result else 0
+
+                    # Get total karma (sum of vote_type: +1 for upvotes, -1 for downvotes)
+                    cursor = conn.execute(
+                        "SELECT SUM(vote_type) FROM votes"
+                    )
+                    result = cursor.fetchone()
+                    stats["total_karma"] = result[0] if result and result[0] else 0
+
+        except Exception as e:
+            logger.debug("Failed to get bot stats", [
+                ("Error", str(e)),
+            ])
+
+        return stats
+
     def _create_status_embed(self, status: str, color: int, include_health: bool = False) -> dict:
         """Create status embed with uptime and optionally health info."""
         now = datetime.now(NY_TZ)
@@ -300,6 +346,17 @@ class WebhookAlertService:
 
             # Run ID for restart tracking
             description += f"\n**Run ID:** `{logger.run_id}`"
+
+            # OthmanBot-specific stats
+            bot_stats = self._get_bot_stats()
+            if any(v > 0 for v in bot_stats.values()):
+                description += f"\n\n**Debates Stats**"
+                if bot_stats["total_debates"] > 0:
+                    description += f"\nDebates: `{bot_stats['total_debates']}`"
+                if bot_stats["total_votes"] > 0:
+                    description += f"\nVotes: `{bot_stats['total_votes']}`"
+                if bot_stats["total_karma"] > 0:
+                    description += f"\nKarma: `{bot_stats['total_karma']}`"
 
             # System resources with progress bars
             resources = self._get_system_resources()
@@ -457,6 +514,13 @@ class WebhookAlertService:
     async def start_hourly_alerts(self) -> None:
         """Start the hourly alert loop."""
         if not self.enabled:
+            return
+
+        # Prevent duplicate task creation
+        if self._hourly_task and not self._hourly_task.done():
+            logger.debug("Hourly Alerts Already Running", [
+                ("Action", "Skipping duplicate start"),
+            ])
             return
 
         async def hourly_loop():

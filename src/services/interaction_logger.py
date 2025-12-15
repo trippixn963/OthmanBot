@@ -1027,6 +1027,100 @@ class InteractionLogger:
 
         await self._send_log(embed)
 
+    async def log_debate_closed(
+        self,
+        thread: discord.Thread,
+        closed_by: discord.Member,
+        owner: Optional[discord.Member],
+        original_name: str,
+        reason: str
+    ) -> None:
+        """
+        Log when a debate is closed by a moderator.
+
+        Args:
+            thread: The debate thread that was closed
+            closed_by: The moderator who closed the debate
+            owner: The owner of the debate (may be None if not found)
+            original_name: Original thread name before [CLOSED] prefix
+            reason: Reason for closing the debate
+        """
+        now_est = datetime.now(NY_TZ)
+        time_str = now_est.strftime("%I:%M %p EST")
+
+        embed = discord.Embed(
+            title="🔒 Debate Closed",
+            color=COLOR_BAN,
+        )
+        embed.set_thumbnail(url=closed_by.display_avatar.url)
+        embed.add_field(name="Closed By", value=f"{closed_by.mention} `[{closed_by.id}]`", inline=True)
+
+        if owner:
+            embed.add_field(name="Owner", value=f"{owner.mention} `[{owner.id}]`", inline=True)
+        else:
+            embed.add_field(name="Owner", value="`Unknown`", inline=True)
+
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+        embed.add_field(name="Debate", value=f"`{original_name[:50]}{'...' if len(original_name) > 50 else ''}`", inline=False)
+        embed.add_field(name="Reason", value=reason[:200] if len(reason) > 200 else reason, inline=False)
+
+        # Thread link
+        if thread.guild:
+            thread_link = f"https://discord.com/channels/{thread.guild.id}/{thread.id}"
+            embed.add_field(name="Thread", value=f"[Open Thread]({thread_link})", inline=True)
+
+        embed.add_field(name="Thread ID", value=f"`{thread.id}`", inline=True)
+
+        await self._send_log(embed)
+
+    async def log_debate_reopened(
+        self,
+        thread: discord.Thread,
+        reopened_by: discord.Member,
+        owner: Optional[discord.Member],
+        original_name: str,
+        new_name: str,
+        reason: str
+    ) -> None:
+        """
+        Log when a debate is reopened by a moderator.
+
+        Args:
+            thread: The debate thread that was reopened
+            reopened_by: The moderator who reopened the debate
+            owner: The owner of the debate (may be None if not found)
+            original_name: Thread name before reopening (with [CLOSED])
+            new_name: Thread name after reopening
+            reason: Reason for reopening the debate
+        """
+        now_est = datetime.now(NY_TZ)
+        time_str = now_est.strftime("%I:%M %p EST")
+
+        embed = discord.Embed(
+            title="🔓 Debate Reopened",
+            color=COLOR_SUCCESS,
+        )
+        embed.set_thumbnail(url=reopened_by.display_avatar.url)
+        embed.add_field(name="Reopened By", value=f"{reopened_by.mention} `[{reopened_by.id}]`", inline=True)
+
+        if owner:
+            embed.add_field(name="Owner", value=f"{owner.mention} `[{owner.id}]`", inline=True)
+        else:
+            embed.add_field(name="Owner", value="`Unknown`", inline=True)
+
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+        embed.add_field(name="Debate", value=f"`{new_name[:50]}{'...' if len(new_name) > 50 else ''}`", inline=False)
+        embed.add_field(name="Reason", value=reason[:200] if len(reason) > 200 else reason, inline=False)
+
+        # Thread link
+        if thread.guild:
+            thread_link = f"https://discord.com/channels/{thread.guild.id}/{thread.id}"
+            embed.add_field(name="Thread", value=f"[Open Thread]({thread_link})", inline=True)
+
+        embed.add_field(name="Thread ID", value=f"`{thread.id}`", inline=True)
+
+        await self._send_log(embed)
+
     async def log_ban_notification_dm(
         self,
         action: str,

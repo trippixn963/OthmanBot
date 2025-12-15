@@ -974,6 +974,282 @@ Severe/Habitual          →  Permanent
                 ("Error", str(e)),
             ])
 
+    async def log_debate_closed(
+        self,
+        thread: discord.Thread,
+        closed_by: discord.Member,
+        owner: Optional[discord.Member],
+        original_name: str,
+        reason: str
+    ) -> None:
+        """
+        Log a debate closure to the owner's case thread.
+
+        Creates a case if the owner doesn't have one yet, since closing
+        a debate reflects on the owner's moderation history.
+
+        Args:
+            thread: The debate thread being closed
+            closed_by: The moderator who closed the debate
+            owner: The owner of the debate (creator)
+            original_name: Original thread name before [CLOSED] prefix
+            reason: Reason for closing the debate
+        """
+        if not self.enabled or not owner:
+            return
+
+        try:
+            case = self.db.get_case_log(owner.id)
+
+            # If no case exists, create one with this close action
+            if not case:
+                case_id = self.db.get_next_case_id()
+                case_thread = await self._create_debate_close_case_thread(
+                    owner, case_id, closed_by, thread, original_name, reason
+                )
+
+                if case_thread:
+                    self.db.create_case_log(owner.id, case_id, case_thread.id)
+                    logger.tree("Case Log: New Case Created With Debate Close", [
+                        ("User", f"{owner.display_name} ({owner.id})"),
+                        ("Case ID", f"{case_id:04d}"),
+                        ("Thread ID", str(case_thread.id)),
+                        ("Closed By", f"{closed_by.display_name}"),
+                        ("Debate", original_name[:30]),
+                        ("Reason", reason[:50] if len(reason) > 50 else reason),
+                    ], emoji="🔒")
+                return
+
+            # Existing case - send close embed to their case thread
+            case_thread = await self._get_case_thread(case['thread_id'])
+            if case_thread:
+                embed = self._build_debate_close_embed(
+                    owner, closed_by, thread, original_name, reason
+                )
+                await case_thread.send(embed=embed)
+
+                logger.tree("Case Log: Debate Close Logged", [
+                    ("User", f"{owner.display_name} ({owner.id})"),
+                    ("Case ID", f"{case['case_id']:04d}"),
+                    ("Closed By", f"{closed_by.display_name}"),
+                    ("Debate", original_name[:30]),
+                    ("Reason", reason[:50] if len(reason) > 50 else reason),
+                ], emoji="🔒")
+
+        except Exception as e:
+            logger.error("Case Log: Failed To Log Debate Close", [
+                ("User ID", str(owner.id) if owner else "Unknown"),
+                ("Error", str(e)),
+            ])
+
+    async def _create_debate_close_case_thread(
+        self,
+        owner: discord.Member,
+        case_id: int,
+        closed_by: discord.Member,
+        thread: discord.Thread,
+        original_name: str,
+        reason: str
+    ) -> Optional[discord.Thread]:
+        """
+        Create a new case thread starting with a debate close action.
+
+        Args:
+            owner: The debate owner
+            case_id: The case number
+            closed_by: The moderator who closed the debate
+            thread: The debate thread
+            original_name: Original thread name
+            reason: Reason for closing
+
+        Returns:
+            The created thread, or None on failure
+        """
+        forum = await self._get_forum()
+        if not forum:
+            return None
+
+        # Build user info embed
+        user_embed = discord.Embed(
+            title="📋 User Profile",
+            color=discord.Color.blue()
+        )
+        user_embed.set_thumbnail(url=owner.display_avatar.url)
+        user_embed.add_field(name="Username", value=f"{owner.name}", inline=True)
+        user_embed.add_field(name="Display Name", value=f"{owner.display_name}", inline=True)
+        user_embed.add_field(name="User ID", value=f"`{owner.id}`", inline=True)
+
+        # Discord account creation date
+        user_embed.add_field(
+            name="Discord Joined",
+            value=f"<t:{int(owner.created_at.timestamp())}:F>",
+            inline=True
+        )
+
+        # Server join date (if available)
+        if hasattr(owner, 'joined_at') and owner.joined_at:
+            user_embed.add_field(
+                name="Server Joined",
+                value=f"<t:{int(owner.joined_at.timestamp())}:F>",
+                inline=True
+            )
+
+        # Account age
+        now = datetime.now(NY_TZ)
+        created_at = owner.created_at.replace(tzinfo=NY_TZ) if owner.created_at.tzinfo is None else owner.created_at
+        account_age = self._format_age(created_at, now)
+        user_embed.add_field(name="Account Age", value=account_age, inline=True)
+
+        # User roles
+        roles = self._format_user_roles(owner)
+        if roles:
+            user_embed.add_field(name="Roles", value=roles, inline=False)
+
+        # Build debate close embed
+        close_embed = self._build_debate_close_embed(
+            owner, closed_by, thread, original_name, reason
+        )
+
+        # Create thread with both embeds
+        thread_name = f"[{case_id:04d}] | {owner.display_name}"
+
+        try:
+            thread_with_msg = await forum.create_thread(
+                name=thread_name[:100],
+                embeds=[user_embed, close_embed]
+            )
+            return thread_with_msg.thread
+        except Exception as e:
+            logger.error("Failed To Create Case Thread For Debate Close", [
+                ("User", f"{owner.display_name} ({owner.id})"),
+                ("Case ID", str(case_id)),
+                ("Error", str(e)),
+            ])
+            return None
+
+    def _build_debate_close_embed(
+        self,
+        owner: discord.Member,
+        closed_by: discord.Member,
+        thread: discord.Thread,
+        original_name: str,
+        reason: str
+    ) -> discord.Embed:
+        """
+        Build a debate close embed for case log.
+
+        Args:
+            owner: The debate owner
+            closed_by: The moderator who closed the debate
+            thread: The debate thread
+            original_name: Original thread name
+            reason: Reason for closing
+
+        Returns:
+            Discord Embed for the debate close action
+        """
+        embed = discord.Embed(
+            title="🔒 Debate Closed",
+            color=discord.Color.orange()
+        )
+        embed.set_thumbnail(url=owner.display_avatar.url)
+        embed.add_field(name="Closed By", value=f"{closed_by.mention}", inline=True)
+
+        # Build clickable link to debate
+        if thread.guild:
+            debate_link = f"[{original_name[:30]}{'...' if len(original_name) > 30 else ''}](https://discord.com/channels/{thread.guild.id}/{thread.id})"
+            embed.add_field(name="Debate", value=debate_link, inline=True)
+        else:
+            embed.add_field(name="Debate", value=f"`{original_name[:30]}`", inline=True)
+
+        embed.add_field(name="Thread ID", value=f"`{thread.id}`", inline=True)
+
+        now = datetime.now(NY_TZ)
+        embed.add_field(
+            name="Time",
+            value=f"<t:{int(now.timestamp())}:t> EST",
+            inline=True
+        )
+
+        embed.add_field(name="Reason", value=reason, inline=False)
+
+        return embed
+
+    async def log_debate_reopened(
+        self,
+        thread: discord.Thread,
+        reopened_by: discord.Member,
+        owner: Optional[discord.Member],
+        original_name: str,
+        new_name: str,
+        reason: str
+    ) -> None:
+        """
+        Log a debate reopening to the owner's case thread (if exists).
+
+        Unlike closing, reopening doesn't create a new case - it only
+        logs to an existing case thread if one exists.
+
+        Args:
+            thread: The debate thread being reopened
+            reopened_by: The moderator who reopened the debate
+            owner: The owner of the debate (creator)
+            original_name: Thread name before reopening (with [CLOSED])
+            new_name: Thread name after reopening
+            reason: Reason for reopening the debate
+        """
+        if not self.enabled or not owner:
+            return
+
+        try:
+            case = self.db.get_case_log(owner.id)
+            if not case:
+                # No case exists, nothing to log
+                return
+
+            case_thread = await self._get_case_thread(case['thread_id'])
+            if case_thread:
+                embed = discord.Embed(
+                    title="🔓 Debate Reopened",
+                    color=discord.Color.green()
+                )
+                embed.set_thumbnail(url=owner.display_avatar.url)
+                embed.add_field(name="Reopened By", value=f"{reopened_by.mention}", inline=True)
+
+                # Build clickable link to debate
+                if thread.guild:
+                    debate_link = f"[{new_name[:30]}{'...' if len(new_name) > 30 else ''}](https://discord.com/channels/{thread.guild.id}/{thread.id})"
+                    embed.add_field(name="Debate", value=debate_link, inline=True)
+                else:
+                    embed.add_field(name="Debate", value=f"`{new_name[:30]}`", inline=True)
+
+                embed.add_field(name="Thread ID", value=f"`{thread.id}`", inline=True)
+
+                now = datetime.now(NY_TZ)
+                embed.add_field(
+                    name="Time",
+                    value=f"<t:{int(now.timestamp())}:t> EST",
+                    inline=True
+                )
+
+                embed.add_field(name="Reason", value=reason, inline=False)
+
+                await case_thread.send(embed=embed)
+
+                logger.tree("Case Log: Debate Reopen Logged", [
+                    ("User", f"{owner.display_name} ({owner.id})"),
+                    ("Case ID", f"{case['case_id']:04d}"),
+                    ("Reopened By", f"{reopened_by.display_name}"),
+                    ("Debate", new_name[:30]),
+                    ("Reason", reason[:50] if len(reason) > 50 else reason),
+                ], emoji="🔓")
+
+        except Exception as e:
+            logger.error("Case Log: Failed To Log Debate Reopen", [
+                ("User ID", str(owner.id) if owner else "Unknown"),
+                ("Error", str(e)),
+            ])
+
     async def archive_inactive_cases(self, days_inactive: int = 7) -> int:
         """
         Archive case threads that have been inactive for specified days.
