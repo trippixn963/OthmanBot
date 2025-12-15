@@ -73,7 +73,8 @@ class BanNotifier:
         duration: str,
         expires_at: Optional[datetime] = None,
         thread_id: Optional[int] = None,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
+        past_ban_count: int = 0
     ) -> bool:
         """
         Send a DM notification when a user is banned.
@@ -86,6 +87,7 @@ class BanNotifier:
             expires_at: When the ban expires (None for permanent)
             thread_id: The specific thread ID if not global
             reason: Optional reason for the ban
+            past_ban_count: Number of previous bans this user has had
 
         Returns:
             True if DM was sent successfully, False otherwise
@@ -164,6 +166,24 @@ class BanNotifier:
                     name="Reason",
                     value="_No reason provided_",
                     inline=False
+                )
+
+            # Past ban history (only show if this isn't their first ban)
+            if past_ban_count > 0:
+                # This is a repeat offender
+                ordinal = self._get_ordinal(past_ban_count + 1)
+                embed.add_field(
+                    name="Ban History",
+                    value=f"This is your **{ordinal}** ban from debates.",
+                    inline=True
+                )
+
+            # Server join date (if available as Member)
+            if isinstance(user, discord.Member) and user.joined_at:
+                embed.add_field(
+                    name="Member Since",
+                    value=f"<t:{int(user.joined_at.timestamp())}:D>",
+                    inline=True
                 )
 
             # Footer with server info
@@ -682,6 +702,22 @@ class BanNotifier:
             return "`All Debates`"
         else:
             return f"`{scope}`"
+
+    def _get_ordinal(self, n: int) -> str:
+        """
+        Convert a number to its ordinal string (1st, 2nd, 3rd, etc.).
+
+        Args:
+            n: The number to convert
+
+        Returns:
+            Ordinal string (e.g., "1st", "2nd", "3rd", "4th")
+        """
+        if 11 <= (n % 100) <= 13:
+            suffix = "th"
+        else:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+        return f"{n}{suffix}"
 
 
 # =============================================================================

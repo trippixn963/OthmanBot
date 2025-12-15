@@ -205,7 +205,7 @@ class DebatesDatabase:
                     ])
 
     # Current schema version - increment when adding migrations
-    SCHEMA_VERSION = 9
+    SCHEMA_VERSION = 10
 
     # Valid table names for SQL injection prevention
     VALID_TABLES = frozenset({
@@ -561,6 +561,28 @@ class DebatesDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_appeals_user ON appeals(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_appeals_status ON appeals(status)")
             logger.info("Migration 9: Added appeals table")
+            migrations_run += 1
+
+        # Migration 10: Add ban_history table for tracking all bans (even after removal)
+        if current_version < 10:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ban_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    thread_id INTEGER,
+                    banned_by INTEGER NOT NULL,
+                    reason TEXT,
+                    duration TEXT,
+                    expires_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    removed_at TIMESTAMP,
+                    removed_by INTEGER,
+                    removal_reason TEXT
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ban_history_user ON ban_history(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ban_history_time ON ban_history(created_at)")
+            logger.info("Migration 10: Added ban_history table")
             migrations_run += 1
 
         # Update schema version
@@ -1587,7 +1609,7 @@ class DebatesDatabase:
                     ("Error", str(e)),
                 ])
 
-        # Audit log OUTSIDE the lock to prevent deadlock
+        # Audit log and ban history OUTSIDE the lock to prevent deadlock
         if success:
             self.audit_log(
                 action='ban_add',
@@ -1596,6 +1618,14 @@ class DebatesDatabase:
                 target_type='user',
                 new_value=str(thread_id) if thread_id else 'all',
                 metadata={'reason': reason, 'expires_at': expires_at}
+            )
+            # Also record to ban_history for permanent tracking
+            self._add_to_ban_history(
+                user_id=user_id,
+                thread_id=thread_id,
+                banned_by=banned_by,
+                reason=reason,
+                expires_at=expires_at
             )
         return success
 
@@ -1771,6 +1801,102 @@ class DebatesDatabase:
                     "user_id": row[1],
                     "thread_id": row[2],
                     "expires_at": row[3]
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def _add_to_ban_history(
+        self,
+        user_id: int,
+        thread_id: Optional[int],
+        banned_by: int,
+        reason: Optional[str] = None,
+        expires_at: Optional[str] = None,
+        duration: Optional[str] = None
+    ) -> None:
+        """
+        Add a ban record to the permanent ban_history table.
+
+        Args:
+            user_id: User who was banned
+            thread_id: Thread ID (None = global ban)
+            banned_by: Moderator who banned
+            reason: Ban reason
+            expires_at: Expiry timestamp
+            duration: Human-readable duration (e.g., "1 Week")
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    """INSERT INTO ban_history
+                       (user_id, thread_id, banned_by, reason, duration, expires_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (user_id, thread_id, banned_by, reason, duration, expires_at)
+                )
+                conn.commit()
+            except Exception as e:
+                logger.debug("Failed to add ban to history", [
+                    ("User ID", str(user_id)),
+                    ("Error", str(e)),
+                ])
+
+    def get_user_ban_count(self, user_id: int) -> int:
+        """
+        Get the total number of times a user has been banned (from ban_history).
+
+        Args:
+            user_id: User ID to check
+
+        Returns:
+            Total ban count across all time
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM ban_history WHERE user_id = ?",
+                (user_id,)
+            )
+            result = cursor.fetchone()
+            return result[0] if result else 0
+
+    def get_user_ban_history(self, user_id: int, limit: int = 10) -> list[dict]:
+        """
+        Get a user's ban history.
+
+        Args:
+            user_id: User ID to check
+            limit: Maximum number of records to return
+
+        Returns:
+            List of ban history records, most recent first
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, thread_id, banned_by, reason, duration, expires_at,
+                          created_at, removed_at, removed_by, removal_reason
+                   FROM ban_history
+                   WHERE user_id = ?
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (user_id, limit)
+            )
+            return [
+                {
+                    "id": row[0],
+                    "thread_id": row[1],
+                    "banned_by": row[2],
+                    "reason": row[3],
+                    "duration": row[4],
+                    "expires_at": row[5],
+                    "created_at": row[6],
+                    "removed_at": row[7],
+                    "removed_by": row[8],
+                    "removal_reason": row[9]
                 }
                 for row in cursor.fetchall()
             ]

@@ -398,6 +398,12 @@ class DisallowCog(commands.Cog):
             # Send DM notification to the banned user
             try:
                 if self.bot.ban_notifier:
+                    # Get past ban count for this user (excluding the current one)
+                    past_ban_count = 0
+                    if self.bot.debates_service and self.bot.debates_service.db:
+                        # Count is already +1 from the ban we just added, so subtract 1
+                        past_ban_count = max(0, self.bot.debates_service.db.get_user_ban_count(user.id) - 1)
+
                     await self.bot.ban_notifier.notify_ban(
                         user=user,
                         banned_by=interaction.user,
@@ -405,7 +411,8 @@ class DisallowCog(commands.Cog):
                         duration=duration_display,
                         expires_at=expires_at,
                         thread_id=target_thread_id,
-                        reason=reason
+                        reason=reason,
+                        past_ban_count=past_ban_count
                     )
             except Exception as e:
                 logger.warning("Failed to send ban notification DM", [
