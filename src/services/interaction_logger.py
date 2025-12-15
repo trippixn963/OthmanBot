@@ -968,6 +968,82 @@ class InteractionLogger:
 
         await self._send_log(embed)
 
+    async def log_startup_reconciliation(
+        self,
+        karma_stats: Optional[dict] = None,
+        numbering_stats: Optional[dict] = None,
+        karma_success: bool = True,
+        numbering_success: bool = True
+    ) -> None:
+        """
+        Log combined startup reconciliation results (karma + numbering).
+
+        Args:
+            karma_stats: Karma reconciliation stats dict
+            numbering_stats: Numbering reconciliation stats dict
+            karma_success: Whether karma reconciliation succeeded
+            numbering_success: Whether numbering reconciliation succeeded
+        """
+        now = datetime.now(NY_TZ)
+        time_str = now.strftime("%I:%M %p EST")
+
+        # Determine overall status
+        all_success = karma_success and numbering_success
+        any_changes = False
+
+        if karma_stats:
+            any_changes = any_changes or karma_stats.get('votes_added', 0) > 0 or karma_stats.get('votes_removed', 0) > 0
+        if numbering_stats:
+            any_changes = any_changes or numbering_stats.get('threads_renumbered', 0) > 0
+
+        if all_success:
+            if any_changes:
+                title = "🔄 Startup Reconciliation Complete (Changes Made)"
+                color = COLOR_KARMA
+            else:
+                title = "✅ Startup Reconciliation Complete"
+                color = COLOR_SUCCESS
+        else:
+            title = "⚠️ Startup Reconciliation (Partial Failure)"
+            color = COLOR_ERROR
+
+        embed = discord.Embed(
+            title=title,
+            color=color,
+        )
+
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+
+        # Karma section
+        if karma_stats:
+            karma_status = "✅" if karma_success else "❌"
+            threads = karma_stats.get('threads_scanned', 0)
+            messages = karma_stats.get('messages_scanned', 0)
+            votes_added = karma_stats.get('votes_added', 0)
+            votes_removed = karma_stats.get('votes_removed', 0)
+
+            karma_value = f"{karma_status} `{threads}` threads, `{messages}` msgs"
+            if votes_added > 0 or votes_removed > 0:
+                karma_value += f"\n+{votes_added}/-{votes_removed} votes"
+
+            embed.add_field(name="🗳️ Karma", value=karma_value, inline=True)
+
+        # Numbering section
+        if numbering_stats:
+            numbering_status = "✅" if numbering_success else "❌"
+            threads = numbering_stats.get('threads_scanned', 0)
+            gaps = numbering_stats.get('gaps_found', 0)
+            renumbered = numbering_stats.get('threads_renumbered', 0)
+
+            if gaps > 0:
+                numbering_value = f"{numbering_status} `{threads}` threads\n`{gaps}` gaps fixed"
+            else:
+                numbering_value = f"{numbering_status} `{threads}` threads\nNo gaps"
+
+            embed.add_field(name="🔢 Numbering", value=numbering_value, inline=True)
+
+        await self._send_log(embed)
+
     async def log_karma_reconciliation(
         self,
         trigger: str,

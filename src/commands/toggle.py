@@ -20,6 +20,7 @@ from discord.ext import commands
 
 from src.core.logger import logger
 from src.core.config import DEVELOPER_ID, SYRIA_GUILD_ID, TOGGLE_CHANNEL_IDS, CONTENT_PREVIEW_LENGTH
+from src.core.backup import create_backup
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -141,18 +142,18 @@ class ToggleCog(commands.Cog):
                         ("Error", str(e)),
                     ])
 
-            # Step 3: Save backup if scheduler exists
-            if hasattr(self.bot, 'backup_scheduler') and self.bot.backup_scheduler:
-                try:
-                    async with asyncio.timeout(10.0):
-                        await self.bot.backup_scheduler._run_backup()
-                    steps_completed.append("Backup created")
-                except asyncio.TimeoutError:
-                    logger.warning("Backup timed out during toggle")
-                except Exception as e:
-                    logger.warning("Failed to create backup during toggle", [
-                        ("Error", str(e)),
-                    ])
+            # Step 3: Create backup before disabling
+            try:
+                async with asyncio.timeout(10.0):
+                    backup_path = await asyncio.to_thread(create_backup)
+                    if backup_path:
+                        steps_completed.append("Backup created")
+            except asyncio.TimeoutError:
+                logger.warning("Backup timed out during toggle")
+            except Exception as e:
+                logger.warning("Failed to create backup during toggle", [
+                    ("Error", str(e)),
+                ])
 
             # Step 4: Hide channels from @everyone
             hidden_count = await self._hide_channels(interaction.guild)
@@ -398,6 +399,17 @@ class ToggleCog(commands.Cog):
                         ("Channel", channel.name),
                         ("ID", str(channel_id)),
                     ])
+            except discord.HTTPException as e:
+                # Error 350003 = Onboarding channels must be readable by everyone
+                if e.code == 350003:
+                    logger.info("Skipped Onboarding Channel (Cannot Hide)", [
+                        ("Channel ID", str(channel_id)),
+                    ])
+                else:
+                    logger.warning("Failed to hide channel", [
+                        ("Channel ID", str(channel_id)),
+                        ("Error", str(e)),
+                    ])
             except Exception as e:
                 logger.warning("Failed to hide channel", [
                     ("Channel ID", str(channel_id)),
@@ -428,6 +440,17 @@ class ToggleCog(commands.Cog):
                     logger.info("Channel Unhidden", [
                         ("Channel", channel.name),
                         ("ID", str(channel_id)),
+                    ])
+            except discord.HTTPException as e:
+                # Error 350003 = Onboarding channels (always visible to everyone)
+                if e.code == 350003:
+                    logger.info("Skipped Onboarding Channel (Already Visible)", [
+                        ("Channel ID", str(channel_id)),
+                    ])
+                else:
+                    logger.warning("Failed to unhide channel", [
+                        ("Channel ID", str(channel_id)),
+                        ("Error", str(e)),
                     ])
             except Exception as e:
                 logger.warning("Failed to unhide channel", [
