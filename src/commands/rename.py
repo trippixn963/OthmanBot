@@ -338,15 +338,20 @@ class RenameCog(commands.Cog):
                     logger.warning("Failed to track debate creator", [("Error", str(e))])
 
             # Send success message
-            await interaction.followup.send(
+            followup_msg = await interaction.followup.send(
                 f"Thread renamed to **{new_title}** and unlocked.",
-                ephemeral=False
+                ephemeral=False,
+                wait=True
             )
+
+            # Get message ID for webhook link
+            message_id = followup_msg.id if followup_msg else None
 
             # Log success to webhook
             if self.bot.interaction_logger:
                 await self.bot.interaction_logger.log_command(
                     interaction, "rename", success=True,
+                    message_id=message_id,
                     debate=f"#{debate_number}", title=title[:LOG_TITLE_PREVIEW_LENGTH]
                 )
 

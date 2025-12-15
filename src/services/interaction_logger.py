@@ -115,6 +115,7 @@ class InteractionLogger:
         command_name: str,
         success: bool = True,
         error: Optional[str] = None,
+        message_id: Optional[int] = None,
         **kwargs
     ) -> None:
         """Log when a slash command is used."""
@@ -150,11 +151,17 @@ class InteractionLogger:
         if error:
             embed.add_field(name="Error", value=f"```{error[:200]}```", inline=False)
 
-        # Add channel link if available
+        # Add channel/message link if available
         if interaction.channel and interaction.guild:
             channel_name = getattr(interaction.channel, 'name', 'Unknown')
-            channel_link = f"https://discord.com/channels/{interaction.guild.id}/{interaction.channel.id}"
-            embed.add_field(name="Channel", value=f"[#{channel_name}]({channel_link})", inline=True)
+            if message_id:
+                # Link directly to the message
+                message_link = f"https://discord.com/channels/{interaction.guild.id}/{interaction.channel.id}/{message_id}"
+                embed.add_field(name="Channel", value=f"[#{channel_name}]({message_link})", inline=True)
+            else:
+                # Link to channel only
+                channel_link = f"https://discord.com/channels/{interaction.guild.id}/{interaction.channel.id}"
+                embed.add_field(name="Channel", value=f"[#{channel_name}]({channel_link})", inline=True)
 
         await self._send_log(embed)
 
@@ -225,7 +232,9 @@ class InteractionLogger:
         voter: discord.User,
         change: int,
         new_total: int,
-        thread_name: str
+        thread_name: str,
+        guild_id: Optional[int] = None,
+        thread_id: Optional[int] = None
     ) -> None:
         """Log when karma is given/removed."""
         now_est = datetime.now(NY_TZ)
@@ -245,7 +254,13 @@ class InteractionLogger:
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
         embed.add_field(name="Change", value=f"`{'+' if change > 0 else ''}{change}`", inline=True)
         embed.add_field(name="New Total", value=f"`{new_total}`", inline=True)
-        embed.add_field(name="Thread", value=f"`{thread_name[:30]}{'...' if len(thread_name) > 30 else ''}`", inline=True)
+
+        # Thread link if available
+        if guild_id and thread_id:
+            thread_link = f"https://discord.com/channels/{guild_id}/{thread_id}"
+            embed.add_field(name="Thread", value=f"[{thread_name[:25]}{'...' if len(thread_name) > 25 else ''}]({thread_link})", inline=True)
+        else:
+            embed.add_field(name="Thread", value=f"`{thread_name[:30]}{'...' if len(thread_name) > 30 else ''}`", inline=True)
 
         await self._send_log(embed)
 
@@ -258,7 +273,10 @@ class InteractionLogger:
         user: discord.User,
         banned_by: discord.User,
         scope: str,
-        thread_id: Optional[int] = None
+        thread_id: Optional[int] = None,
+        guild_id: Optional[int] = None,
+        channel_id: Optional[int] = None,
+        message_id: Optional[int] = None
     ) -> None:
         """Log when a user is banned from debates."""
         now_est = datetime.now(NY_TZ)
@@ -277,6 +295,11 @@ class InteractionLogger:
         if thread_id:
             embed.add_field(name="Thread ID", value=f"`{thread_id}`", inline=True)
 
+        # Add message link if available
+        if guild_id and channel_id and message_id:
+            message_link = f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
+            embed.add_field(name="Message", value=f"[Jump to Message]({message_link})", inline=True)
+
         await self._send_log(embed)
 
     async def log_user_unbanned(
@@ -284,7 +307,10 @@ class InteractionLogger:
         user_id: int,
         unbanned_by: discord.User,
         scope: str,
-        display_name: str
+        display_name: str,
+        guild_id: Optional[int] = None,
+        channel_id: Optional[int] = None,
+        message_id: Optional[int] = None
     ) -> None:
         """Log when a user is unbanned from debates."""
         now_est = datetime.now(NY_TZ)
@@ -299,13 +325,20 @@ class InteractionLogger:
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
         embed.add_field(name="Scope", value=f"`{scope}`", inline=True)
 
+        # Add message link if available
+        if guild_id and channel_id and message_id:
+            message_link = f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
+            embed.add_field(name="Message", value=f"[Jump to Message]({message_link})", inline=True)
+
         await self._send_log(embed)
 
     async def log_ban_expired(
         self,
         user_id: int,
         scope: str,
-        display_name: str
+        display_name: str,
+        guild_id: Optional[int] = None,
+        thread_id: Optional[int] = None
     ) -> None:
         """Log when a user's ban expires automatically."""
         now_est = datetime.now(NY_TZ)
@@ -318,6 +351,11 @@ class InteractionLogger:
         embed.add_field(name="User", value=f"`{display_name}` `[{user_id}]`", inline=True)
         embed.add_field(name="Scope", value=f"`{scope}`", inline=True)
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+
+        # Add thread link if this was a thread-specific ban
+        if guild_id and thread_id:
+            thread_link = f"https://discord.com/channels/{guild_id}/{thread_id}"
+            embed.add_field(name="Thread", value=f"[Open Thread]({thread_link})", inline=True)
 
         await self._send_log(embed)
 
@@ -394,7 +432,9 @@ class InteractionLogger:
         user: discord.User,
         thread_name: str,
         message_id: int,
-        content_length: int
+        content_length: int,
+        guild_id: Optional[int] = None,
+        thread_id: Optional[int] = None
     ) -> None:
         """Log when vote reactions are added to a message."""
         now_est = datetime.now(NY_TZ)
@@ -406,10 +446,23 @@ class InteractionLogger:
         )
         embed.set_thumbnail(url=user.display_avatar.url)
         embed.add_field(name="Author", value=f"{user.mention} `[{user.id}]`", inline=True)
-        embed.add_field(name="Thread", value=f"`{thread_name[:30]}{'...' if len(thread_name) > 30 else ''}`", inline=True)
+
+        # Thread link if available
+        if guild_id and thread_id:
+            thread_link = f"https://discord.com/channels/{guild_id}/{thread_id}"
+            embed.add_field(name="Thread", value=f"[{thread_name[:25]}{'...' if len(thread_name) > 25 else ''}]({thread_link})", inline=True)
+        else:
+            embed.add_field(name="Thread", value=f"`{thread_name[:30]}{'...' if len(thread_name) > 30 else ''}`", inline=True)
+
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
         embed.add_field(name="Length", value=f"`{content_length}` chars", inline=True)
-        embed.add_field(name="Message ID", value=f"`{message_id}`", inline=True)
+
+        # Message link if available
+        if guild_id and thread_id:
+            msg_link = f"https://discord.com/channels/{guild_id}/{thread_id}/{message_id}"
+            embed.add_field(name="Message", value=f"[Jump]({msg_link})", inline=True)
+        else:
+            embed.add_field(name="Message ID", value=f"`{message_id}`", inline=True)
 
         await self._send_log(embed)
 
@@ -417,7 +470,9 @@ class InteractionLogger:
         self,
         user: discord.User,
         thread_name: str,
-        vote_type: str
+        vote_type: str,
+        guild_id: Optional[int] = None,
+        thread_id: Optional[int] = None
     ) -> None:
         """Log when a self-vote is blocked."""
         now_est = datetime.now(NY_TZ)
@@ -431,7 +486,13 @@ class InteractionLogger:
         embed.add_field(name="User", value=f"{user.mention} `[{user.id}]`", inline=True)
         embed.add_field(name="Type", value=f"`{vote_type}`", inline=True)
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
-        embed.add_field(name="Thread", value=f"`{thread_name[:30]}{'...' if len(thread_name) > 30 else ''}`", inline=True)
+
+        # Thread link if available
+        if guild_id and thread_id:
+            thread_link = f"https://discord.com/channels/{guild_id}/{thread_id}"
+            embed.add_field(name="Thread", value=f"[{thread_name[:25]}{'...' if len(thread_name) > 25 else ''}]({thread_link})", inline=True)
+        else:
+            embed.add_field(name="Thread", value=f"`{thread_name[:30]}{'...' if len(thread_name) > 30 else ''}`", inline=True)
 
         await self._send_log(embed)
 
@@ -443,7 +504,9 @@ class InteractionLogger:
         self,
         user: discord.User,
         thread_name: str,
-        reason: str
+        reason: str,
+        guild_id: Optional[int] = None,
+        thread_id: Optional[int] = None
     ) -> None:
         """Log when a user is blocked from posting (no participation react)."""
         now_est = datetime.now(NY_TZ)
@@ -456,7 +519,14 @@ class InteractionLogger:
         embed.set_thumbnail(url=user.display_avatar.url)
         embed.add_field(name="User", value=f"{user.mention} `[{user.id}]`", inline=True)
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
-        embed.add_field(name="Thread", value=f"`{thread_name[:30]}{'...' if len(thread_name) > 30 else ''}`", inline=True)
+
+        # Thread link if available
+        if guild_id and thread_id:
+            thread_link = f"https://discord.com/channels/{guild_id}/{thread_id}"
+            embed.add_field(name="Thread", value=f"[{thread_name[:25]}{'...' if len(thread_name) > 25 else ''}]({thread_link})", inline=True)
+        else:
+            embed.add_field(name="Thread", value=f"`{thread_name[:30]}{'...' if len(thread_name) > 30 else ''}`", inline=True)
+
         embed.add_field(name="Reason", value=f"`{reason}`", inline=False)
 
         await self._send_log(embed)
@@ -465,7 +535,9 @@ class InteractionLogger:
         self,
         user: discord.User,
         thread_name: str,
-        content_preview: str
+        content_preview: str,
+        guild_id: Optional[int] = None,
+        thread_id: Optional[int] = None
     ) -> None:
         """Log when a banned user's message is deleted."""
         now_est = datetime.now(NY_TZ)
@@ -478,7 +550,14 @@ class InteractionLogger:
         embed.set_thumbnail(url=user.display_avatar.url)
         embed.add_field(name="User", value=f"{user.mention} `[{user.id}]`", inline=True)
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
-        embed.add_field(name="Thread", value=f"`{thread_name[:30]}{'...' if len(thread_name) > 30 else ''}`", inline=True)
+
+        # Thread link if available
+        if guild_id and thread_id:
+            thread_link = f"https://discord.com/channels/{guild_id}/{thread_id}"
+            embed.add_field(name="Thread", value=f"[{thread_name[:25]}{'...' if len(thread_name) > 25 else ''}]({thread_link})", inline=True)
+        else:
+            embed.add_field(name="Thread", value=f"`{thread_name[:30]}{'...' if len(thread_name) > 30 else ''}`", inline=True)
+
         embed.add_field(name="Preview", value=f"```{content_preview[:100]}```", inline=False)
 
         await self._send_log(embed)
@@ -655,7 +734,8 @@ class InteractionLogger:
         self,
         thread_name: str,
         thread_id: int,
-        reason: str
+        reason: str,
+        guild_id: Optional[int] = None
     ) -> None:
         """Log when Hot tag is added to a debate."""
         now_est = datetime.now(NY_TZ)
@@ -665,7 +745,14 @@ class InteractionLogger:
             title="🔥 Hot Tag Added",
             color=COLOR_HOT,
         )
-        embed.add_field(name="Thread", value=f"`{thread_name[:40]}{'...' if len(thread_name) > 40 else ''}`", inline=False)
+
+        # Thread link if available
+        if guild_id:
+            thread_link = f"https://discord.com/channels/{guild_id}/{thread_id}"
+            embed.add_field(name="Thread", value=f"[{thread_name[:35]}{'...' if len(thread_name) > 35 else ''}]({thread_link})", inline=False)
+        else:
+            embed.add_field(name="Thread", value=f"`{thread_name[:40]}{'...' if len(thread_name) > 40 else ''}`", inline=False)
+
         embed.add_field(name="Thread ID", value=f"`{thread_id}`", inline=True)
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
         embed.add_field(name="Reason", value=f"`{reason}`", inline=False)
@@ -676,7 +763,8 @@ class InteractionLogger:
         self,
         thread_name: str,
         thread_id: int,
-        reason: str
+        reason: str,
+        guild_id: Optional[int] = None
     ) -> None:
         """Log when Hot tag is removed from a debate."""
         now_est = datetime.now(NY_TZ)
@@ -686,7 +774,14 @@ class InteractionLogger:
             title="❄️ Hot Tag Removed",
             color=COLOR_CLEANUP,
         )
-        embed.add_field(name="Thread", value=f"`{thread_name[:40]}{'...' if len(thread_name) > 40 else ''}`", inline=False)
+
+        # Thread link if available
+        if guild_id:
+            thread_link = f"https://discord.com/channels/{guild_id}/{thread_id}"
+            embed.add_field(name="Thread", value=f"[{thread_name[:35]}{'...' if len(thread_name) > 35 else ''}]({thread_link})", inline=False)
+        else:
+            embed.add_field(name="Thread", value=f"`{thread_name[:40]}{'...' if len(thread_name) > 40 else ''}`", inline=False)
+
         embed.add_field(name="Thread ID", value=f"`{thread_id}`", inline=True)
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
         embed.add_field(name="Reason", value=f"`{reason}`", inline=False)
@@ -809,7 +904,8 @@ class InteractionLogger:
         creator: discord.User,
         original_title: str,
         suggested_title: str,
-        thread_id: int
+        thread_id: int,
+        guild_id: Optional[int] = None
     ) -> None:
         """Log when a non-English title debate is blocked."""
         now_est = datetime.now(NY_TZ)
@@ -824,7 +920,13 @@ class InteractionLogger:
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
         embed.add_field(name="Original", value=f"`{original_title[:40]}{'...' if len(original_title) > 40 else ''}`", inline=False)
         embed.add_field(name="Suggested", value=f"`{suggested_title[:40]}{'...' if len(suggested_title) > 40 else ''}`", inline=False)
-        embed.add_field(name="Thread ID", value=f"`{thread_id}`", inline=True)
+
+        # Thread link if available
+        if guild_id:
+            thread_link = f"https://discord.com/channels/{guild_id}/{thread_id}"
+            embed.add_field(name="Thread", value=f"[Open Thread]({thread_link})", inline=True)
+        else:
+            embed.add_field(name="Thread ID", value=f"`{thread_id}`", inline=True)
 
         await self._send_log(embed)
 

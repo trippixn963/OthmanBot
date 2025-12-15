@@ -12,7 +12,6 @@ DESIGN:
 - Auto-unbans (expired bans) also logged
 - Ban count tracked and displayed in embed titles
 - Clickable thread links in scope field
-- User roles displayed in profile embed
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
@@ -543,11 +542,6 @@ Severe/Habitual          →  Permanent
         account_age = self._format_age(created_at, now)
         user_embed.add_field(name="Account Age", value=account_age, inline=True)
 
-        # User roles (excluding @everyone)
-        roles = self._format_user_roles(user)
-        if roles:
-            user_embed.add_field(name="Roles", value=roles, inline=False)
-
         # Build initial ban action embed (ban #1 for new case)
         ban_embed = self._build_ban_embed(user, banned_by, scope, duration, target_thread_id, reason, ban_count=1)
 
@@ -758,31 +752,6 @@ Severe/Habitual          →  Permanent
 
         # Fallback: just show thread ID with link
         return f"[Thread {thread_id}](https://discord.com/channels/@me/{thread_id})"
-
-    def _format_user_roles(self, user: discord.Member) -> str:
-        """
-        Format user roles for display in embed.
-
-        Args:
-            user: The member to get roles from
-
-        Returns:
-            Formatted string of role mentions, or empty string if no roles
-        """
-        # Get roles excluding @everyone, sorted by position (highest first)
-        roles = [role for role in user.roles if role.name != "@everyone"]
-        roles.sort(key=lambda r: r.position, reverse=True)
-
-        if not roles:
-            return ""
-
-        # Limit to top 10 roles to avoid embed field limits
-        if len(roles) > 10:
-            role_mentions = [role.mention for role in roles[:10]]
-            role_mentions.append(f"+{len(roles) - 10} more")
-            return " ".join(role_mentions)
-
-        return " ".join(role.mention for role in roles)
 
     def _format_age(self, start: datetime, end: datetime) -> str:
         """
@@ -1099,11 +1068,6 @@ Severe/Habitual          →  Permanent
         created_at = owner.created_at.replace(tzinfo=NY_TZ) if owner.created_at.tzinfo is None else owner.created_at
         account_age = self._format_age(created_at, now)
         user_embed.add_field(name="Account Age", value=account_age, inline=True)
-
-        # User roles
-        roles = self._format_user_roles(owner)
-        if roles:
-            user_embed.add_field(name="Roles", value=roles, inline=False)
 
         # Build debate close embed
         close_embed = self._build_debate_close_embed(

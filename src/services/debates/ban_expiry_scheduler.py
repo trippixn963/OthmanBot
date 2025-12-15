@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from discord.ext import tasks
 
 from src.core.logger import logger
+from src.core.config import SYRIA_GUILD_ID
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -111,7 +112,9 @@ class BanExpiryScheduler:
                                 webhook_display_name = f"User {user_id}"
 
                             await self.bot.interaction_logger.log_ban_expired(
-                                user_id, scope, webhook_display_name
+                                user_id, scope, webhook_display_name,
+                                guild_id=SYRIA_GUILD_ID,
+                                thread_id=thread_id
                             )
                     except Exception as e:
                         logger.warning("Failed to log auto-unban to webhook", [

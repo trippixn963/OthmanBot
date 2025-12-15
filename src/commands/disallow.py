@@ -13,7 +13,7 @@ Server: discord.gg/syria
 
 import asyncio
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Optional
 
 import discord
@@ -270,7 +270,9 @@ class DisallowCog(commands.Cog):
 
         if duration_td is not None:
             expires_at = datetime.now(NY_TZ) + duration_td
-            expires_at_str = expires_at.isoformat()
+            # Convert to UTC for SQLite storage (matches datetime('now') format)
+            expires_at_utc = expires_at.astimezone(timezone.utc)
+            expires_at_str = expires_at_utc.strftime("%Y-%m-%d %H:%M:%S")
         else:
             expires_at = None
             expires_at_str = None
@@ -319,11 +321,22 @@ class DisallowCog(commands.Cog):
 
             await interaction.response.send_message(embed=embed)
 
+            # Get message ID for webhook link
+            message_id = None
+            try:
+                original_response = await interaction.original_response()
+                message_id = original_response.id
+            except Exception:
+                pass
+
             # Log success to webhook (non-blocking)
             try:
                 if self.bot.interaction_logger:
                     await self.bot.interaction_logger.log_user_banned(
-                        user, interaction.user, scope, target_thread_id, duration_display
+                        user, interaction.user, scope, target_thread_id,
+                        guild_id=interaction.guild.id if interaction.guild else None,
+                        channel_id=interaction.channel.id if interaction.channel else None,
+                        message_id=message_id
                     )
             except Exception as e:
                 logger.warning("Failed to log disallow to webhook", [

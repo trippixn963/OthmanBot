@@ -359,7 +359,8 @@ class HotTagManager:
                 if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
                     await self.bot.interaction_logger.log_hot_tag_added(
                         thread.name, thread.id,
-                        f"{message_count} messages, active {hours_since_last:.1f}h ago"
+                        f"{message_count} messages, active {hours_since_last:.1f}h ago",
+                        guild_id=thread.guild.id if thread.guild else None
                     )
                 return "added", thread_preview
 
@@ -386,7 +387,8 @@ class HotTagManager:
                 if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
                     await self.bot.interaction_logger.log_hot_tag_removed(
                         thread.name, thread.id,
-                        f"No longer meets criteria: {reason}"
+                        f"No longer meets criteria: {reason}",
+                        guild_id=thread.guild.id if thread.guild else None
                     )
                 return "removed", thread_preview
 

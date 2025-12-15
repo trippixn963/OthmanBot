@@ -251,13 +251,19 @@ class AllowCog(commands.Cog):
             developer_avatar_url = await get_developer_avatar(self.bot)
             embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
 
-            await interaction.followup.send(embed=embed)
+            followup_msg = await interaction.followup.send(embed=embed, wait=True)
+
+            # Get message ID for webhook link
+            message_id = followup_msg.id if followup_msg else None
 
             # Log success to webhook (non-blocking)
             try:
                 if self.bot.interaction_logger:
                     await self.bot.interaction_logger.log_user_unbanned(
-                        user_id, interaction.user, scope, display_name
+                        user_id, interaction.user, scope, display_name,
+                        guild_id=interaction.guild.id if interaction.guild else None,
+                        channel_id=interaction.channel.id if interaction.channel else None,
+                        message_id=message_id
                     )
             except Exception as e:
                 logger.warning("Failed to log allow to webhook", [
