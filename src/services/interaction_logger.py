@@ -1390,6 +1390,138 @@ class InteractionLogger:
 
         await self._send_log(embed)
 
+    async def log_appeal_button_clicked(
+        self,
+        user: discord.User,
+        action_type: str,
+        action_id: int,
+        source: str,
+        is_dm: bool,
+    ) -> None:
+        """
+        Log when a user clicks the appeal button.
+
+        Args:
+            user: The user who clicked the button
+            action_type: Type of action being appealed ('disallow' or 'close')
+            action_id: ID of the action being appealed
+            source: Where the button was clicked from (DM or channel name)
+            is_dm: Whether clicked from DM
+        """
+        now = datetime.now(NY_TZ)
+        time_str = now.strftime("%I:%M %p EST")
+
+        action_labels = {
+            "disallow": "Ban Appeal",
+            "close": "Thread Close Appeal",
+        }
+        action_label = action_labels.get(action_type, action_type.title())
+
+        embed = discord.Embed(
+            title=f"📝 Appeal Button Clicked",
+            description=f"User started the appeal process for a **{action_label}**",
+            color=COLOR_INFO,
+        )
+
+        embed.set_thumbnail(url=user.display_avatar.url)
+
+        embed.add_field(name="User", value=f"{user.mention}\n`{user.id}`", inline=True)
+        embed.add_field(name="Action Type", value=f"`{action_type}`", inline=True)
+        embed.add_field(name="Action ID", value=f"`{action_id}`", inline=True)
+        embed.add_field(name="Source", value=f"`{source}`", inline=True)
+        embed.add_field(name="From DM", value="`Yes`" if is_dm else "`No`", inline=True)
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+
+        await self._send_log(embed)
+
+    async def log_appeal_submitted(
+        self,
+        user: discord.User,
+        action_type: str,
+        action_id: int,
+        reason: str,
+        appeal_id: int,
+    ) -> None:
+        """
+        Log when an appeal is successfully submitted.
+
+        Args:
+            user: The user who submitted the appeal
+            action_type: Type of action being appealed
+            action_id: ID of the action being appealed
+            reason: User's reason for appeal
+            appeal_id: The created appeal ID
+        """
+        now = datetime.now(NY_TZ)
+        time_str = now.strftime("%I:%M %p EST")
+
+        action_labels = {
+            "disallow": "Ban Appeal",
+            "close": "Thread Close Appeal",
+        }
+        action_label = action_labels.get(action_type, action_type.title())
+
+        embed = discord.Embed(
+            title=f"📨 Appeal Submitted",
+            description=f"New **{action_label}** submitted for review",
+            color=COLOR_KARMA,
+        )
+
+        embed.set_thumbnail(url=user.display_avatar.url)
+
+        embed.add_field(name="User", value=f"{user.mention}\n`{user.id}`", inline=True)
+        embed.add_field(name="Appeal ID", value=f"`#{appeal_id}`", inline=True)
+        embed.add_field(name="Action Type", value=f"`{action_type}`", inline=True)
+        embed.add_field(name="Action ID", value=f"`{action_id}`", inline=True)
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+        embed.add_field(name="Reason", value=reason[:500] if len(reason) > 500 else reason, inline=False)
+
+        await self._send_log(embed)
+
+    async def log_appeal_reviewed(
+        self,
+        appeal_id: int,
+        user_id: int,
+        action_type: str,
+        decision: str,
+        reviewed_by: discord.User,
+    ) -> None:
+        """
+        Log when an appeal is approved or denied.
+
+        Args:
+            appeal_id: The appeal ID
+            user_id: The user who submitted the appeal
+            action_type: Type of action that was appealed
+            decision: 'approved' or 'denied'
+            reviewed_by: The moderator who reviewed
+        """
+        now = datetime.now(NY_TZ)
+        time_str = now.strftime("%I:%M %p EST")
+
+        if decision == "approved":
+            title = "✅ Appeal Approved"
+            color = COLOR_SUCCESS
+        else:
+            title = "❌ Appeal Denied"
+            color = COLOR_ERROR
+
+        embed = discord.Embed(
+            title=title,
+            color=color,
+        )
+
+        embed.set_thumbnail(url=reviewed_by.display_avatar.url)
+
+        embed.add_field(name="Appeal ID", value=f"`#{appeal_id}`", inline=True)
+        embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
+        embed.add_field(name="Action Type", value=f"`{action_type}`", inline=True)
+        embed.add_field(name="Decision", value=f"`{decision.upper()}`", inline=True)
+        embed.add_field(name="Reviewed By", value=f"{reviewed_by.mention}", inline=True)
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+
+        await self._send_log(embed)
+
 
 # =============================================================================
 # Module Export
