@@ -365,88 +365,72 @@ def _cleanup_completed_tasks(bot: "OthmanBot") -> None:
 
 
 async def _run_startup_reconciliation(bot: "OthmanBot") -> None:
-    """Run startup karma reconciliation after a short delay."""
+    """Run combined startup reconciliation (karma + numbering) after a short delay."""
     # Wait a bit for bot to fully initialize
     await asyncio.sleep(BOT_STARTUP_DELAY)
 
+    # Track results for combined webhook
+    karma_stats = None
+    karma_success = True
+    numbering_stats = None
+    numbering_success = True
+
+    # Run karma reconciliation
     logger.info("🔄 Running Startup Karma Reconciliation (Full Scan)")
     try:
         # Scan ALL threads (days_back=None) for 100% accuracy at startup
-        stats = await reconcile_karma(bot, days_back=None)
-        logger.tree("Startup Reconciliation Complete", [
-            ("Threads Scanned", str(stats['threads_scanned'])),
-            ("Votes Added", f"+{stats['votes_added']}"),
-            ("Votes Removed", f"-{stats['votes_removed']}"),
+        karma_stats = await reconcile_karma(bot, days_back=None)
+        logger.tree("Startup Karma Reconciliation Complete", [
+            ("Threads Scanned", str(karma_stats['threads_scanned'])),
+            ("Votes Added", f"+{karma_stats['votes_added']}"),
+            ("Votes Removed", f"-{karma_stats['votes_removed']}"),
         ], emoji="🔄")
-
-        # Log to webhook
-        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
-            await bot.interaction_logger.log_karma_reconciliation("Startup", stats, success=True)
-
     except Exception as e:
         logger.error("🔄 Startup Karma Reconciliation Failed", [
             ("Error", str(e)),
         ])
-        # Log failure to webhook
-        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
-            await bot.interaction_logger.log_karma_reconciliation(
-                "Startup",
-                {"error": str(e)},
-                success=False
-            )
+        karma_success = False
+        karma_stats = {"error": str(e)}
 
-
-async def _run_startup_numbering_reconciliation(bot: "OthmanBot") -> None:
-    """Run startup numbering reconciliation after a short delay."""
-    # Wait a bit for bot to fully initialize
-    await asyncio.sleep(BOT_STARTUP_DELAY + 5)  # Run after karma reconciliation
-
+    # Run numbering reconciliation
     logger.info("🔢 Running Startup Numbering Reconciliation")
     try:
-        stats = await reconcile_debate_numbering(bot)
-        if stats['gaps_found'] > 0:
+        numbering_stats = await reconcile_debate_numbering(bot)
+        if numbering_stats['gaps_found'] > 0:
             logger.tree("Startup Numbering Reconciliation Complete", [
-                ("Threads Scanned", str(stats['threads_scanned'])),
-                ("Gaps Found", str(stats['gaps_found'])),
-                ("Threads Renumbered", str(stats['threads_renumbered'])),
+                ("Threads Scanned", str(numbering_stats['threads_scanned'])),
+                ("Gaps Found", str(numbering_stats['gaps_found'])),
+                ("Threads Renumbered", str(numbering_stats['threads_renumbered'])),
             ], emoji="🔢")
         else:
             logger.info("🔢 Startup Numbering Check Complete - No Gaps Found", [
-                ("Threads Scanned", str(stats['threads_scanned'])),
+                ("Threads Scanned", str(numbering_stats['threads_scanned'])),
             ])
-
-        # Log to webhook
-        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
-            await bot.interaction_logger.log_numbering_reconciliation("Startup", stats, success=True)
-
     except Exception as e:
         logger.error("🔢 Startup Numbering Reconciliation Failed", [
             ("Error", str(e)),
         ])
-        # Log failure to webhook
-        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
-            await bot.interaction_logger.log_numbering_reconciliation(
-                "Startup",
-                {"error": str(e)},
-                success=False
-            )
+        numbering_success = False
+        numbering_stats = {"error": str(e)}
+
+    # Send combined webhook
+    if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+        await bot.interaction_logger.log_startup_reconciliation(
+            karma_stats=karma_stats,
+            numbering_stats=numbering_stats,
+            karma_success=karma_success,
+            numbering_success=numbering_success
+        )
 
 
 async def _init_numbering_reconciliation(bot: "OthmanBot") -> None:
-    """Initialize numbering reconciliation - startup scan and nightly scheduler.
+    """Initialize numbering reconciliation nightly scheduler.
 
     DESIGN: Ensures debate numbers are always sequential
-    - Runs immediately on startup to fix any gaps
+    - Startup scan is handled by _run_startup_reconciliation (combined with karma)
     - Schedules nightly sync at 00:15 EST for ongoing accuracy
     """
-    # Run startup numbering reconciliation in background (don't block bot startup)
-    numbering_task = asyncio.create_task(_run_startup_numbering_reconciliation(bot))
-    numbering_task.add_done_callback(_handle_task_exception)
-    if not hasattr(bot, '_background_tasks'):
-        bot._background_tasks: List[asyncio.Task] = []
-    bot._background_tasks.append(numbering_task)
-
-    # Start nightly scheduler
+    # Start nightly scheduler (startup scan is now combined in _run_startup_reconciliation)
     bot.numbering_reconciliation_scheduler = NumberingReconciliationScheduler(
         lambda: reconcile_debate_numbering(bot),
         bot=bot

@@ -55,9 +55,6 @@ _NY_TZ = ZoneInfo("America/New_York")
 # Log retention period in days
 LOG_RETENTION_DAYS = 7
 
-# Error webhook URL for Discord notifications (loaded from environment)
-ERROR_WEBHOOK_URL = os.getenv("ERROR_WEBHOOK_URL", "")
-
 # Error webhook colors
 COLOR_ERROR = 0xFF0000      # Red
 COLOR_WARNING = 0xFFAA00    # Orange
@@ -225,7 +222,9 @@ class MiniTreeLogger:
         emoji: str = "❌"
     ) -> None:
         """Send error to Discord webhook asynchronously."""
-        if not ERROR_WEBHOOK_URL:
+        # Read at runtime (after load_dotenv has been called)
+        error_webhook_url = os.getenv("ERROR_WEBHOOK_URL", "")
+        if not error_webhook_url:
             return
 
         try:
@@ -245,7 +244,7 @@ class MiniTreeLogger:
             # Try to send asynchronously if event loop is running
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._async_send_webhook(payload))
+                loop.create_task(self._async_send_webhook(payload, error_webhook_url))
             except RuntimeError:
                 # No event loop running, skip webhook
                 pass
@@ -254,12 +253,12 @@ class MiniTreeLogger:
             import sys
             print(f"[LOGGER] Webhook setup error: {e}", file=sys.stderr)
 
-    async def _async_send_webhook(self, payload: dict) -> None:
+    async def _async_send_webhook(self, payload: dict, webhook_url: str) -> None:
         """Send webhook payload asynchronously."""
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    ERROR_WEBHOOK_URL,
+                    webhook_url,
                     json=payload,
                     timeout=aiohttp.ClientTimeout(total=5)
                 ) as response:
