@@ -205,13 +205,14 @@ class DebatesDatabase:
                     ])
 
     # Current schema version - increment when adding migrations
-    SCHEMA_VERSION = 8
+    SCHEMA_VERSION = 9
 
     # Valid table names for SQL injection prevention
     VALID_TABLES = frozenset({
         'votes', 'users', 'debate_threads', 'debate_bans',
         'debate_participation', 'debate_creators', 'case_logs',
         'analytics_messages', 'schema_version', 'user_streaks', 'linked_accounts',
+        'appeals',
         'debate_counter', 'audit_log'
     })
 
@@ -538,6 +539,28 @@ class DebatesDatabase:
             # Index on user_streaks.user_id - for streak lookups
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_streaks_user ON user_streaks(user_id)")
             logger.info("Migration 8: Added performance indexes")
+            migrations_run += 1
+
+        # Migration 9: Add appeals table for disallow/close appeals
+        if current_version < 9:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS appeals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    action_type TEXT NOT NULL,
+                    action_id INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    additional_context TEXT,
+                    status TEXT DEFAULT 'pending',
+                    reviewed_by INTEGER,
+                    reviewed_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, action_type, action_id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_appeals_user ON appeals(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_appeals_status ON appeals(status)")
+            logger.info("Migration 9: Added appeals table")
             migrations_run += 1
 
         # Update schema version
@@ -3382,6 +3405,318 @@ class DebatesDatabase:
                 ])
 
             return deleted
+
+    # -------------------------------------------------------------------------
+    # Appeal Operations
+    # -------------------------------------------------------------------------
+
+    def create_appeal(
+        self,
+        user_id: int,
+        action_type: str,
+        action_id: int,
+        reason: str,
+        additional_context: Optional[str] = None,
+    ) -> Optional[int]:
+        """
+        Create a new appeal for a disallow or thread close action.
+
+        Args:
+            user_id: Discord user ID of the appealing user
+            action_type: Type of action being appealed ('disallow' or 'close')
+            action_id: ID of the action (ban row ID for disallow, thread ID for close)
+            reason: User's reason for the appeal
+            additional_context: Optional additional context from user
+
+        Returns:
+            Appeal ID if created, None if already exists
+
+        DESIGN: UNIQUE constraint prevents duplicate appeals for the same action.
+        """
+        appeal_id = None
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            try:
+                cursor.execute(
+                    """INSERT INTO appeals (user_id, action_type, action_id, reason, additional_context)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (user_id, action_type, action_id, reason, additional_context)
+                )
+                conn.commit()
+                appeal_id = cursor.lastrowid
+
+                logger.info("DB: Appeal Created", [
+                    ("Appeal ID", str(appeal_id)),
+                    ("User ID", str(user_id)),
+                    ("Action Type", action_type),
+                    ("Action ID", str(action_id)),
+                ])
+
+            except sqlite3.IntegrityError:
+                # User already appealed this action
+                logger.info("DB: Duplicate Appeal Attempt", [
+                    ("User ID", str(user_id)),
+                    ("Action Type", action_type),
+                    ("Action ID", str(action_id)),
+                ])
+                return None
+
+        # Audit log OUTSIDE the lock to prevent deadlock
+        if appeal_id:
+            self.audit_log(
+                action='appeal_create',
+                actor_id=user_id,
+                target_id=action_id,
+                target_type=action_type,
+                metadata={
+                    'appeal_id': appeal_id,
+                    'reason': reason[:100] if reason else None,
+                }
+            )
+
+        return appeal_id
+
+    def get_appeal(self, appeal_id: int) -> Optional[dict]:
+        """
+        Get an appeal by its ID.
+
+        Args:
+            appeal_id: The appeal ID
+
+        Returns:
+            Dict with appeal data or None if not found
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, user_id, action_type, action_id, reason, additional_context,
+                          status, reviewed_by, reviewed_at, created_at
+                   FROM appeals WHERE id = ?""",
+                (appeal_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "user_id": row[1],
+                    "action_type": row[2],
+                    "action_id": row[3],
+                    "reason": row[4],
+                    "additional_context": row[5],
+                    "status": row[6],
+                    "reviewed_by": row[7],
+                    "reviewed_at": row[8],
+                    "created_at": row[9],
+                }
+            return None
+
+    def get_appeal_by_action(
+        self,
+        user_id: int,
+        action_type: str,
+        action_id: int,
+    ) -> Optional[dict]:
+        """
+        Get an appeal by user and action details.
+
+        Args:
+            user_id: Discord user ID
+            action_type: Type of action ('disallow' or 'close')
+            action_id: ID of the action
+
+        Returns:
+            Dict with appeal data or None if not found
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, user_id, action_type, action_id, reason, additional_context,
+                          status, reviewed_by, reviewed_at, created_at
+                   FROM appeals
+                   WHERE user_id = ? AND action_type = ? AND action_id = ?""",
+                (user_id, action_type, action_id)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "user_id": row[1],
+                    "action_type": row[2],
+                    "action_id": row[3],
+                    "reason": row[4],
+                    "additional_context": row[5],
+                    "status": row[6],
+                    "reviewed_by": row[7],
+                    "reviewed_at": row[8],
+                    "created_at": row[9],
+                }
+            return None
+
+    def update_appeal_status(
+        self,
+        appeal_id: int,
+        status: str,
+        reviewed_by: int,
+    ) -> bool:
+        """
+        Update an appeal's status (approve or deny).
+
+        Args:
+            appeal_id: The appeal ID
+            status: New status ('approved' or 'denied')
+            reviewed_by: Moderator user ID who reviewed
+
+        Returns:
+            True if updated, False if appeal not found
+        """
+        old_status = None
+        success = False
+
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Get old status for audit
+            cursor.execute("SELECT status FROM appeals WHERE id = ?", (appeal_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+            old_status = row[0]
+
+            cursor.execute(
+                """UPDATE appeals
+                   SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
+                   WHERE id = ?""",
+                (status, reviewed_by, appeal_id)
+            )
+            success = cursor.rowcount > 0
+            conn.commit()
+
+            if success:
+                logger.info("DB: Appeal Status Updated", [
+                    ("Appeal ID", str(appeal_id)),
+                    ("Status", status),
+                    ("Reviewed By", str(reviewed_by)),
+                ])
+
+        # Audit log OUTSIDE the lock to prevent deadlock
+        if success:
+            self.audit_log(
+                action='appeal_review',
+                actor_id=reviewed_by,
+                target_id=appeal_id,
+                target_type='appeal',
+                old_value=old_status,
+                new_value=status,
+            )
+
+        return success
+
+    def has_appeal(
+        self,
+        user_id: int,
+        action_type: str,
+        action_id: int,
+    ) -> bool:
+        """
+        Check if an appeal already exists for this action.
+
+        Args:
+            user_id: Discord user ID
+            action_type: Type of action ('disallow' or 'close')
+            action_id: ID of the action
+
+        Returns:
+            True if appeal exists, False otherwise
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT 1 FROM appeals
+                   WHERE user_id = ? AND action_type = ? AND action_id = ?""",
+                (user_id, action_type, action_id)
+            )
+            return cursor.fetchone() is not None
+
+    def get_pending_appeals(self, limit: int = 50) -> list[dict]:
+        """
+        Get all pending appeals for moderation review.
+
+        Args:
+            limit: Maximum number of appeals to return
+
+        Returns:
+            List of pending appeal records
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, user_id, action_type, action_id, reason, additional_context,
+                          status, reviewed_by, reviewed_at, created_at
+                   FROM appeals
+                   WHERE status = 'pending'
+                   ORDER BY created_at ASC
+                   LIMIT ?""",
+                (limit,)
+            )
+            return [
+                {
+                    "id": row[0],
+                    "user_id": row[1],
+                    "action_type": row[2],
+                    "action_id": row[3],
+                    "reason": row[4],
+                    "additional_context": row[5],
+                    "status": row[6],
+                    "reviewed_by": row[7],
+                    "reviewed_at": row[8],
+                    "created_at": row[9],
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def get_user_appeals(self, user_id: int) -> list[dict]:
+        """
+        Get all appeals submitted by a user.
+
+        Args:
+            user_id: Discord user ID
+
+        Returns:
+            List of appeal records for the user
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, user_id, action_type, action_id, reason, additional_context,
+                          status, reviewed_by, reviewed_at, created_at
+                   FROM appeals
+                   WHERE user_id = ?
+                   ORDER BY created_at DESC""",
+                (user_id,)
+            )
+            return [
+                {
+                    "id": row[0],
+                    "user_id": row[1],
+                    "action_type": row[2],
+                    "action_id": row[3],
+                    "reason": row[4],
+                    "additional_context": row[5],
+                    "status": row[6],
+                    "reviewed_by": row[7],
+                    "reviewed_at": row[8],
+                    "created_at": row[9],
+                }
+                for row in cursor.fetchall()
+            ]
 
 
 # =============================================================================

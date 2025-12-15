@@ -94,6 +94,8 @@ from src.services.interaction_logger import InteractionLogger
 from src.services.daily_stats import DailyStatsService
 from src.services.case_log import CaseLogService
 from src.services.ban_notifier import BanNotifier
+from src.services.appeal_service import AppealService
+from src.views.appeals import AppealButtonView, AppealReviewView
 
 
 # =============================================================================
@@ -235,6 +237,12 @@ class OthmanBot(commands.Bot):
         # =================================================================
         self.ban_notifier: Optional[BanNotifier] = None
 
+        # =================================================================
+        # Appeal Service
+        # DESIGN: Handles appeal submission, approval, and denial
+        # =================================================================
+        self.appeal_service: Optional[AppealService] = None
+
     # =========================================================================
     # Properties
     # =========================================================================
@@ -265,6 +273,14 @@ class OthmanBot(commands.Bot):
 
         # Initialize ban notifier service (for DM notifications)
         self.ban_notifier = BanNotifier(self)
+
+        # Initialize appeal service (for appeal submission/review)
+        self.appeal_service = AppealService(self)
+
+        # Register persistent views for appeal system
+        # These views persist across bot restarts via custom_id patterns
+        self.add_view(AppealButtonView())
+        self.add_view(AppealReviewView())
 
         # Load command cogs (each command in its own file)
         await self.load_extension("src.commands.toggle")

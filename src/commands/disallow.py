@@ -23,7 +23,7 @@ from discord.ext import commands
 from src.core.logger import logger
 from src.core.config import (
     DEBATES_FORUM_ID, NY_TZ, BATCH_PROCESSING_DELAY, REACTION_DELAY,
-    DISCORD_API_DELAY, DISCORD_AUTOCOMPLETE_LIMIT
+    DISCORD_API_DELAY, DISCORD_AUTOCOMPLETE_LIMIT, has_debates_management_role
 )
 from src.utils import get_developer_avatar, remove_reaction_safe
 
@@ -198,6 +198,18 @@ class DisallowCog(commands.Cog):
             ("Thread ID Param", thread_id),
             ("Duration", duration),
         ])
+
+        # Security check: Verify user has Debates Management role
+        if not has_debates_management_role(interaction.user):
+            logger.warning("/disallow Command Denied - Missing Role", [
+                ("User", f"{interaction.user.name} ({interaction.user.id})"),
+            ])
+            await interaction.response.send_message(
+                "You don't have permission to use this command. "
+                "Only users with the Debates Management role can ban users from debates.",
+                ephemeral=True
+            )
+            return
 
         if not hasattr(self.bot, 'debates_service') or self.bot.debates_service is None:
             logger.warning("/disallow Command Failed - Service Unavailable", [

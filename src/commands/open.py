@@ -21,7 +21,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, NY_TZ
+from src.core.config import DEBATES_FORUM_ID, NY_TZ, has_debates_management_role
 from src.utils import edit_thread_with_retry, get_developer_avatar
 
 if TYPE_CHECKING:
@@ -55,6 +55,18 @@ class OpenCog(commands.Cog):
             ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
             ("Reason", reason[:50] + "..." if len(reason) > 50 else reason),
         ])
+
+        # Security check: Verify user has Debates Management role
+        if not has_debates_management_role(interaction.user):
+            logger.warning("/open Command Denied - Missing Role", [
+                ("User", f"{interaction.user.name} ({interaction.user.id})"),
+            ])
+            await interaction.response.send_message(
+                "You don't have permission to use this command. "
+                "Only users with the Debates Management role can reopen debates.",
+                ephemeral=True
+            )
+            return
 
         # Validate: Must be used in a thread
         if not isinstance(interaction.channel, discord.Thread):

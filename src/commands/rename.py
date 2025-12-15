@@ -26,6 +26,7 @@ from src.core.config import (
     PIN_SYSTEM_MESSAGE_DELAY,
     LOG_TITLE_PREVIEW_LENGTH,
     DISCORD_THREAD_NAME_LIMIT,
+    has_debates_management_role,
 )
 from src.utils import (
     edit_thread_with_retry,
@@ -96,6 +97,18 @@ class RenameCog(commands.Cog):
             ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
             ("Title Param", title if title else "Auto-detect from suggested"),
         ])
+
+        # Security check: Verify user has Debates Management role
+        if not has_debates_management_role(interaction.user):
+            logger.warning("/rename Command Denied - Missing Role", [
+                ("User", f"{interaction.user.name} ({interaction.user.id})"),
+            ])
+            await interaction.response.send_message(
+                "You don't have permission to use this command. "
+                "Only users with the Debates Management role can rename debates.",
+                ephemeral=True
+            )
+            return
 
         # Must be used in a thread
         if not isinstance(interaction.channel, discord.Thread):

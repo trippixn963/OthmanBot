@@ -18,7 +18,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DISCORD_AUTOCOMPLETE_LIMIT
+from src.core.config import DISCORD_AUTOCOMPLETE_LIMIT, has_debates_management_role
 from src.utils import get_developer_avatar
 
 if TYPE_CHECKING:
@@ -153,6 +153,18 @@ class AllowCog(commands.Cog):
             ("User Param", user),
             ("Thread ID Param", thread_id),
         ])
+
+        # Security check: Verify user has Debates Management role
+        if not has_debates_management_role(interaction.user):
+            logger.warning("/allow Command Denied - Missing Role", [
+                ("User", f"{interaction.user.name} ({interaction.user.id})"),
+            ])
+            await interaction.response.send_message(
+                "You don't have permission to use this command. "
+                "Only users with the Debates Management role can unban users from debates.",
+                ephemeral=True
+            )
+            return
 
         if not hasattr(self.bot, 'debates_service') or self.bot.debates_service is None:
             logger.warning("/allow Command Failed - Service Unavailable", [
