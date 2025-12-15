@@ -271,23 +271,48 @@ class AppealButton(discord.ui.Button):
             )
             return
 
+        # Determine source (DM or Thread/Channel)
+        is_dm = interaction.guild is None
+        source = "DM" if is_dm else f"#{interaction.channel.name if interaction.channel else 'Unknown'}"
+
         logger.info("Appeal Button Clicked", [
             ("User", f"{interaction.user.name} ({interaction.user.id})"),
             ("Action Type", action_type),
             ("Action ID", str(action_id)),
             ("Expected User", str(expected_user_id)),
+            ("Source", source),
         ])
+
+        # Get bot instance for webhook logging
+        bot: "OthmanBot" = interaction.client  # type: ignore
+
+        # Log to webhook
+        try:
+            if bot.interaction_logger:
+                await bot.interaction_logger.log_appeal_button_clicked(
+                    user=interaction.user,
+                    action_type=action_type,
+                    action_id=action_id,
+                    source=source,
+                    is_dm=is_dm,
+                )
+        except Exception as e:
+            logger.warning("Failed to log appeal button click to webhook", [
+                ("Error", str(e)),
+            ])
 
         # Verify user is the one who should appeal
         if interaction.user.id != expected_user_id:
+            logger.warning("Appeal Button Rejected - Wrong User", [
+                ("Clicked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Expected User", str(expected_user_id)),
+                ("Action Type", action_type),
+            ])
             await interaction.response.send_message(
                 "You cannot submit an appeal for another user.",
                 ephemeral=True
             )
             return
-
-        # Get bot instance
-        bot: "OthmanBot" = interaction.client  # type: ignore
 
         # Check if appeal already exists
         if bot.debates_service and bot.debates_service.db:

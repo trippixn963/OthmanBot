@@ -139,6 +139,21 @@ class AppealService:
             ("Action Type", action_type),
         ])
 
+        # Log to webhook
+        try:
+            if self.bot.interaction_logger:
+                await self.bot.interaction_logger.log_appeal_submitted(
+                    user=user,
+                    action_type=action_type,
+                    action_id=action_id,
+                    reason=reason,
+                    appeal_id=appeal_id,
+                )
+        except Exception as e:
+            logger.warning("Failed to log appeal submission to webhook", [
+                ("Error", str(e)),
+            ])
+
         return {"success": True, "appeal_id": appeal_id}
 
     async def approve_appeal(
@@ -205,6 +220,21 @@ class AppealService:
             ("Action Undone", str(undo_success)),
         ])
 
+        # Log to webhook
+        try:
+            if self.bot.interaction_logger:
+                await self.bot.interaction_logger.log_appeal_reviewed(
+                    appeal_id=appeal_id,
+                    user_id=appeal["user_id"],
+                    action_type=appeal["action_type"],
+                    decision="approved",
+                    reviewed_by=reviewed_by,
+                )
+        except Exception as e:
+            logger.warning("Failed to log appeal approval to webhook", [
+                ("Error", str(e)),
+            ])
+
         return {"success": True}
 
     async def deny_appeal(
@@ -255,6 +285,21 @@ class AppealService:
             ("User ID", str(appeal["user_id"])),
             ("Reviewed By", f"{reviewed_by.name} ({reviewed_by.id})"),
         ])
+
+        # Log to webhook
+        try:
+            if self.bot.interaction_logger:
+                await self.bot.interaction_logger.log_appeal_reviewed(
+                    appeal_id=appeal_id,
+                    user_id=appeal["user_id"],
+                    action_type=appeal["action_type"],
+                    decision="denied",
+                    reviewed_by=reviewed_by,
+                )
+        except Exception as e:
+            logger.warning("Failed to log appeal denial to webhook", [
+                ("Error", str(e)),
+            ])
 
         return {"success": True}
 
