@@ -11,6 +11,8 @@ Available Commands:
 - /allow - Unban a user from a debate thread or all debates
 - /rename - Rename a locked debate thread with proper numbering
 - /cases - Look up a user's moderation case history
+- /close - Close a debate thread with a reason
+- /open - Reopen a closed debate thread with a reason
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
@@ -22,6 +24,8 @@ from src.commands.disallow import DisallowCog
 from src.commands.allow import AllowCog
 from src.commands.rename import RenameCog
 from src.commands.cases import CasesCog
+from src.commands.close import CloseCog
+from src.commands.open import OpenCog
 
 __all__ = [
     "ToggleCog",
@@ -30,4 +34,6 @@ __all__ = [
     "AllowCog",
     "RenameCog",
     "CasesCog",
+    "CloseCog",
+    "OpenCog",
 ]

@@ -1233,9 +1233,9 @@ class DebatesDatabase:
                 if cursor.fetchone():
                     return True
 
-                # Check karma table (they might have received karma)
+                # Check users table (they might have received karma)
                 cursor.execute(
-                    "SELECT 1 FROM karma WHERE user_id = ? AND karma != 0 LIMIT 1",
+                    "SELECT 1 FROM users WHERE user_id = ? AND total_karma != 0 LIMIT 1",
                     (user_id,)
                 )
                 if cursor.fetchone():
@@ -1970,7 +1970,7 @@ class DebatesDatabase:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("DELETE FROM leaderboard_thread WHERE id = 1")
-            cursor.execute("DELETE FROM month_embeds")
+            cursor.execute("DELETE FROM leaderboard_embeds")
             conn.commit()
             logger.info("📊 Cleared leaderboard thread and month embeds from database")
 
