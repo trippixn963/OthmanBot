@@ -26,6 +26,7 @@ from src.core.config import (
     DISCORD_API_DELAY, DISCORD_AUTOCOMPLETE_LIMIT, has_debates_management_role
 )
 from src.utils import get_developer_avatar, remove_reaction_safe
+from src.views.appeals import AppealButtonView
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -347,7 +348,14 @@ class DisallowCog(commands.Cog):
             developer_avatar_url = await get_developer_avatar(self.bot)
             embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
 
-            await interaction.response.send_message(embed=embed)
+            # Create appeal button view for the banned user
+            appeal_view = AppealButtonView(
+                action_type="disallow",
+                action_id=user.id,
+                user_id=user.id,
+            )
+
+            await interaction.response.send_message(embed=embed, view=appeal_view)
 
             # Get message ID for webhook link
             message_id = None
