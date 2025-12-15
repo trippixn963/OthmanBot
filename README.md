@@ -2,6 +2,8 @@
 
 <div align="center">
 
+![OthmanBot PFP](images/PFP.gif)
+
 ![Python](https://img.shields.io/badge/Python-3.12-blue.svg)
 ![Discord.py](https://img.shields.io/badge/Discord.py-2.3.2+-green.svg)
 ![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o--mini-orange.svg)
@@ -65,6 +67,24 @@ This bot was custom-built for **discord.gg/syria** and is provided as-is for edu
 - **Database Migrations** - Automatic schema updates on startup
 - **WAL Mode** - SQLite Write-Ahead Logging for data integrity
 - **Connection Recovery** - Auto-reconnect on database/Discord disconnects
+
+---
+
+## Examples
+
+<div align="center">
+
+### News Post
+![News Example](images/News-Example.png)
+
+*AI-generated bilingual news summary with discussion thread*
+
+### Karma Stats
+![Karma Example](images/Karma-Example.png)
+
+*User karma statistics with monthly and all-time rankings*
+
+</div>
 
 ---
 
@@ -133,6 +153,8 @@ MIT License - see [LICENSE](LICENSE) for details.
 ---
 
 <div align="center">
+
+![Developer Avatar](images/AUTHOR.jpg)
 
 **حَـــــنَّـــــا**
 
