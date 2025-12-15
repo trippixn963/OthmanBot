@@ -21,10 +21,7 @@ from .translate import translate_to_english
 from .helpers import (
     get_developer_avatar,
     safe_fetch_message,
-    safe_fetch_member,
-    safe_fetch_user,
     truncate,
-    truncate_for_log,
 )
 from .language import (
     is_primarily_arabic,
@@ -32,8 +29,6 @@ from .language import (
     is_english_only,
 )
 from .discord_rate_limit import (
-    RateLimitConfig,
-    with_rate_limit_retry,
     add_reactions_with_delay,
     send_message_with_retry,
     edit_message_with_retry,
@@ -58,18 +53,13 @@ __all__ = [
     "get_developer_avatar",
     # Safe fetch helpers
     "safe_fetch_message",
-    "safe_fetch_member",
-    "safe_fetch_user",
     # String truncation helpers
     "truncate",
-    "truncate_for_log",
     # Language utilities
     "is_primarily_arabic",
     "get_min_message_length",
     "is_english_only",
     # Discord rate limit utilities
-    "RateLimitConfig",
-    "with_rate_limit_retry",
     "add_reactions_with_delay",
     "send_message_with_retry",
     "edit_message_with_retry",
