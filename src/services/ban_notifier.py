@@ -17,8 +17,9 @@ from typing import TYPE_CHECKING, Optional, Union
 import discord
 
 from src.core.logger import logger
-from src.core.config import NY_TZ
+from src.core.config import NY_TZ, EmbedColors, EmbedIcons, EMBED_FOOTER_TEXT, EMBED_NO_VALUE
 from src.views.appeals import AppealButtonView
+from src.utils import get_ordinal, get_developer_avatar
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -28,10 +29,10 @@ if TYPE_CHECKING:
 # Constants
 # =============================================================================
 
-# Embed colors
-COLOR_BAN = discord.Color.red()
-COLOR_UNBAN = discord.Color.green()
-COLOR_EXPIRED = discord.Color.blue()
+# Embed colors - using centralized config
+COLOR_BAN = EmbedColors.BAN
+COLOR_UNBAN = EmbedColors.UNBAN
+COLOR_EXPIRED = EmbedColors.EXPIRED
 COLOR_DM_SUCCESS = discord.Color.teal()
 COLOR_DM_FAILED = discord.Color.orange()
 
@@ -102,8 +103,11 @@ class BanNotifier:
         ])
 
         try:
+            # Get developer avatar for footer
+            developer_avatar_url = await get_developer_avatar(self.bot)
+
             embed = discord.Embed(
-                title="You Have Been Banned from Debates",
+                title=f"{EmbedIcons.BAN} You Have Been Banned from Debates",
                 description=(
                     "You have been banned from participating in debate threads.\n"
                     "Please review the details below."
@@ -155,27 +159,46 @@ class BanNotifier:
                 )
 
             # Reason
-            if reason:
-                embed.add_field(
-                    name="Reason",
-                    value=reason[:1024],  # Discord field limit
-                    inline=False
-                )
-            else:
-                embed.add_field(
-                    name="Reason",
-                    value="_No reason provided_",
-                    inline=False
-                )
+            embed.add_field(
+                name="Reason",
+                value=reason[:1024] if reason else EMBED_NO_VALUE,
+                inline=False
+            )
 
             # Past ban history (only show if this isn't their first ban)
             if past_ban_count > 0:
                 # This is a repeat offender
-                ordinal = self._get_ordinal(past_ban_count + 1)
+                ordinal = get_ordinal(past_ban_count + 1)
                 embed.add_field(
-                    name="Ban History",
+                    name=f"{EmbedIcons.WARNING} Ban History",
                     value=f"This is your **{ordinal}** ban from debates.",
                     inline=True
+                )
+
+                # Add consequence warning for repeat offenders
+                if past_ban_count == 1:
+                    # 2nd ban
+                    consequence_warning = (
+                        "This is your second ban. Further violations may result in "
+                        "longer ban durations or permanent removal from debates."
+                    )
+                elif past_ban_count == 2:
+                    # 3rd ban
+                    consequence_warning = (
+                        "This is your third ban. Continued violations will likely "
+                        "result in permanent removal from debates."
+                    )
+                else:
+                    # 4th+ ban
+                    consequence_warning = (
+                        "You have been banned multiple times. Any further violations "
+                        "will result in permanent removal from debates."
+                    )
+
+                embed.add_field(
+                    name=f"{EmbedIcons.ALERT} Warning",
+                    value=consequence_warning,
+                    inline=False
                 )
 
             # Server join date (if available as Member)
@@ -186,10 +209,17 @@ class BanNotifier:
                     inline=True
                 )
 
-            # Footer with server info
+            # What's Next guidance
+            embed.add_field(
+                name="What's Next?",
+                value="You may appeal this decision using the button below.",
+                inline=False
+            )
+
+            # Footer with developer info
             embed.set_footer(
-                text="Syria Discord Server | Debates System",
-                icon_url=self.bot.user.display_avatar.url if self.bot.user else None
+                text=EMBED_FOOTER_TEXT,
+                icon_url=developer_avatar_url
             )
 
             # Create appeal button view
@@ -319,8 +349,11 @@ class BanNotifier:
         ])
 
         try:
+            # Get developer avatar for footer
+            developer_avatar_url = await get_developer_avatar(self.bot)
+
             embed = discord.Embed(
-                title="You Have Been Unbanned from Debates",
+                title=f"{EmbedIcons.UNBAN} You Have Been Unbanned from Debates",
                 description=(
                     "Your debate ban has been lifted!\n"
                     "You can now participate in debate threads again."
@@ -352,28 +385,28 @@ class BanNotifier:
                     inline=True
                 )
 
-            # Reason
+            # Reason/Note
             if reason:
                 embed.add_field(
-                    name="Note",
+                    name="Reason",
                     value=reason[:1024],
                     inline=False
                 )
 
-            # Reminder about rules
+            # What's Next guidance
             embed.add_field(
-                name="Reminder",
+                name="What's Next?",
                 value=(
-                    "Please make sure to follow the debate rules to avoid future bans.\n"
-                    "React with :white_check_mark: to the rules message to participate."
+                    "You can now participate in debates again.\n"
+                    "React with ✅ to the rules message if required."
                 ),
                 inline=False
             )
 
-            # Footer with server info
+            # Footer with developer info
             embed.set_footer(
-                text="Syria Discord Server | Debates System",
-                icon_url=self.bot.user.display_avatar.url if self.bot.user else None
+                text=EMBED_FOOTER_TEXT,
+                icon_url=developer_avatar_url
             )
 
             # Send DM
@@ -464,7 +497,10 @@ class BanNotifier:
         self,
         user_id: int,
         scope: str,
-        thread_id: Optional[int] = None
+        thread_id: Optional[int] = None,
+        reason: Optional[str] = None,
+        banned_by_id: Optional[int] = None,
+        created_at: Optional[str] = None,
     ) -> bool:
         """
         Send a DM notification when a user's ban expires automatically.
@@ -473,6 +509,9 @@ class BanNotifier:
             user_id: The user ID whose ban expired
             scope: Human-readable scope
             thread_id: The specific thread ID if not global
+            reason: Original ban reason
+            banned_by_id: ID of moderator who issued the ban
+            created_at: When the ban was created
 
         Returns:
             True if DM was sent successfully, False otherwise
@@ -506,8 +545,11 @@ class BanNotifier:
 
                 return False
 
+            # Get developer avatar for footer
+            developer_avatar_url = await get_developer_avatar(self.bot)
+
             embed = discord.Embed(
-                title="Your Debate Ban Has Expired",
+                title=f"{EmbedIcons.EXPIRED} Your Debate Ban Has Expired",
                 description=(
                     "Your temporary ban from debates has expired!\n"
                     "You can now participate in debate threads again."
@@ -540,20 +582,60 @@ class BanNotifier:
                     inline=True
                 )
 
-            # Reminder about rules
+            # Original ban details section
+            # Add banned by (fetch moderator name if possible)
+            if banned_by_id:
+                try:
+                    banned_by_user = await self.bot.fetch_user(banned_by_id)
+                    banned_by_display = banned_by_user.display_name
+                except Exception:
+                    banned_by_display = f"User {banned_by_id}"
+                embed.add_field(
+                    name="Originally Banned By",
+                    value=banned_by_display,
+                    inline=True
+                )
+
+            # When ban was created
+            if created_at:
+                try:
+                    # Parse the timestamp string from SQLite
+                    from datetime import datetime as dt
+                    created_dt = dt.fromisoformat(created_at.replace("Z", "+00:00"))
+                    embed.add_field(
+                        name="Banned On",
+                        value=f"<t:{int(created_dt.timestamp())}:F>",
+                        inline=True
+                    )
+                except Exception:
+                    embed.add_field(
+                        name="Banned On",
+                        value=created_at,
+                        inline=True
+                    )
+
+            # Original ban reason
+            if reason:
+                embed.add_field(
+                    name="Original Reason",
+                    value=reason[:1024],
+                    inline=False
+                )
+
+            # What's Next guidance
             embed.add_field(
-                name="Reminder",
+                name="What's Next?",
                 value=(
-                    "Please make sure to follow the debate rules to avoid future bans.\n"
-                    "React with :white_check_mark: to the rules message to participate."
+                    "You can now participate in debates again.\n"
+                    "Please follow the rules to avoid future bans."
                 ),
                 inline=False
             )
 
-            # Footer with server info
+            # Footer with developer info
             embed.set_footer(
-                text="Syria Discord Server | Debates System",
-                icon_url=self.bot.user.display_avatar.url if self.bot.user else None
+                text=EMBED_FOOTER_TEXT,
+                icon_url=developer_avatar_url
             )
 
             # Send DM
@@ -702,22 +784,6 @@ class BanNotifier:
             return "`All Debates`"
         else:
             return f"`{scope}`"
-
-    def _get_ordinal(self, n: int) -> str:
-        """
-        Convert a number to its ordinal string (1st, 2nd, 3rd, etc.).
-
-        Args:
-            n: The number to convert
-
-        Returns:
-            Ordinal string (e.g., "1st", "2nd", "3rd", "4th")
-        """
-        if 11 <= (n % 100) <= 13:
-            suffix = "th"
-        else:
-            suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-        return f"{n}{suffix}"
 
 
 # =============================================================================

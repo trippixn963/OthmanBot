@@ -276,7 +276,9 @@ class InteractionLogger:
         thread_id: Optional[int] = None,
         guild_id: Optional[int] = None,
         channel_id: Optional[int] = None,
-        message_id: Optional[int] = None
+        message_id: Optional[int] = None,
+        duration: Optional[str] = None,
+        reason: Optional[str] = None
     ) -> None:
         """Log when a user is banned from debates."""
         now_est = datetime.now(NY_TZ)
@@ -292,6 +294,9 @@ class InteractionLogger:
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
         embed.add_field(name="Scope", value=f"`{scope}`", inline=True)
 
+        if duration:
+            embed.add_field(name="Duration", value=f"`{duration}`", inline=True)
+
         if thread_id:
             embed.add_field(name="Thread ID", value=f"`{thread_id}`", inline=True)
 
@@ -299,6 +304,10 @@ class InteractionLogger:
         if guild_id and channel_id and message_id:
             message_link = f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
             embed.add_field(name="Message", value=f"[Jump to Message]({message_link})", inline=True)
+
+        if reason:
+            reason_display = reason[:500] + "..." if len(reason) > 500 else reason
+            embed.add_field(name="Reason", value=reason_display, inline=False)
 
         await self._send_log(embed)
 
@@ -1430,6 +1439,52 @@ class InteractionLogger:
         embed.add_field(name="Action ID", value=f"`{action_id}`", inline=True)
         embed.add_field(name="Source", value=f"`{source}`", inline=True)
         embed.add_field(name="From DM", value="`Yes`" if is_dm else "`No`", inline=True)
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+
+        await self._send_log(embed)
+
+    async def log_appeal_rejected_wrong_user(
+        self,
+        user: discord.User,
+        expected_user_id: int,
+        action_type: str,
+        action_id: int,
+        source: str,
+        is_dm: bool,
+    ) -> None:
+        """
+        Log when a user clicks an appeal button that's not theirs.
+
+        Args:
+            user: The user who clicked the button
+            expected_user_id: The user ID who should have clicked
+            action_type: Type of action being appealed ('disallow' or 'close')
+            action_id: ID of the action being appealed
+            source: Where the button was clicked from (DM or channel name)
+            is_dm: Whether clicked from DM
+        """
+        now = datetime.now(NY_TZ)
+        time_str = now.strftime("%I:%M %p EST")
+
+        action_labels = {
+            "disallow": "Ban Appeal",
+            "close": "Thread Close Appeal",
+        }
+        action_label = action_labels.get(action_type, action_type.title())
+
+        embed = discord.Embed(
+            title=f"🚫 Appeal Button Rejected",
+            description=f"User tried to appeal a **{action_label}** that wasn't theirs",
+            color=COLOR_ERROR,
+        )
+
+        embed.set_thumbnail(url=user.display_avatar.url)
+
+        embed.add_field(name="Clicked By", value=f"{user.mention}\n`{user.id}`", inline=True)
+        embed.add_field(name="Intended For", value=f"<@{expected_user_id}>\n`{expected_user_id}`", inline=True)
+        embed.add_field(name="Action Type", value=f"`{action_type}`", inline=True)
+        embed.add_field(name="Action ID", value=f"`{action_id}`", inline=True)
+        embed.add_field(name="Source", value=f"`{source}`", inline=True)
         embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
 
         await self._send_log(embed)

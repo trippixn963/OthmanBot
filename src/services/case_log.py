@@ -553,6 +553,21 @@ Severe/Habitual          →  Permanent
                 name=thread_name[:100],  # Discord limit
                 embeds=[user_embed, ban_embed]
             )
+
+            # Pin the first message (user profile) for easy reference
+            try:
+                if thread_with_msg.message:
+                    await thread_with_msg.message.pin()
+                    logger.info("Pinned User Profile In Case Thread", [
+                        ("Case ID", str(case_id)),
+                        ("User", f"{user.display_name} ({user.id})"),
+                    ])
+            except Exception as pin_error:
+                logger.warning("Failed To Pin User Profile", [
+                    ("Case ID", str(case_id)),
+                    ("Error", str(pin_error)),
+                ])
+
             return thread_with_msg.thread
         except Exception as e:
             logger.error("Failed To Create Case Thread", [

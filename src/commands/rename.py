@@ -33,7 +33,6 @@ from src.utils import (
     send_message_with_retry,
     add_reactions_with_delay,
     delete_message_safe,
-    send_webhook_alert_safe,
 )
 from src.handlers.debates import get_next_debate_number, is_english_only, PARTICIPATE_EMOJI
 from src.services.debates.tags import detect_debate_tags
@@ -140,19 +139,35 @@ class RenameCog(commands.Cog):
             )
             return
 
+        # Defer EARLY since searching history can take time
+        await interaction.response.defer()
+
+        # Unlock/unarchive thread if needed before searching history
+        if thread.locked or thread.archived:
+            try:
+                await thread.edit(locked=False, archived=False)
+            except Exception as e:
+                logger.warning("/rename Failed to Unlock Thread", [
+                    ("Thread", f"{thread.name} ({thread.id})"),
+                    ("Error", str(e)),
+                ])
+
         # If no title provided, try to extract suggested title from bot's moderation message
         if title is None:
-            async for message in thread.history(limit=SUGGESTED_TITLE_SEARCH_LIMIT):
-                if message.author.id == self.bot.user.id and "Suggested Title:" in message.content:
-                    # Extract suggested title from message using more robust parsing
-                    lines = message.content.split("\n")
-                    for line in lines:
-                        # Handle various formatting: "**Suggested Title:**", "Suggested Title:", etc.
-                        if "Suggested Title:" in line:
-                            # Remove markdown formatting and extract title
-                            title = line.replace("**Suggested Title:**", "").replace("Suggested Title:", "").strip()
+            try:
+                async with asyncio.timeout(10):
+                    async for message in thread.history(limit=SUGGESTED_TITLE_SEARCH_LIMIT):
+                        if message.author.id == self.bot.user.id and "Suggested Title:" in message.content:
+                            lines = message.content.split("\n")
+                            for line in lines:
+                                if "Suggested Title:" in line:
+                                    title = line.replace("**Suggested Title:**", "").replace("Suggested Title:", "").strip()
+                                    break
                             break
-                    break
+            except asyncio.TimeoutError:
+                logger.warning("/rename History Search Timed Out", [
+                    ("Thread", f"{thread.name} ({thread.id})"),
+                ])
 
         if title is None:
             logger.warning("/rename Command Failed - No Title Found", [
@@ -160,7 +175,7 @@ class RenameCog(commands.Cog):
                 ("Thread", f"{thread.name} ({thread.id})"),
                 ("Reason", "No title provided and no suggested title in thread"),
             ])
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "No title provided and couldn't find a suggested title in this thread.\n"
                 "Please provide a title: `/rename title:Your English Title Here`",
                 ephemeral=True
@@ -175,33 +190,24 @@ class RenameCog(commands.Cog):
                 ("Provided Title", title),
                 ("Reason", "Title contains non-English characters"),
             ])
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "The title must be in English only. Please provide an English title.",
                 ephemeral=True
             )
             return
 
-        # Defer response since this might take a moment
-        await interaction.response.defer()
-
         try:
             # Get next debate number
-            debate_number = await get_next_debate_number()
+            debate_number = await get_next_debate_number(self.bot)
 
             # Calculate available space for title (Discord limit minus number prefix)
             number_prefix = f"{debate_number} | "
             available_length = DISCORD_THREAD_NAME_LIMIT - len(number_prefix)
 
             # Truncate title if needed to fit Discord's thread name limit
-            original_title = title
             if len(title) > available_length:
                 truncate_length = available_length - len(TITLE_TRUNCATION_SUFFIX)
                 title = title[:truncate_length] + TITLE_TRUNCATION_SUFFIX
-                logger.info("Title Truncated For Discord Limit", [
-                    ("Original Length", str(len(original_title))),
-                    ("Truncated Length", str(len(title))),
-                    ("Max Allowed", str(available_length)),
-                ])
 
             # Create new title with number prefix
             new_title = f"{number_prefix}{title}"

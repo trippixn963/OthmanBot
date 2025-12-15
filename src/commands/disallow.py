@@ -66,6 +66,10 @@ def parse_duration(duration_str: str) -> Optional[timedelta]:
     value = int(match.group(1))
     unit = match.group(2)
 
+    # Validate positive duration
+    if value <= 0:
+        raise ValueError("Duration must be a positive number")
+
     if unit in ("m", "min", "mins", "minute", "minutes"):
         return timedelta(minutes=value)
     elif unit in ("h", "hr", "hrs", "hour", "hours"):
@@ -372,7 +376,9 @@ class DisallowCog(commands.Cog):
                         user, interaction.user, scope, target_thread_id,
                         guild_id=interaction.guild.id if interaction.guild else None,
                         channel_id=interaction.channel.id if interaction.channel else None,
-                        message_id=message_id
+                        message_id=message_id,
+                        duration=duration_display,
+                        reason=reason
                     )
             except Exception as e:
                 logger.warning("Failed to log disallow to webhook", [

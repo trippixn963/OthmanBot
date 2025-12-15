@@ -45,10 +45,13 @@ This bot was custom-built for **discord.gg/syria** and is provided as-is for edu
 
 ### Moderation
 - **Case Logging** - All ban/unban actions tracked per-user in dedicated forum threads
+- **Appeal System** - Users can appeal disallows and thread closures via DM button
 - **Debate Bans** - Ban users from specific threads or all debates
+- **Thread Closure** - Close debates with reason, auto-DM to thread owner
 - **Auto-Unban** - Timed bans with automatic expiry
 - **Audit Trail** - All moderation actions logged for accountability
 - **Ban Evasion Detection** - Flags new accounts posting in debates
+- **Non-English Detection** - Auto-detects Arabic titles and notifies moderators
 
 ### Monitoring & Reliability
 - **Daily/Weekly Stats** - Comprehensive activity reports via webhook
@@ -83,7 +86,10 @@ This bot was custom-built for **discord.gg/syria** and is provided as-is for edu
 | `/karma [user]` | View karma stats for yourself or another user |
 | `/disallow <user>` | Ban user from debates (moderator only) |
 | `/allow <user>` | Unban user from debates (moderator only) |
-| `/rename <thread_id> <new_name>` | Rename a debate thread (moderator only) |
+| `/close [reason]` | Close the current debate thread (moderator only) |
+| `/open` | Reopen a closed debate thread (moderator only) |
+| `/rename <new_name>` | Rename a debate thread (moderator only) |
+| `/cases [search]` | Search moderation cases by user or case ID (moderator only) |
 | `/toggle` | Enable/disable bot posting (developer only) |
 
 ---
@@ -111,7 +117,10 @@ src/
 - **votes** - Individual vote records with karma tracking
 - **debate_participation** - User activity per thread
 - **debate_bans** - Ban records with expiry
-- **case_logs** - Moderation case tracking
+- **ban_history** - Historical record of all bans
+- **closure_history** - Thread closure records with reopen tracking
+- **case_logs** - Moderation case tracking per user
+- **appeals** - User appeals for disallows and closures
 - **audit_log** - All database changes for accountability
 - **user_streaks** - Daily participation streaks
 
