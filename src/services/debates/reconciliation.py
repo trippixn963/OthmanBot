@@ -105,8 +105,8 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int | None = 7) -> dict:
 
         for thread in threads_to_scan:
             try:
-                # Ensure starter message has vote reactions
-                rate_limit_delay = await _ensure_starter_reactions(thread, stats)
+                # Ensure starter message has vote reactions (in correct order)
+                rate_limit_delay = await _ensure_starter_reactions(thread, stats, bot)
 
                 # If rate limited, back off before continuing
                 if rate_limit_delay > 0:
@@ -181,13 +181,18 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int | None = 7) -> dict:
     return stats
 
 
-async def _ensure_starter_reactions(thread: discord.Thread, stats: dict) -> float:
+async def _ensure_starter_reactions(thread: discord.Thread, stats: dict, bot: "OthmanBot" = None) -> float:
     """
-    Ensure the starter message has upvote and downvote reactions.
+    Ensure the starter message has upvote and downvote reactions in correct order.
+
+    Checks for:
+    1. Missing reactions - adds them
+    2. Wrong order (downvote before upvote) - removes and re-adds in correct order
 
     Args:
         thread: Discord thread to check
         stats: Stats dict to update
+        bot: Bot instance (needed to remove bot's own reactions)
 
     Returns:
         Additional delay needed if rate limited (0.0 if not)
@@ -198,16 +203,67 @@ async def _ensure_starter_reactions(thread: discord.Thread, stats: dict) -> floa
         # Fetch starter message (same ID as thread)
         starter_message = await thread.fetch_message(thread.id)
 
-        # Check existing reactions
+        # Check existing reactions and their order
         has_upvote = False
         has_downvote = False
+        upvote_index = -1
+        downvote_index = -1
 
-        for reaction in starter_message.reactions:
+        for i, reaction in enumerate(starter_message.reactions):
             emoji_str = str(reaction.emoji)
             if emoji_str == UPVOTE_EMOJI:
                 has_upvote = True
+                upvote_index = i
             elif emoji_str == DOWNVOTE_EMOJI:
                 has_downvote = True
+                downvote_index = i
+
+        # Check if order is wrong (downvote appears before upvote)
+        order_wrong = (has_upvote and has_downvote and downvote_index < upvote_index)
+
+        # If order is wrong and we have bot reference, fix it
+        if order_wrong and bot and bot.user:
+            try:
+                logger.info("Fixing Reaction Order", [
+                    ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+                ])
+                # Remove bot's reactions
+                try:
+                    await starter_message.remove_reaction(UPVOTE_EMOJI, bot.user)
+                    await asyncio.sleep(REACTION_DELAY)
+                except discord.HTTPException:
+                    pass
+                try:
+                    await starter_message.remove_reaction(DOWNVOTE_EMOJI, bot.user)
+                    await asyncio.sleep(REACTION_DELAY)
+                except discord.HTTPException:
+                    pass
+
+                # Re-add in correct order
+                await starter_message.add_reaction(UPVOTE_EMOJI)
+                await asyncio.sleep(REACTION_DELAY)
+                await starter_message.add_reaction(DOWNVOTE_EMOJI)
+                await asyncio.sleep(REACTION_DELAY)
+
+                stats["reactions_fixed"] += 1
+                logger.info("Fixed Reaction Order", [
+                    ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+                ])
+                return rate_limit_delay
+
+            except discord.HTTPException as e:
+                if e.status == 429:
+                    retry_after = getattr(e, 'retry_after', RATE_LIMIT_BASE_DELAY)
+                    rate_limit_delay = max(rate_limit_delay, retry_after)
+                    logger.warning("Rate Limited Fixing Reaction Order", [
+                        ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+                        ("Retry After", f"{retry_after:.1f}s"),
+                    ])
+                else:
+                    logger.warning("Failed To Fix Reaction Order", [
+                        ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+                        ("Error", str(e)),
+                    ])
 
         # Add missing reactions with rate limit handling
         if not has_upvote:

@@ -173,19 +173,19 @@ class BackupScheduler:
         self._task: Optional[asyncio.Task] = None
         self._running = False
 
-    async def start(self, run_immediately: bool = True) -> None:
+    async def start(self, run_immediately: bool = False) -> None:
         """
         Start the backup scheduler.
 
         Args:
-            run_immediately: If True, create a backup immediately on start
+            run_immediately: If True, create a backup immediately on start (default: False)
         """
         if self._running:
             return
 
         self._running = True
 
-        # Run immediate backup on startup
+        # Run immediate backup on startup (disabled by default to avoid clutter)
         if run_immediately:
             await asyncio.to_thread(create_backup)
             await asyncio.to_thread(cleanup_old_backups)
