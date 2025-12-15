@@ -267,8 +267,27 @@ class CloseCog(commands.Cog):
                         ("Error", str(e)),
                     ])
 
-            # Send DM notification to owner with appeal button
+            # Record to closure history and send DM notification
+            past_closure_count = 0
             if owner:
+                # Add to closure history
+                try:
+                    if self.bot.debates_service and self.bot.debates_service.db:
+                        self.bot.debates_service.db.add_to_closure_history(
+                            user_id=owner.id,
+                            thread_id=thread.id,
+                            thread_name=original_name,
+                            closed_by=closed_by.id,
+                            reason=reason
+                        )
+                        # Get count (subtract 1 since we just added this one)
+                        past_closure_count = max(0, self.bot.debates_service.db.get_user_closure_count(owner.id) - 1)
+                except Exception as e:
+                    logger.warning("Failed to record closure to history", [
+                        ("Error", str(e)),
+                    ])
+
+                # Send DM notification to owner with appeal button
                 try:
                     await self._send_close_notification_dm(
                         owner=owner,
@@ -276,6 +295,7 @@ class CloseCog(commands.Cog):
                         thread=thread,
                         original_name=original_name,
                         reason=reason,
+                        past_closure_count=past_closure_count,
                     )
                 except Exception as e:
                     logger.warning("Failed to send close notification DM", [
@@ -297,6 +317,7 @@ class CloseCog(commands.Cog):
         thread: discord.Thread,
         original_name: str,
         reason: str,
+        past_closure_count: int = 0,
     ) -> bool:
         """
         Send DM notification to thread owner when their debate is closed.
@@ -307,6 +328,7 @@ class CloseCog(commands.Cog):
             thread: The closed thread
             original_name: Original thread name before [CLOSED] prefix
             reason: Reason for closing
+            past_closure_count: Number of previous closures for this user
 
         Returns:
             True if DM sent successfully, False otherwise
@@ -352,6 +374,29 @@ class CloseCog(commands.Cog):
                 inline=False,
             )
 
+            # Past closure history (only show if not first closure)
+            if past_closure_count > 0:
+                ordinal = self._get_ordinal(past_closure_count + 1)
+                embed.add_field(
+                    name="Closure History",
+                    value=f"This is your **{ordinal}** debate closure.",
+                    inline=True,
+                )
+
+            # Server join date (if owner is a Member in any guild)
+            # Try to get member object from the thread's guild
+            try:
+                if thread.guild:
+                    member = thread.guild.get_member(owner.id)
+                    if member and member.joined_at:
+                        embed.add_field(
+                            name="Member Since",
+                            value=f"<t:{int(member.joined_at.timestamp())}:D>",
+                            inline=True,
+                        )
+            except Exception:
+                pass  # Silently ignore if we can't get join date
+
             embed.set_footer(
                 text="Syria Discord Server | Debates System",
                 icon_url=self.bot.user.display_avatar.url if self.bot.user else None,
@@ -386,6 +431,22 @@ class CloseCog(commands.Cog):
                 ("Error", str(e)),
             ])
             return False
+
+    def _get_ordinal(self, n: int) -> str:
+        """
+        Convert a number to its ordinal string (1st, 2nd, 3rd, etc.).
+
+        Args:
+            n: The number to convert
+
+        Returns:
+            Ordinal string (e.g., "1st", "2nd", "3rd", "4th")
+        """
+        if 11 <= (n % 100) <= 13:
+            suffix = "th"
+        else:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+        return f"{n}{suffix}"
 
 
 # =============================================================================

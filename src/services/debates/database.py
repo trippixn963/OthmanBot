@@ -205,7 +205,7 @@ class DebatesDatabase:
                     ])
 
     # Current schema version - increment when adding migrations
-    SCHEMA_VERSION = 10
+    SCHEMA_VERSION = 11
 
     # Valid table names for SQL injection prevention
     VALID_TABLES = frozenset({
@@ -583,6 +583,26 @@ class DebatesDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_ban_history_user ON ban_history(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_ban_history_time ON ban_history(created_at)")
             logger.info("Migration 10: Added ban_history table")
+            migrations_run += 1
+
+        # Migration 11: Add closure_history table for tracking thread closures
+        if current_version < 11:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS closure_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    thread_id INTEGER NOT NULL,
+                    thread_name TEXT,
+                    closed_by INTEGER NOT NULL,
+                    reason TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    reopened_at TIMESTAMP,
+                    reopened_by INTEGER
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_closure_history_user ON closure_history(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_closure_history_time ON closure_history(created_at)")
+            logger.info("Migration 11: Added closure_history table")
             migrations_run += 1
 
         # Update schema version
@@ -1897,6 +1917,103 @@ class DebatesDatabase:
                     "removed_at": row[7],
                     "removed_by": row[8],
                     "removal_reason": row[9]
+                }
+                for row in cursor.fetchall()
+            ]
+
+    # -------------------------------------------------------------------------
+    # Closure History Operations
+    # -------------------------------------------------------------------------
+
+    def add_to_closure_history(
+        self,
+        user_id: int,
+        thread_id: int,
+        thread_name: str,
+        closed_by: int,
+        reason: Optional[str] = None
+    ) -> None:
+        """
+        Add a closure record to the permanent closure_history table.
+
+        Args:
+            user_id: Thread owner who had their thread closed
+            thread_id: The closed thread ID
+            thread_name: Thread name at time of closure
+            closed_by: Moderator who closed it
+            reason: Closure reason
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    """INSERT INTO closure_history
+                       (user_id, thread_id, thread_name, closed_by, reason)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (user_id, thread_id, thread_name, closed_by, reason)
+                )
+                conn.commit()
+            except Exception as e:
+                logger.debug("Failed to add closure to history", [
+                    ("User ID", str(user_id)),
+                    ("Thread ID", str(thread_id)),
+                    ("Error", str(e)),
+                ])
+
+    def get_user_closure_count(self, user_id: int) -> int:
+        """
+        Get the total number of times a user has had threads closed.
+
+        Args:
+            user_id: User ID to check
+
+        Returns:
+            Total closure count across all time
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM closure_history WHERE user_id = ?",
+                (user_id,)
+            )
+            result = cursor.fetchone()
+            return result[0] if result else 0
+
+    def get_user_closure_history(self, user_id: int, limit: int = 10) -> list[dict]:
+        """
+        Get a user's thread closure history.
+
+        Args:
+            user_id: User ID to check
+            limit: Maximum number of records to return
+
+        Returns:
+            List of closure history records, most recent first
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, thread_id, thread_name, closed_by, reason,
+                          created_at, reopened_at, reopened_by
+                   FROM closure_history
+                   WHERE user_id = ?
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (user_id, limit)
+            )
+            return [
+                {
+                    "id": row[0],
+                    "thread_id": row[1],
+                    "thread_name": row[2],
+                    "closed_by": row[3],
+                    "reason": row[4],
+                    "created_at": row[5],
+                    "reopened_at": row[6],
+                    "reopened_by": row[7]
                 }
                 for row in cursor.fetchall()
             ]
