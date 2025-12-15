@@ -95,7 +95,12 @@ from src.services.daily_stats import DailyStatsService
 from src.services.case_log import CaseLogService
 from src.services.ban_notifier import BanNotifier
 from src.services.appeal_service import AppealService
-from src.views.appeals import AppealButtonView, AppealReviewView
+from src.views.appeals import (
+    AppealButtonView,
+    AppealReviewView,
+    handle_appeal_button_interaction,
+    handle_review_button_interaction,
+)
 
 
 # =============================================================================
@@ -388,6 +393,29 @@ class OthmanBot(commands.Bot):
         if self.daily_stats:
             self.daily_stats.record_reconnect()
         logger.info("Bot Connection Resumed")
+
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        """Event handler for all interactions.
+
+        DESIGN: Handles persistent button clicks for appeal system.
+        Discord's add_view() doesn't work well with dynamic custom_ids,
+        so we catch button clicks here and route them manually.
+        """
+        # Only handle component (button) interactions
+        if interaction.type != discord.InteractionType.component:
+            return
+
+        custom_id = interaction.data.get("custom_id", "") if interaction.data else ""
+
+        # Route appeal button clicks
+        if custom_id.startswith("appeal:"):
+            await handle_appeal_button_interaction(interaction, custom_id)
+            return
+
+        # Route appeal review button clicks
+        if custom_id.startswith("appeal_review:"):
+            await handle_review_button_interaction(interaction, custom_id)
+            return
 
     async def close(self) -> None:
         """Cleanup when bot is shutting down."""
