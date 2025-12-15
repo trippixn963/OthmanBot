@@ -58,63 +58,6 @@ async def safe_fetch_message(
         return None
 
 
-async def safe_fetch_member(
-    guild: discord.Guild,
-    user_id: int
-) -> Optional[discord.Member]:
-    """
-    Safely fetch a guild member with proper error handling.
-
-    Args:
-        guild: The guild to fetch from
-        user_id: The user ID to fetch
-
-    Returns:
-        The member if found, None otherwise
-    """
-    try:
-        return await guild.fetch_member(user_id)
-    except discord.NotFound:
-        return None
-    except discord.Forbidden:
-        logger.warning("No Permission To Fetch Member", [
-            ("User ID", str(user_id)),
-        ])
-        return None
-    except discord.HTTPException as e:
-        logger.warning("HTTP Error Fetching Member", [
-            ("User ID", str(user_id)),
-            ("Error", str(e)),
-        ])
-        return None
-
-
-async def safe_fetch_user(
-    bot: "OthmanBot",
-    user_id: int
-) -> Optional[discord.User]:
-    """
-    Safely fetch a user with proper error handling.
-
-    Args:
-        bot: The bot instance
-        user_id: The user ID to fetch
-
-    Returns:
-        The user if found, None otherwise
-    """
-    try:
-        return await bot.fetch_user(user_id)
-    except discord.NotFound:
-        return None
-    except discord.HTTPException as e:
-        logger.warning("HTTP Error Fetching User", [
-            ("User ID", str(user_id)),
-            ("Error", str(e)),
-        ])
-        return None
-
-
 # =============================================================================
 # Bot Helpers
 # =============================================================================
@@ -172,27 +115,8 @@ def truncate(text: str, max_length: int, ellipsis: str = "...") -> str:
     return text[:max_length - len(ellipsis)] + ellipsis
 
 
-def truncate_for_log(text: str, max_length: int = 30) -> str:
-    """
-    Truncate text for logging purposes (no ellipsis).
-
-    Args:
-        text: The text to truncate
-        max_length: Maximum length (default: 30)
-
-    Returns:
-        Truncated text without ellipsis
-    """
-    if not text:
-        return ""
-    return text[:max_length]
-
-
 __all__ = [
     "get_developer_avatar",
     "safe_fetch_message",
-    "safe_fetch_member",
-    "safe_fetch_user",
     "truncate",
-    "truncate_for_log",
 ]
