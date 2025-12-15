@@ -157,10 +157,24 @@ class KarmaCog(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
+        # Get the message ID for direct linking in webhook
+        message_id = None
+        try:
+            original_response = await interaction.original_response()
+            message_id = original_response.id
+            logger.debug("Got message ID for webhook", [
+                ("Message ID", str(message_id)),
+            ])
+        except Exception as e:
+            logger.debug("Could not get original response", [
+                ("Error", str(e)),
+            ])
+
         # Log success to webhook
         if self.bot.interaction_logger:
             await self.bot.interaction_logger.log_command(
                 interaction, "karma", success=True,
+                message_id=message_id,
                 target=target.display_name, karma=karma_data.total_karma, rank=f"#{rank}"
             )
 

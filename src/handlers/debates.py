@@ -573,7 +573,9 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                 # Log to webhook
                 if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
                     await bot.interaction_logger.log_banned_user_message_deleted(
-                        message.author, message.channel.name, content_preview
+                        message.author, message.channel.name, content_preview,
+                        guild_id=message.guild.id if message.guild else None,
+                        thread_id=message.channel.id
                     )
 
                 # Send ephemeral-style DM to user with rate limit handling
@@ -653,7 +655,9 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                                 # Log to webhook
                                 if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
                                     await bot.interaction_logger.log_access_blocked(
-                                        message.author, message.channel.name, "No participation react"
+                                        message.author, message.channel.name, "No participation react",
+                                        guild_id=message.guild.id if message.guild else None,
+                                        thread_id=message.channel.id
                                     )
                             except discord.Forbidden:
                                 # User has DMs disabled, send a temporary message in the channel
@@ -671,7 +675,9 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                                 # Log to webhook
                                 if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
                                     await bot.interaction_logger.log_access_blocked(
-                                        message.author, message.channel.name, "No participation react (DMs disabled)"
+                                        message.author, message.channel.name, "No participation react (DMs disabled)",
+                                        guild_id=message.guild.id if message.guild else None,
+                                        thread_id=message.channel.id
                                     )
                         except discord.HTTPException as e:
                             logger.warning("🔐 Failed To Enforce Access Control", [
@@ -722,7 +728,9 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
             # Log to webhook
             if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
                 await bot.interaction_logger.log_vote_reactions_added(
-                    message.author, message.channel.name, message.id, len(message.content)
+                    message.author, message.channel.name, message.id, len(message.content),
+                    guild_id=message.guild.id if message.guild else None,
+                    thread_id=message.channel.id
                 )
         except discord.HTTPException as e:
             logger.warning("🗳️ Failed To Add Vote Reactions", [
@@ -859,7 +867,8 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                 # Log to webhook
                 if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
                     await bot.interaction_logger.log_non_english_title_blocked(
-                        starter_message.author, original_title, suggested_title, thread.id
+                        starter_message.author, original_title, suggested_title, thread.id,
+                        guild_id=thread.guild.id if thread.guild else None
                     )
 
             except discord.HTTPException as e:
@@ -1090,7 +1099,9 @@ async def on_debate_reaction_add(
                 # Log to webhook
                 if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
                     await bot.interaction_logger.log_self_vote_blocked(
-                        user, message.channel.name, vote_type
+                        user, message.channel.name, vote_type,
+                        guild_id=message.guild.id if message.guild else None,
+                        thread_id=message.channel.id
                     )
             except discord.HTTPException as e:
                 logger.warning("🗳️ Failed To Remove Self-Vote Reaction", [
@@ -1147,7 +1158,9 @@ async def on_debate_reaction_add(
         # Log karma change to webhook
         if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
             await bot.interaction_logger.log_karma_change(
-                message.author, user, change, karma_data.total_karma, message.channel.name
+                message.author, user, change, karma_data.total_karma, message.channel.name,
+                guild_id=message.guild.id if message.guild else None,
+                thread_id=message.channel.id
             )
 
         # Track stats
@@ -1236,7 +1249,9 @@ async def on_debate_reaction_remove(
                 change = -1 if emoji == UPVOTE_EMOJI else 1
                 await bot.interaction_logger.log_karma_change(
                     reaction.message.author, user, change,
-                    karma_data.total_karma, reaction.message.channel.name
+                    karma_data.total_karma, reaction.message.channel.name,
+                    guild_id=reaction.message.guild.id if reaction.message.guild else None,
+                    thread_id=reaction.message.channel.id
                 )
         except Exception as e:
             logger.warning("Failed to log vote removal to webhook", [

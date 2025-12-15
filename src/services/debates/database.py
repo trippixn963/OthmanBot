@@ -1538,6 +1538,7 @@ class DebatesDatabase:
         Returns:
             True if ban was added, False if already exists
         """
+        success = False
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -1548,17 +1549,7 @@ class DebatesDatabase:
                     (user_id, thread_id, banned_by, reason, expires_at)
                 )
                 conn.commit()
-
-                # Audit log the ban
-                self.audit_log(
-                    action='ban_add',
-                    actor_id=banned_by,
-                    target_id=user_id,
-                    target_type='user',
-                    new_value=str(thread_id) if thread_id else 'all',
-                    metadata={'reason': reason, 'expires_at': expires_at}
-                )
-                return True
+                success = True
             except sqlite3.IntegrityError as e:
                 # User already banned (unique constraint violation)
                 logger.debug("Ban Already Exists (Integrity Constraint)", [
@@ -1566,14 +1557,24 @@ class DebatesDatabase:
                     ("Thread ID", str(thread_id) if thread_id else "all"),
                     ("Error", str(e)),
                 ])
-                return False
             except sqlite3.OperationalError as e:
                 logger.warning("Database Operational Error In add_debate_ban", [
                     ("User ID", str(user_id)),
                     ("Thread ID", str(thread_id) if thread_id else "all"),
                     ("Error", str(e)),
                 ])
-                return False
+
+        # Audit log OUTSIDE the lock to prevent deadlock
+        if success:
+            self.audit_log(
+                action='ban_add',
+                actor_id=banned_by,
+                target_id=user_id,
+                target_type='user',
+                new_value=str(thread_id) if thread_id else 'all',
+                metadata={'reason': reason, 'expires_at': expires_at}
+            )
+        return success
 
     async def add_debate_ban_async(
         self,
@@ -1616,15 +1617,15 @@ class DebatesDatabase:
             removed = cursor.rowcount > 0
             conn.commit()
 
-            # Audit log the unban
-            if removed:
-                self.audit_log(
-                    action='ban_remove',
-                    target_id=user_id,
-                    target_type='user',
-                    old_value=str(thread_id) if thread_id else 'all',
-                )
-            return removed
+        # Audit log OUTSIDE the lock to prevent deadlock
+        if removed:
+            self.audit_log(
+                action='ban_remove',
+                target_id=user_id,
+                target_type='user',
+                old_value=str(thread_id) if thread_id else 'all',
+            )
+        return removed
 
     async def remove_debate_ban_async(self, user_id: int, thread_id: Optional[int]) -> bool:
         """Async wrapper for remove_debate_ban - runs in thread pool."""
@@ -2543,14 +2544,14 @@ class DebatesDatabase:
                 ("Thread ID", str(thread_id)),
             ])
 
-            # Audit log the case creation
-            self.audit_log(
-                action='case_create',
-                target_id=user_id,
-                target_type='user',
-                new_value=str(case_id),
-                metadata={'thread_id': thread_id}
-            )
+        # Audit log OUTSIDE the lock to prevent deadlock
+        self.audit_log(
+            action='case_create',
+            target_id=user_id,
+            target_type='user',
+            new_value=str(case_id),
+            metadata={'thread_id': thread_id}
+        )
 
     def get_next_case_id(self) -> int:
         """
@@ -2615,6 +2616,7 @@ class DebatesDatabase:
         Args:
             value: The new counter value
         """
+        # Get old value and update counter within lock
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -2633,13 +2635,14 @@ class DebatesDatabase:
                 ("New Value", str(value)),
             ])
 
-            # Audit log the counter change
-            self.audit_log(
-                action='counter_set',
-                target_type='debate_counter',
-                old_value=str(old_value),
-                new_value=str(value),
-            )
+        # Audit log OUTSIDE the lock to prevent deadlock
+        # (audit_log also acquires self._lock)
+        self.audit_log(
+            action='counter_set',
+            target_type='debate_counter',
+            old_value=str(old_value),
+            new_value=str(value),
+        )
 
     def get_debate_counter(self) -> int:
         """
@@ -2821,6 +2824,7 @@ class DebatesDatabase:
         Returns:
             True if linked successfully, False if already linked
         """
+        success = False
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -2832,6 +2836,7 @@ class DebatesDatabase:
                     (main_user_id, alt_user_id, linked_by, reason)
                 )
                 conn.commit()
+                success = True
 
                 logger.info("DB: Accounts Linked", [
                     ("Main Account", str(main_user_id)),
@@ -2839,23 +2844,23 @@ class DebatesDatabase:
                     ("Linked By", str(linked_by)),
                 ])
 
-                # Audit log the account link
-                self.audit_log(
-                    action='account_link',
-                    actor_id=linked_by,
-                    target_id=alt_user_id,
-                    target_type='user',
-                    new_value=str(main_user_id),
-                    metadata={'reason': reason}
-                )
-                return True
-
             except sqlite3.IntegrityError:
                 # Alt already linked to someone
                 logger.warning("DB: Alt Account Already Linked", [
                     ("Alt Account", str(alt_user_id)),
                 ])
-                return False
+
+        # Audit log OUTSIDE the lock to prevent deadlock
+        if success:
+            self.audit_log(
+                action='account_link',
+                actor_id=linked_by,
+                target_id=alt_user_id,
+                target_type='user',
+                new_value=str(main_user_id),
+                metadata={'reason': reason}
+            )
+        return success
 
     def unlink_account(self, alt_user_id: int) -> bool:
         """
@@ -2867,6 +2872,8 @@ class DebatesDatabase:
         Returns:
             True if unlinked, False if not found
         """
+        main_user_id = None
+        deleted = False
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -2890,15 +2897,17 @@ class DebatesDatabase:
                 logger.info("DB: Account Unlinked", [
                     ("Alt Account", str(alt_user_id)),
                 ])
-                # Audit log the unlink
-                self.audit_log(
-                    action='account_unlink',
-                    target_id=alt_user_id,
-                    target_type='user',
-                    old_value=str(main_user_id) if main_user_id else None,
-                )
 
-            return deleted
+        # Audit log OUTSIDE the lock to prevent deadlock
+        if deleted:
+            self.audit_log(
+                action='account_unlink',
+                target_id=alt_user_id,
+                target_type='user',
+                old_value=str(main_user_id) if main_user_id else None,
+            )
+
+        return deleted
 
     def get_linked_accounts(self, user_id: int) -> list[dict]:
         """
