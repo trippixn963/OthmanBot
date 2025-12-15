@@ -204,8 +204,24 @@ class DebatesDatabase:
                         ("Error", str(e)),
                     ])
 
+    def health_check(self) -> bool:
+        """
+        Verify database connectivity with a simple query.
+
+        Returns:
+            True if database is accessible, False otherwise
+        """
+        with self._lock:
+            try:
+                conn = self._get_connection()
+                cursor = conn.execute("SELECT 1")
+                cursor.fetchone()
+                return True
+            except sqlite3.Error:
+                return False
+
     # Current schema version - increment when adding migrations
-    SCHEMA_VERSION = 11
+    SCHEMA_VERSION = 13
 
     # Valid table names for SQL injection prevention
     VALID_TABLES = frozenset({
@@ -603,6 +619,20 @@ class DebatesDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_closure_history_user ON closure_history(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_closure_history_time ON closure_history(created_at)")
             logger.info("Migration 11: Added closure_history table")
+            migrations_run += 1
+
+        # Migration 12: Add denial_reason to appeals table
+        if current_version < 12:
+            if not self._column_exists(cursor, "appeals", "denial_reason"):
+                cursor.execute("ALTER TABLE appeals ADD COLUMN denial_reason TEXT")
+                logger.info("Migration 12: Added denial_reason to appeals")
+            migrations_run += 1
+
+        # Migration 13: Add case_message_id to appeals table (for editing the embed)
+        if current_version < 13:
+            if not self._column_exists(cursor, "appeals", "case_message_id"):
+                cursor.execute("ALTER TABLE appeals ADD COLUMN case_message_id INTEGER")
+                logger.info("Migration 13: Added case_message_id to appeals")
             migrations_run += 1
 
         # Update schema version
@@ -1805,13 +1835,13 @@ class DebatesDatabase:
         Get all expired bans that need to be removed.
 
         Returns:
-            List of expired ban records
+            List of expired ban records with full details
         """
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                """SELECT id, user_id, thread_id, expires_at
+                """SELECT id, user_id, thread_id, banned_by, reason, expires_at, created_at
                    FROM debate_bans
                    WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')"""
             )
@@ -1820,7 +1850,10 @@ class DebatesDatabase:
                     "id": row[0],
                     "user_id": row[1],
                     "thread_id": row[2],
-                    "expires_at": row[3]
+                    "banned_by": row[3],
+                    "reason": row[4],
+                    "expires_at": row[5],
+                    "created_at": row[6],
                 }
                 for row in cursor.fetchall()
             ]
@@ -1861,6 +1894,46 @@ class DebatesDatabase:
                     ("User ID", str(user_id)),
                     ("Error", str(e)),
                 ])
+
+    def update_ban_history_removal(
+        self,
+        user_id: int,
+        removed_by: int,
+        removal_reason: str = "Appeal approved"
+    ) -> bool:
+        """
+        Update ban_history to mark ban as removed (e.g., via appeal).
+
+        Args:
+            user_id: User whose ban was removed
+            removed_by: Moderator who approved the removal
+            removal_reason: Reason for removal
+
+        Returns:
+            True if updated, False otherwise
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                # Update the most recent unremoved ban for this user
+                cursor.execute(
+                    """UPDATE ban_history
+                       SET removed_at = CURRENT_TIMESTAMP,
+                           removed_by = ?,
+                           removal_reason = ?
+                       WHERE user_id = ? AND removed_at IS NULL
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (removed_by, removal_reason, user_id)
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+            except Exception as e:
+                logger.debug("Failed to update ban history removal", [
+                    ("User ID", str(user_id)),
+                    ("Error", str(e)),
+                ])
+                return False
 
     def get_user_ban_count(self, user_id: int) -> int:
         """
@@ -1920,6 +1993,52 @@ class DebatesDatabase:
                 }
                 for row in cursor.fetchall()
             ]
+
+    def get_ban_history_at_time(
+        self,
+        user_id: int,
+        appeal_created_at: str
+    ) -> Optional[dict]:
+        """
+        Get the ban from ban_history that was active at the time of an appeal.
+
+        Finds the most recent ban created before the appeal was submitted.
+
+        Args:
+            user_id: User ID to check
+            appeal_created_at: ISO timestamp of when the appeal was submitted
+
+        Returns:
+            Ban history record dict or None if not found
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            # Get the most recent ban that was created before or at the appeal time
+            cursor.execute(
+                """SELECT id, thread_id, banned_by, reason, duration, expires_at,
+                          created_at, removed_at, removed_by, removal_reason
+                   FROM ban_history
+                   WHERE user_id = ? AND created_at <= ?
+                   ORDER BY created_at DESC
+                   LIMIT 1""",
+                (user_id, appeal_created_at)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "thread_id": row[1],
+                    "banned_by": row[2],
+                    "reason": row[3],
+                    "duration": row[4],
+                    "expires_at": row[5],
+                    "created_at": row[6],
+                    "removed_at": row[7],
+                    "removed_by": row[8],
+                    "removal_reason": row[9]
+                }
+            return None
 
     # -------------------------------------------------------------------------
     # Closure History Operations
@@ -2017,6 +2136,79 @@ class DebatesDatabase:
                 }
                 for row in cursor.fetchall()
             ]
+
+    def get_closure_by_thread_id(self, thread_id: int) -> Optional[dict]:
+        """
+        Get the most recent closure record for a specific thread.
+
+        Args:
+            thread_id: The thread ID to look up
+
+        Returns:
+            Closure history record dict or None if not found
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, user_id, thread_name, closed_by, reason,
+                          created_at, reopened_at, reopened_by
+                   FROM closure_history
+                   WHERE thread_id = ?
+                   ORDER BY created_at DESC
+                   LIMIT 1""",
+                (thread_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "user_id": row[1],
+                    "thread_name": row[2],
+                    "closed_by": row[3],
+                    "reason": row[4],
+                    "created_at": row[5],
+                    "reopened_at": row[6],
+                    "reopened_by": row[7]
+                }
+            return None
+
+    def update_closure_history_reopened(
+        self,
+        thread_id: int,
+        reopened_by: int
+    ) -> bool:
+        """
+        Update closure_history to mark thread as reopened (e.g., via appeal).
+
+        Args:
+            thread_id: The thread that was reopened
+            reopened_by: Moderator who approved the reopening
+
+        Returns:
+            True if updated, False otherwise
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                # Update the most recent unresolved closure for this thread
+                cursor.execute(
+                    """UPDATE closure_history
+                       SET reopened_at = CURRENT_TIMESTAMP,
+                           reopened_by = ?
+                       WHERE thread_id = ? AND reopened_at IS NULL
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (reopened_by, thread_id)
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+            except Exception as e:
+                logger.debug("Failed to update closure history reopened", [
+                    ("Thread ID", str(thread_id)),
+                    ("Error", str(e)),
+                ])
+                return False
 
     def remove_expired_bans(self) -> int:
         """
@@ -3736,7 +3928,7 @@ class DebatesDatabase:
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT id, user_id, action_type, action_id, reason, additional_context,
-                          status, reviewed_by, reviewed_at, created_at
+                          status, reviewed_by, reviewed_at, created_at, denial_reason, case_message_id
                    FROM appeals WHERE id = ?""",
                 (appeal_id,)
             )
@@ -3753,6 +3945,8 @@ class DebatesDatabase:
                     "reviewed_by": row[7],
                     "reviewed_at": row[8],
                     "created_at": row[9],
+                    "denial_reason": row[10],
+                    "case_message_id": row[11],
                 }
             return None
 
@@ -3804,6 +3998,7 @@ class DebatesDatabase:
         appeal_id: int,
         status: str,
         reviewed_by: int,
+        denial_reason: Optional[str] = None,
     ) -> bool:
         """
         Update an appeal's status (approve or deny).
@@ -3812,6 +4007,7 @@ class DebatesDatabase:
             appeal_id: The appeal ID
             status: New status ('approved' or 'denied')
             reviewed_by: Moderator user ID who reviewed
+            denial_reason: Optional reason for denial (only used when status='denied')
 
         Returns:
             True if updated, False if appeal not found
@@ -3830,12 +4026,20 @@ class DebatesDatabase:
                 return False
             old_status = row[0]
 
-            cursor.execute(
-                """UPDATE appeals
-                   SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
-                   WHERE id = ?""",
-                (status, reviewed_by, appeal_id)
-            )
+            if denial_reason and status == "denied":
+                cursor.execute(
+                    """UPDATE appeals
+                       SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, denial_reason = ?
+                       WHERE id = ?""",
+                    (status, reviewed_by, denial_reason, appeal_id)
+                )
+            else:
+                cursor.execute(
+                    """UPDATE appeals
+                       SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (status, reviewed_by, appeal_id)
+                )
             success = cursor.rowcount > 0
             conn.commit()
 
@@ -3960,6 +4164,29 @@ class DebatesDatabase:
                 }
                 for row in cursor.fetchall()
             ]
+
+    def set_appeal_case_message_id(self, appeal_id: int, message_id: int) -> bool:
+        """
+        Store the case thread message ID for an appeal embed.
+
+        This allows us to edit the appeal embed later when it's approved/denied.
+
+        Args:
+            appeal_id: The appeal ID
+            message_id: The Discord message ID of the appeal embed in case thread
+
+        Returns:
+            True if updated, False if appeal not found
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE appeals SET case_message_id = ? WHERE id = ?",
+                (message_id, appeal_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
 
 
 # =============================================================================

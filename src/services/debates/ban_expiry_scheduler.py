@@ -80,8 +80,25 @@ class BanExpiryScheduler:
             if not expired_bans:
                 return
 
-            # Log each expired ban - wrap each in try-except to prevent one failure
-            # from stopping processing of remaining bans
+            # IMPORTANT: Remove bans from database FIRST before sending notifications
+            # This ensures users only receive "unbanned" notifications after the ban
+            # is actually removed from the database
+            try:
+                removed_count = db.remove_expired_bans()
+
+                if removed_count > 0:
+                    logger.tree("Auto-Unban Complete", [
+                        ("Bans Removed", str(removed_count)),
+                    ], emoji="✅")
+            except Exception as e:
+                logger.error("Failed to Remove Expired Bans from Database", [
+                    ("Expired Bans Count", str(len(expired_bans))),
+                    ("Error", str(e)),
+                ])
+                # Don't send notifications if database removal failed
+                return
+
+            # Now send notifications for each expired ban (after successful DB removal)
             for ban in expired_bans:
                 try:
                     user_id = ban['user_id']
@@ -149,7 +166,10 @@ class BanExpiryScheduler:
                             await self.bot.ban_notifier.notify_ban_expired(
                                 user_id=user_id,
                                 scope=scope,
-                                thread_id=thread_id
+                                thread_id=thread_id,
+                                reason=ban.get('reason'),
+                                banned_by_id=ban.get('banned_by'),
+                                created_at=ban.get('created_at'),
                             )
                     except Exception as e:
                         logger.warning("Failed to send ban expiry notification DM", [
@@ -159,24 +179,10 @@ class BanExpiryScheduler:
 
                 except Exception as e:
                     # Log error but continue processing other bans
-                    logger.error("Failed to process expired ban", [
+                    logger.error("Failed to process expired ban notification", [
                         ("Ban", str(ban)),
                         ("Error", str(e)),
                     ])
-
-            # Remove all expired bans from database
-            try:
-                removed_count = db.remove_expired_bans()
-
-                if removed_count > 0:
-                    logger.tree("Auto-Unban Complete", [
-                        ("Bans Removed", str(removed_count)),
-                    ], emoji="✅")
-            except Exception as e:
-                logger.error("Failed to Remove Expired Bans from Database", [
-                    ("Expired Bans Count", str(len(expired_bans))),
-                    ("Error", str(e)),
-                ])
 
         except Exception as e:
             logger.error("Error In Ban Expiry Check", [

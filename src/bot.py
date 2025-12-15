@@ -3,6 +3,8 @@ Othman Discord Bot - Main Bot Class
 ===================================
 
 Core Discord client with modular architecture for the Syria Discord server.
+Combines automated news posting with a debates forum featuring karma tracking,
+moderation tools, and an appeal system.
 
 ARCHITECTURE OVERVIEW:
 ======================
@@ -12,18 +14,22 @@ The bot follows a layered architecture with clear separation of concerns:
 │                        BOT LAYER (bot.py)                        │
 │  - Discord client setup and event routing                       │
 │  - Service initialization and lifecycle management              │
+│  - Persistent button handling for appeal system                 │
 └─────────────────────────────────────────────────────────────────┘
                               │
         ┌─────────────────────┼─────────────────────┐
         ▼                     ▼                     ▼
 ┌───────────────┐    ┌───────────────┐    ┌───────────────┐
 │   HANDLERS    │    │   SERVICES    │    │   COMMANDS    │
-│ - ready.py    │    │ - scrapers/   │    │ - debates.py  │
-│ - debates.py  │    │ - debates/    │    │   (slash cmds)│
-│ - reactions.py│    │ - schedulers/ │    └───────────────┘
-│ - shutdown.py │    └───────────────┘
-└───────────────┘              │
-                               ▼
+│ - ready.py    │    │ - scrapers/   │    │ - karma.py    │
+│ - debates.py  │    │ - schedulers/ │    │ - disallow.py │
+│ - reactions.py│    │ - debates/    │    │ - allow.py    │
+│ - shutdown.py │    │ - case_log.py │    │ - close.py    │
+└───────────────┘    │ - appeal_svc  │    │ - open.py     │
+                     │ - ban_notify  │    │ - rename.py   │
+                     └───────────────┘    │ - cases.py    │
+                              │           └───────────────┘
+                              ▼
                     ┌───────────────────┐
                     │     POSTING       │
                     │ - news.py         │
@@ -46,15 +52,29 @@ KEY DESIGN DECISIONS:
    - 10+ messages in 1 hour = Hot
    - No activity for 6+ hours = Remove Hot
 
-4. GRACEFUL SHUTDOWN: All services properly cleaned up
+4. APPEAL SYSTEM: Users can appeal disallows and thread closures
+   - Appeal button in DM notifications and thread embeds
+   - Appeals posted to user's case thread with Approve/Deny buttons
+   - Persistent buttons work across bot restarts via on_interaction routing
+   - Denial requires moderator to provide a reason
+
+5. CASE LOG SYSTEM: Per-user case threads in moderator forum
+   - Tracks ban/unban history
+   - Appeal submissions and reviews logged
+   - Provides audit trail for moderation actions
+
+6. GRACEFUL SHUTDOWN: All services properly cleaned up
    - Database connections closed
    - HTTP sessions terminated
    - Background tasks cancelled
 
 Features:
-- Fully automated hourly news posting
-- Hot debates system with karma tracking
+- Fully automated hourly news posting (news, soccer, gaming)
+- Hot debates forum with karma tracking
 - Leaderboard with monthly/all-time stats
+- Moderation tools (disallow, close, rename)
+- Appeal system with persistent buttons
+- Case logging to moderator forum
 - AI-powered content summarization (OpenAI)
 - Health check HTTP endpoint
 
@@ -96,8 +116,6 @@ from src.services.case_log import CaseLogService
 from src.services.ban_notifier import BanNotifier
 from src.services.appeal_service import AppealService
 from src.views.appeals import (
-    AppealButtonView,
-    AppealReviewView,
     handle_appeal_button_interaction,
     handle_review_button_interaction,
     handle_info_button_interaction,
@@ -118,23 +136,35 @@ STATUS_CHANNEL_ID = int(os.getenv("STATUS_CHANNEL_ID", "0"))
 
 class OthmanBot(commands.Bot):
     """
-    Main Discord bot class for Othman News Bot.
+    Main Discord bot class for Othman News & Debates Bot.
 
     DESIGN: Central orchestrator that:
     - Routes Discord events to appropriate handlers
     - Holds references to all services for cross-service communication
     - Manages bot lifecycle (startup, shutdown)
+    - Routes persistent button clicks for appeal system
 
-    SERVICE INITIALIZATION ORDER (in on_ready):
-    1. Debates service (setup_hook)
-    2. Content scrapers (news, soccer, gaming)
-    3. Content rotation scheduler
-    4. Debates scheduler (hot debates every 3 hours)
-    5. Hot tag manager
-    6. Karma reconciliation (startup + nightly)
-    7. Leaderboard manager
-    8. Backup scheduler
-    9. Health check server
+    SERVICE INITIALIZATION ORDER:
+    1. setup_hook (before on_ready):
+       - Debates service (karma, database)
+       - Interaction logger (webhook logging)
+       - Daily stats service
+       - Case log service (moderator forum threads)
+       - Ban notifier service (DM notifications)
+       - Appeal service (appeal submission/review)
+       - Persistent views registration
+       - Command cog loading
+
+    2. on_ready:
+       - Content scrapers (news, soccer, gaming)
+       - Content rotation scheduler (hourly posts)
+       - Hot tag manager
+       - Karma reconciliation (startup + nightly)
+       - Leaderboard manager
+       - Backup scheduler
+       - Health check server
+       - Numbering scheduler
+       - Presence rotation
 
     INTENTS REQUIRED:
     - guilds: Access server info
@@ -183,7 +213,7 @@ class OthmanBot(commands.Bot):
 
         # =================================================================
         # Service Placeholders
-        # DESIGN: Initialized in on_ready handler after Discord connection
+        # DESIGN: Most initialized in setup_hook, some in on_ready
         # All services are Optional to handle partial initialization gracefully
         # =================================================================
         self.news_scraper = None      # NewsScraper - fetches Middle East news
@@ -191,7 +221,6 @@ class OthmanBot(commands.Bot):
         self.gaming_scraper = None    # GamingScraper - fetches gaming news
         self.content_rotation_scheduler = None  # Rotates content hourly
         self.debates_service = None   # Karma tracking and debate management
-        self.debates_scheduler = None # Posts hot debates every 3 hours
 
         # =================================================================
         # Background Tasks
@@ -283,10 +312,8 @@ class OthmanBot(commands.Bot):
         # Initialize appeal service (for appeal submission/review)
         self.appeal_service = AppealService(self)
 
-        # Register persistent views for appeal system
-        # These views persist across bot restarts via custom_id patterns
-        self.add_view(AppealButtonView())
-        self.add_view(AppealReviewView())
+        # NOTE: Appeal buttons are handled via on_interaction, not add_view()
+        # This avoids duplicate handling since on_interaction routes all appeal buttons
 
         # Load command cogs (each command in its own file)
         await self.load_extension("src.commands.toggle")

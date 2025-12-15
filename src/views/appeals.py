@@ -23,7 +23,8 @@ from typing import TYPE_CHECKING, Optional
 import discord
 
 from src.core.logger import logger
-from src.core.config import has_debates_management_role
+from src.core.config import can_review_appeals
+from src.utils import sanitize_input
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -123,13 +124,28 @@ class AppealModal(discord.ui.Modal):
             )
             return
 
+        # Sanitize inputs
+        sanitized_reason = sanitize_input(str(self.reason), max_length=REASON_MAX_LENGTH)
+        sanitized_context = sanitize_input(
+            str(self.additional_context) if self.additional_context.value else None,
+            max_length=CONTEXT_MAX_LENGTH
+        )
+
+        # Validate reason is not empty after sanitization
+        if not sanitized_reason:
+            await interaction.followup.send(
+                "Please provide a valid reason for your appeal.",
+                ephemeral=True
+            )
+            return
+
         # Submit the appeal
         result = await self.bot.appeal_service.submit_appeal(
             user=interaction.user,
             action_type=self.action_type,
             action_id=self.action_id,
-            reason=str(self.reason),
-            additional_context=str(self.additional_context) if self.additional_context.value else None,
+            reason=sanitized_reason,
+            additional_context=sanitized_context,
         )
 
         if result["success"]:
@@ -169,6 +185,113 @@ class AppealModal(discord.ui.Modal):
                 )
         except discord.HTTPException:
             pass
+
+
+# =============================================================================
+# Deny Reason Modal
+# =============================================================================
+
+DENIAL_REASON_MAX_LENGTH = 500
+
+
+class DenyReasonModal(discord.ui.Modal):
+    """
+    Modal for moderators to provide a reason when denying an appeal.
+    """
+
+    denial_reason = discord.ui.TextInput(
+        label="Why is this appeal being denied?",
+        style=discord.TextStyle.paragraph,
+        placeholder="Provide a reason for the denial...",
+        required=True,
+        max_length=DENIAL_REASON_MAX_LENGTH,
+    )
+
+    def __init__(
+        self,
+        appeal_id: int,
+        bot: "OthmanBot",
+        original_message: Optional[discord.Message] = None,
+    ) -> None:
+        """
+        Initialize the denial reason modal.
+
+        Args:
+            appeal_id: The appeal ID being denied
+            bot: The OthmanBot instance
+            original_message: The original message with review buttons (to disable them)
+        """
+        super().__init__(title="Deny Appeal")
+        self.appeal_id = appeal_id
+        self.bot = bot
+        self.original_message = original_message
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        """Handle modal submission."""
+        logger.info("Deny Reason Modal Submitted", [
+            ("Moderator", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Appeal ID", str(self.appeal_id)),
+            ("Reason Length", str(len(self.denial_reason.value))),
+        ])
+
+        # Defer while processing
+        await interaction.response.defer(ephemeral=True)
+
+        # Get appeal service
+        if not self.bot.appeal_service:
+            logger.error("Appeal service not initialized")
+            await interaction.followup.send(
+                "The appeal system is currently unavailable.",
+                ephemeral=True
+            )
+            return
+
+        # Sanitize denial reason
+        sanitized_reason = sanitize_input(self.denial_reason.value, max_length=DENIAL_REASON_MAX_LENGTH)
+        if not sanitized_reason:
+            await interaction.followup.send(
+                "Please provide a valid reason for denying the appeal.",
+                ephemeral=True
+            )
+            return
+
+        # Process the denial with reason
+        result = await self.bot.appeal_service.deny_appeal(
+            appeal_id=self.appeal_id,
+            reviewed_by=interaction.user,
+            denial_reason=sanitized_reason,
+        )
+
+        if result["success"]:
+            # Disable buttons on the message
+            try:
+                if self.original_message:
+                    view = discord.ui.View(timeout=None)
+                    for comp_row in self.original_message.components:
+                        for child in comp_row.children:
+                            button = discord.ui.Button(
+                                style=discord.ButtonStyle.secondary,
+                                label=child.label,
+                                emoji=child.emoji,
+                                disabled=True,
+                                custom_id=child.custom_id,
+                            )
+                            view.add_item(button)
+                    await self.original_message.edit(view=view)
+            except Exception as e:
+                logger.warning("Failed to disable review buttons", [
+                    ("Error", str(e)),
+                ])
+
+            await interaction.followup.send(
+                "Appeal denied successfully. The user has been notified with your reason.",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                result.get("error", "Failed to deny appeal."),
+                ephemeral=True
+            )
 
 
 # =============================================================================
@@ -276,18 +399,48 @@ class AppealButton(discord.ui.Button):
         is_dm = interaction.guild is None
         source = "DM" if is_dm else f"#{interaction.channel.name if interaction.channel else 'Unknown'}"
 
+        # Get bot instance for webhook logging
+        bot: "OthmanBot" = interaction.client  # type: ignore
+
+        # Verify user is the one who should appeal FIRST (before logging)
+        if interaction.user.id != expected_user_id:
+            logger.warning("Appeal Button Rejected - Wrong User", [
+                ("Clicked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Expected User", str(expected_user_id)),
+                ("Action Type", action_type),
+                ("Source", source),
+            ])
+
+            # Log rejection to webhook
+            try:
+                if bot.interaction_logger:
+                    await bot.interaction_logger.log_appeal_rejected_wrong_user(
+                        user=interaction.user,
+                        expected_user_id=expected_user_id,
+                        action_type=action_type,
+                        action_id=action_id,
+                        source=source,
+                        is_dm=is_dm,
+                    )
+            except Exception as e:
+                logger.warning("Failed to log appeal rejection to webhook", [
+                    ("Error", str(e)),
+                ])
+
+            await interaction.response.send_message(
+                "You cannot submit an appeal for another user.",
+                ephemeral=True
+            )
+            return
+
         logger.info("Appeal Button Clicked", [
             ("User", f"{interaction.user.name} ({interaction.user.id})"),
             ("Action Type", action_type),
             ("Action ID", str(action_id)),
-            ("Expected User", str(expected_user_id)),
             ("Source", source),
         ])
 
-        # Get bot instance for webhook logging
-        bot: "OthmanBot" = interaction.client  # type: ignore
-
-        # Log to webhook
+        # Log valid click to webhook
         try:
             if bot.interaction_logger:
                 await bot.interaction_logger.log_appeal_button_clicked(
@@ -301,19 +454,6 @@ class AppealButton(discord.ui.Button):
             logger.warning("Failed to log appeal button click to webhook", [
                 ("Error", str(e)),
             ])
-
-        # Verify user is the one who should appeal
-        if interaction.user.id != expected_user_id:
-            logger.warning("Appeal Button Rejected - Wrong User", [
-                ("Clicked By", f"{interaction.user.name} ({interaction.user.id})"),
-                ("Expected User", str(expected_user_id)),
-                ("Action Type", action_type),
-            ])
-            await interaction.response.send_message(
-                "You cannot submit an appeal for another user.",
-                ephemeral=True
-            )
-            return
 
         # Check if appeal already exists
         if bot.debates_service and bot.debates_service.db:
@@ -336,7 +476,23 @@ class AppealButton(discord.ui.Button):
             user_id=interaction.user.id,
             bot=bot,
         )
-        await interaction.response.send_modal(modal)
+        try:
+            await interaction.response.send_modal(modal)
+        except discord.HTTPException as e:
+            # Handle case where interaction was already acknowledged
+            # (e.g., user dismissed modal and clicked again quickly)
+            if e.code == 40060:  # Interaction has already been acknowledged
+                logger.debug("Appeal modal send failed - interaction already acknowledged")
+                # Try to send followup instead
+                try:
+                    await interaction.followup.send(
+                        "Please try clicking the Appeal button again.",
+                        ephemeral=True
+                    )
+                except discord.HTTPException:
+                    pass  # Silently fail if followup also fails
+            else:
+                raise
 
 
 # =============================================================================
@@ -480,15 +636,14 @@ async def _handle_review_button(
         ("Action", action),
     ])
 
-    # Check if user has Debates Management role
-    if not has_debates_management_role(interaction.user):
-        logger.warning("Appeal Review Denied - Missing Role", [
+    # Check if user can review appeals
+    if not can_review_appeals(interaction.user):
+        logger.warning("Appeal Review Denied - No Permission", [
             ("User", f"{interaction.user.name} ({interaction.user.id})"),
             ("Appeal ID", str(appeal_id)),
         ])
         await interaction.response.send_message(
-            "You don't have permission to review appeals. "
-            "Only users with the Debates Management role can approve or deny appeals.",
+            "You don't have permission to review appeals.",
             ephemeral=True
         )
         return
@@ -717,25 +872,34 @@ async def handle_review_button_interaction(
         ("Action", action),
     ])
 
-    # Check if user has Debates Management role
-    if not has_debates_management_role(interaction.user):
-        logger.warning("Appeal Review Denied - Missing Role", [
+    # Check if user can review appeals
+    if not can_review_appeals(interaction.user):
+        logger.warning("Appeal Review Denied - No Permission", [
             ("User", f"{interaction.user.name} ({interaction.user.id})"),
             ("Appeal ID", str(appeal_id)),
         ])
         await interaction.response.send_message(
-            "You don't have permission to review appeals. "
-            "Only users with the Debates Management role can approve or deny appeals.",
+            "You don't have permission to review appeals.",
             ephemeral=True
         )
         return
 
-    # Defer while processing
-    await interaction.response.defer(ephemeral=True)
-
     # Get bot instance
     from src.bot import OthmanBot
     bot: "OthmanBot" = interaction.client  # type: ignore
+
+    # For deny action, show modal to collect reason (don't defer yet)
+    if action == "deny":
+        modal = DenyReasonModal(
+            appeal_id=appeal_id,
+            bot=bot,
+            original_message=interaction.message,
+        )
+        await interaction.response.send_modal(modal)
+        return
+
+    # Defer while processing approve
+    await interaction.response.defer(ephemeral=True)
 
     # Get appeal service
     if not bot.appeal_service:
@@ -746,17 +910,11 @@ async def handle_review_button_interaction(
         )
         return
 
-    # Process the review
-    if action == "approve":
-        result = await bot.appeal_service.approve_appeal(
-            appeal_id=appeal_id,
-            reviewed_by=interaction.user,
-        )
-    else:
-        result = await bot.appeal_service.deny_appeal(
-            appeal_id=appeal_id,
-            reviewed_by=interaction.user,
-        )
+    # Process approve
+    result = await bot.appeal_service.approve_appeal(
+        appeal_id=appeal_id,
+        reviewed_by=interaction.user,
+    )
 
     if result["success"]:
         # Disable buttons on the message
@@ -779,12 +937,12 @@ async def handle_review_button_interaction(
             ])
 
         await interaction.followup.send(
-            f"Appeal {action}d successfully. The user has been notified.",
+            "Appeal approved successfully. The user has been notified.",
             ephemeral=True
         )
     else:
         await interaction.followup.send(
-            result.get("error", f"Failed to {action} appeal."),
+            result.get("error", "Failed to approve appeal."),
             ephemeral=True
         )
 
@@ -906,10 +1064,18 @@ async def handle_info_button_interaction(
 
     # Get action-specific details
     if action_type == "disallow":
-        # Get ban details from database
-        bans = bot.debates_service.db.get_user_bans(user_id)
-        if bans:
-            ban = bans[0]  # Get the most recent ban
+        # Get ban details from ban_history (uses appeal's created_at to find the correct ban)
+        appeal_created_at = appeal.get("created_at")
+        ban = None
+        if appeal_created_at:
+            ban = bot.debates_service.db.get_ban_history_at_time(user_id, appeal_created_at)
+        if not ban:
+            # Fallback to current bans if history lookup fails
+            bans = bot.debates_service.db.get_user_bans(user_id)
+            if bans:
+                ban = bans[0]
+
+        if ban:
 
             # Get moderator who banned
             banned_by_id = ban.get("banned_by")
@@ -1048,6 +1214,7 @@ async def handle_info_button_interaction(
 
 __all__ = [
     "AppealModal",
+    "DenyReasonModal",
     "AppealButtonView",
     "AppealReviewView",
     "ACTION_TYPE_LABELS",

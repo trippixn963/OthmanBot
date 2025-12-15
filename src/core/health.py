@@ -89,8 +89,21 @@ class HealthCheckServer:
         is_ready = self.bot.is_ready()
         latency_ms = round(self.bot.latency * 1000) if is_ready else None
 
+        # Check database connectivity
+        db_healthy = False
+        db_error: Optional[str] = None
+        try:
+            if self.bot.debates_service and self.bot.debates_service.db:
+                # Simple query to verify database is accessible
+                db_healthy = self.bot.debates_service.db.health_check()
+        except Exception as e:
+            db_error = str(e)
+
+        # Overall health: Discord connected AND database accessible
+        overall_healthy = is_ready and db_healthy
+
         status = {
-            "status": "healthy" if is_ready else "starting",
+            "status": "healthy" if overall_healthy else ("degraded" if is_ready else "starting"),
             "run_id": logger.run_id,
             "uptime": uptime_str,
             "uptime_seconds": int(uptime_seconds),
@@ -101,9 +114,15 @@ class HealthCheckServer:
                 "latency_ms": latency_ms,
                 "guilds": len(self.bot.guilds) if is_ready else 0,
             },
+            "database": {
+                "connected": db_healthy,
+                "error": db_error,
+            },
         }
 
-        return web.json_response(status)
+        # Return 503 if unhealthy for proper monitoring integration
+        status_code = 200 if overall_healthy else 503
+        return web.json_response(status, status=status_code)
 
 
 # =============================================================================

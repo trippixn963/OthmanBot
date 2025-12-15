@@ -9,9 +9,10 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import asyncio
 import os
 import time
-from openai import OpenAI, RateLimitError, APIConnectionError, APIError, AuthenticationError
+from openai import AsyncOpenAI, RateLimitError, APIConnectionError, APIError, AuthenticationError
 from src.core.logger import logger
 
 
@@ -80,7 +81,7 @@ def _record_failure() -> None:
 # Translation Function
 # =============================================================================
 
-def translate_to_english(text: str) -> str:
+async def translate_to_english(text: str) -> str:
     """
     Translate non-English text to English using OpenAI.
 
@@ -92,6 +93,7 @@ def translate_to_english(text: str) -> str:
 
     DESIGN: Uses retry with exponential backoff for transient errors.
     Circuit breaker prevents hammering a failing service.
+    Uses async/await to avoid blocking the event loop.
     """
     # Check circuit breaker
     if _check_circuit():
@@ -103,12 +105,12 @@ def translate_to_english(text: str) -> str:
         logger.error("OPENAI_API_KEY not found in environment variables")
         return "Error: Translation service unavailable"
 
-    client = OpenAI(api_key=api_key, timeout=30.0)
+    client = AsyncOpenAI(api_key=api_key, timeout=30.0)
     last_error: Exception | None = None
 
     for attempt in range(TRANSLATE_MAX_RETRIES):
         try:
-            response = client.chat.completions.create(
+            response = await client.chat.completions.create(
                 model="gpt-4o-mini",  # Fast and cheap model for translations
                 messages=[
                     {
@@ -146,7 +148,7 @@ def translate_to_english(text: str) -> str:
                     ("Error", str(e)[:50]),
                     ("Delay", f"{delay:.1f}s"),
                 ])
-                time.sleep(delay)
+                await asyncio.sleep(delay)
             continue
 
         except Exception as e:

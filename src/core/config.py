@@ -245,6 +245,61 @@ CACHE_CLEANUP_RATIO: float = 0.8  # Remove 20% when cache is full
 
 
 # =============================================================================
+# Embed Styling Constants
+# =============================================================================
+# Centralized colors and styling for consistent Discord embeds across the bot
+
+import discord
+
+class EmbedColors:
+    """Standardized color palette for Discord embeds."""
+    # Action colors
+    BAN = discord.Color.red()           # 🚫 Bans, disallows, denials
+    UNBAN = discord.Color.green()       # ✅ Unbans, allows, approvals
+    CLOSE = discord.Color.orange()      # 🔒 Thread closures
+    REOPEN = discord.Color.teal()       # 🔓 Thread reopens
+    EXPIRED = discord.Color.blue()      # ⏰ Auto-expiry (system action)
+
+    # Appeal colors
+    APPEAL_PENDING = discord.Color.purple()   # 📝 Appeal submitted
+    APPEAL_APPROVED = discord.Color.green()   # ✅ Appeal approved
+    APPEAL_DENIED = discord.Color.red()       # ❌ Appeal denied
+
+    # Informational colors
+    INFO = discord.Color.blue()         # 📋 Profiles, details, stats
+    WARNING = discord.Color.gold()      # ⚠️ Alerts, repeat offenders
+    SUCCESS = discord.Color.green()     # General success
+
+    # Special colors
+    REJOIN_CLEAN = discord.Color.gold()     # 🔄 User rejoined (no issues)
+    REJOIN_WARNING = discord.Color.red()    # 🚨 User rejoined (still restricted)
+
+
+class EmbedIcons:
+    """Standardized emoji icons for embed titles."""
+    BAN = "🚫"
+    UNBAN = "✅"
+    CLOSE = "🔒"
+    REOPEN = "🔓"
+    EXPIRED = "⏰"
+    APPEAL = "📝"
+    APPROVED = "✅"
+    DENIED = "❌"
+    INFO = "📋"
+    WARNING = "⚠️"
+    LEAVE = "🚪"
+    REJOIN = "🔄"
+    ALERT = "🚨"
+
+
+# Standard footer text
+EMBED_FOOTER_TEXT = "Developed By: حَـــــنَّـــــا"
+
+# Standard "no value" placeholder
+EMBED_NO_VALUE = "_None provided_"
+
+
+# =============================================================================
 # Debate Content Rules
 # =============================================================================
 
@@ -331,6 +386,13 @@ if MODS_GUILD_ID:
 MODERATOR_ROLE_ID: int = _load_required_id("MODERATOR_ROLE_ID")
 DEVELOPER_ID: int = _load_required_id("DEVELOPER_ID")
 DEBATES_MANAGEMENT_ROLE_ID: Optional[int] = _load_optional_id("DEBATES_MANAGEMENT_ROLE_ID")
+
+# User IDs allowed to review appeals (approve/deny) in the mods server
+# These users can review appeals even without the Debates Management role
+APPEAL_REVIEWER_IDS: set[int] = {
+    511806208366084097,   # adonis_a
+    1249397157702795396,  # 66j1
+}
 
 
 # =============================================================================
@@ -460,6 +522,31 @@ def has_debates_management_role(member) -> bool:
     return member.guild_permissions.manage_messages
 
 
+def can_review_appeals(user) -> bool:
+    """
+    Check if a user can review (approve/deny) appeals.
+
+    Args:
+        user: Discord User or Member object
+
+    Returns:
+        True if user is allowed to review appeals
+
+    DESIGN: Appeals are reviewed in the mods server which may not have
+    the Debates Management role. This allows specific user IDs to review.
+    """
+    # Developer always has access
+    if user.id == DEVELOPER_ID:
+        return True
+
+    # Check if user is in the allowed reviewers list
+    if user.id in APPEAL_REVIEWER_IDS:
+        return True
+
+    # Fall back to debates management role check
+    return has_debates_management_role(user)
+
+
 # =============================================================================
 # Module Export
 # =============================================================================
@@ -541,6 +628,14 @@ __all__ = [
     "load_general_channel_id",
     # Role IDs
     "DEBATES_MANAGEMENT_ROLE_ID",
+    # Appeal reviewer IDs
+    "APPEAL_REVIEWER_IDS",
     # Role check helpers
     "has_debates_management_role",
+    "can_review_appeals",
+    # Embed styling
+    "EmbedColors",
+    "EmbedIcons",
+    "EMBED_FOOTER_TEXT",
+    "EMBED_NO_VALUE",
 ]

@@ -21,8 +21,8 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, NY_TZ, has_debates_management_role
-from src.utils import edit_thread_with_retry, get_developer_avatar
+from src.core.config import DEBATES_FORUM_ID, NY_TZ, has_debates_management_role, EmbedColors, EmbedIcons, EMBED_FOOTER_TEXT
+from src.utils import edit_thread_with_retry, get_developer_avatar, get_ordinal
 from src.views.appeals import AppealButtonView
 
 if TYPE_CHECKING:
@@ -129,8 +129,8 @@ class CloseCog(commands.Cog):
         # Build the public embed FIRST (before any slow operations)
         now = datetime.now(NY_TZ)
         embed = discord.Embed(
-            title="🔒 Debate Closed",
-            color=discord.Color.red()
+            title=f"{EmbedIcons.CLOSE} Debate Closed",
+            color=EmbedColors.CLOSE
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         # Truncate fields to stay within Discord's embed field limits (1024 chars)
@@ -143,7 +143,7 @@ class CloseCog(commands.Cog):
         embed.add_field(name="Reason", value=reason_display, inline=False)
 
         developer_avatar_url = await get_developer_avatar(self.bot)
-        embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
+        embed.set_footer(text=EMBED_FOOTER_TEXT, icon_url=developer_avatar_url)
 
         # Get the debate owner from the starter message before sending response
         # We need owner_id for the appeal button
@@ -334,14 +334,17 @@ class CloseCog(commands.Cog):
             True if DM sent successfully, False otherwise
         """
         try:
+            # Get developer avatar for footer
+            developer_avatar_url = await get_developer_avatar(self.bot)
+
             now = datetime.now(NY_TZ)
             embed = discord.Embed(
-                title="Your Debate Thread Was Closed",
+                title=f"{EmbedIcons.CLOSE} Your Debate Thread Was Closed",
                 description=(
                     "A moderator has closed your debate thread.\n"
                     "Please review the details below."
                 ),
-                color=discord.Color.red(),
+                color=EmbedColors.CLOSE,
                 timestamp=now,
             )
 
@@ -357,6 +360,11 @@ class CloseCog(commands.Cog):
                 name="Debate",
                 value=title[:100] + "..." if len(title) > 100 else title,
                 inline=False,
+            )
+            embed.add_field(
+                name="Thread",
+                value=f"<#{thread.id}>",
+                inline=True,
             )
             embed.add_field(
                 name="Closed By",
@@ -376,11 +384,38 @@ class CloseCog(commands.Cog):
 
             # Past closure history (only show if not first closure)
             if past_closure_count > 0:
-                ordinal = self._get_ordinal(past_closure_count + 1)
+                ordinal = get_ordinal(past_closure_count + 1)
                 embed.add_field(
-                    name="Closure History",
+                    name=f"{EmbedIcons.WARNING} Closure History",
                     value=f"This is your **{ordinal}** debate closure.",
                     inline=True,
+                )
+
+                # Add consequence warning for repeat closures
+                if past_closure_count == 1:
+                    # 2nd closure
+                    consequence_warning = (
+                        "This is your second debate closure. Please review the debate rules "
+                        "to avoid future closures. Continued violations may result in "
+                        "temporary bans from creating debates."
+                    )
+                elif past_closure_count == 2:
+                    # 3rd closure
+                    consequence_warning = (
+                        "This is your third debate closure. Further violations will likely "
+                        "result in a temporary ban from debates."
+                    )
+                else:
+                    # 4th+ closure
+                    consequence_warning = (
+                        "You have had multiple debates closed. Any further violations "
+                        "may result in a ban from debates."
+                    )
+
+                embed.add_field(
+                    name=f"{EmbedIcons.ALERT} Warning",
+                    value=consequence_warning,
+                    inline=False
                 )
 
             # Server join date (if owner is a Member in any guild)
@@ -397,9 +432,16 @@ class CloseCog(commands.Cog):
             except Exception:
                 pass  # Silently ignore if we can't get join date
 
+            # What's Next guidance
+            embed.add_field(
+                name="What's Next?",
+                value="You may appeal this decision using the button below.",
+                inline=False,
+            )
+
             embed.set_footer(
-                text="Syria Discord Server | Debates System",
-                icon_url=self.bot.user.display_avatar.url if self.bot.user else None,
+                text=EMBED_FOOTER_TEXT,
+                icon_url=developer_avatar_url,
             )
 
             # Create appeal button view
@@ -431,22 +473,6 @@ class CloseCog(commands.Cog):
                 ("Error", str(e)),
             ])
             return False
-
-    def _get_ordinal(self, n: int) -> str:
-        """
-        Convert a number to its ordinal string (1st, 2nd, 3rd, etc.).
-
-        Args:
-            n: The number to convert
-
-        Returns:
-            Ordinal string (e.g., "1st", "2nd", "3rd", "4th")
-        """
-        if 11 <= (n % 100) <= 13:
-            suffix = "th"
-        else:
-            suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-        return f"{n}{suffix}"
 
 
 # =============================================================================

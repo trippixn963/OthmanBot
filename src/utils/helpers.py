@@ -115,8 +115,59 @@ def truncate(text: str, max_length: int, ellipsis: str = "...") -> str:
     return text[:max_length - len(ellipsis)] + ellipsis
 
 
+# =============================================================================
+# Number Formatting Helpers
+# =============================================================================
+
+def get_ordinal(n: int) -> str:
+    """
+    Convert a number to its ordinal string (1st, 2nd, 3rd, etc.).
+
+    Args:
+        n: The number to convert
+
+    Returns:
+        Ordinal string (e.g., "1st", "2nd", "3rd", "4th")
+    """
+    if 11 <= (n % 100) <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+# =============================================================================
+# Input Sanitization
+# =============================================================================
+
+def sanitize_input(text: Optional[str], max_length: int = 500) -> Optional[str]:
+    """
+    Sanitize user input by stripping whitespace and enforcing length limits.
+
+    Args:
+        text: The input text to sanitize
+        max_length: Maximum allowed length (default: 500)
+
+    Returns:
+        Sanitized text, or None if input is None or empty after stripping
+    """
+    if text is None:
+        return None
+    # Strip leading/trailing whitespace
+    cleaned = text.strip()
+    # Return None if empty after stripping
+    if not cleaned:
+        return None
+    # Enforce max length
+    if len(cleaned) > max_length:
+        cleaned = cleaned[:max_length]
+    return cleaned
+
+
 __all__ = [
     "get_developer_avatar",
     "safe_fetch_message",
     "truncate",
+    "get_ordinal",
+    "sanitize_input",
 ]

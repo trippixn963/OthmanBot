@@ -824,8 +824,8 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                 # Import translation utility
                 from src.utils.translate import translate_to_english
 
-                # Get AI translation suggestion
-                suggested_title = translate_to_english(original_title)
+                # Get AI translation suggestion (async to avoid blocking event loop)
+                suggested_title = await translate_to_english(original_title)
                 logger.info("AI Translation Suggested", [
                     ("Original", original_title),
                     ("Suggested", suggested_title),
@@ -846,7 +846,9 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                     f"This debate thread has been locked because the title contains non-English characters.\n\n"
                     f"**Original Title:** {original_title}\n"
                     f"**Suggested Title:** {suggested_title}\n\n"
-                    f"**📌 Moderators:** Please rename this thread to an appropriate English title and unlock it."
+                    f"**📌 Moderators:** Use `/rename` to rename and unlock this thread.\n"
+                    f"• Run `/rename` to use the suggested title above\n"
+                    f"• Or run `/rename title:Your Title Here` to specify a custom title"
                 )
 
                 await send_message_with_retry(thread, content=moderation_message)

@@ -22,6 +22,8 @@ from .helpers import (
     get_developer_avatar,
     safe_fetch_message,
     truncate,
+    get_ordinal,
+    sanitize_input,
 )
 from .language import (
     is_primarily_arabic,
@@ -55,6 +57,10 @@ __all__ = [
     "safe_fetch_message",
     # String truncation helpers
     "truncate",
+    # Number formatting helpers
+    "get_ordinal",
+    # Input sanitization
+    "sanitize_input",
     # Language utilities
     "is_primarily_arabic",
     "get_min_message_length",
