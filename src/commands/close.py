@@ -158,6 +158,25 @@ class CloseCog(commands.Cog):
                 ("Error", str(e)),
             ])
 
+        # Protect Debates Management role members (only developer can close their threads)
+        from src.core.config import DEVELOPER_ID, DEBATES_MANAGEMENT_ROLE_ID
+        if owner and DEBATES_MANAGEMENT_ROLE_ID and interaction.user.id != DEVELOPER_ID:
+            # Check if owner is a member with Debates Management role
+            owner_member = interaction.guild.get_member(owner.id) if interaction.guild else None
+            if owner_member and any(role.id == DEBATES_MANAGEMENT_ROLE_ID for role in owner_member.roles):
+                logger.warning("/close Command Rejected - Protected User", [
+                    ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                    ("Thread Owner", f"{owner.name} ({owner.id})"),
+                    ("Thread", f"{thread.name} ({thread.id})"),
+                    ("Reason", "Owner has Debates Management role"),
+                ])
+                await interaction.response.send_message(
+                    "You cannot close a debate owned by a member of the Debates Management team. "
+                    "Only the developer can do this.",
+                    ephemeral=True
+                )
+                return
+
         # Create appeal button view if owner was found
         view = None
         if owner:

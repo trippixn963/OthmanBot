@@ -205,6 +205,22 @@ class AllowCog(commands.Cog):
         member = interaction.guild.get_member(user_id)
         display_name = member.display_name if member else f"User {user_id}"
 
+        # Protect Debates Management role members (only developer can unban them)
+        from src.core.config import DEVELOPER_ID, DEBATES_MANAGEMENT_ROLE_ID
+        if member and DEBATES_MANAGEMENT_ROLE_ID and interaction.user.id != DEVELOPER_ID:
+            if any(role.id == DEBATES_MANAGEMENT_ROLE_ID for role in member.roles):
+                logger.warning("/allow Command Rejected - Protected User", [
+                    ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                    ("Target User", f"{member.name} ({member.id})"),
+                    ("Reason", "Target has Debates Management role"),
+                ])
+                await interaction.response.send_message(
+                    "You cannot unban a member of the Debates Management team. "
+                    "Only the developer can do this.",
+                    ephemeral=True
+                )
+                return
+
         # Parse thread_id (required)
         if thread_id.lower() == "all":
             target_thread_id = None
