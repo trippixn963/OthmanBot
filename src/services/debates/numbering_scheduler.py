@@ -5,20 +5,26 @@ Othman Discord Bot - Debate Numbering Reconciliation Scheduler
 Nightly scheduled debate numbering reconciliation at 00:15 NY_TZ.
 Scans all non-deprecated debates and fixes any gaps in numbering.
 
+Features rate limit awareness with automatic backoff.
+
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
 import asyncio
-import json
 import re
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Awaitable, Optional, Any
+
+import discord
 
 from src.core.logger import logger
 from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR, NY_TZ, DISCORD_API_DELAY, LOG_TITLE_PREVIEW_LENGTH, THREAD_NAME_PREVIEW_LENGTH
 from src.utils import edit_thread_with_retry
+
+# Rate limit backoff settings
+RATE_LIMIT_BASE_DELAY = 5.0  # Base delay when rate limited (seconds)
+RATE_LIMIT_MAX_DELAY = 60.0  # Maximum backoff delay (seconds)
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -115,7 +121,10 @@ async def reconcile_debate_numbering(bot: "OthmanBot") -> dict:
             ("Threads To Renumber", str(len(threads_to_rename))),
         ])
 
-        # Fix the gaps by renumbering
+        # Fix the gaps by renumbering (with adaptive rate limit handling)
+        adaptive_delay = DISCORD_API_DELAY
+        consecutive_rate_limits = 0
+
         for thread, old_num, new_num in threads_to_rename:
             try:
                 # Extract title part after the number
@@ -124,18 +133,50 @@ async def reconcile_debate_numbering(bot: "OthmanBot") -> dict:
                     title = title_match.group(1)
                     new_name = f"{new_num} | {title}"
 
-                    await edit_thread_with_retry(thread, name=new_name)
-                    stats["threads_renumbered"] += 1
+                    success = await edit_thread_with_retry(thread, name=new_name)
 
-                    logger.success("✅ Renumbered Debate Thread", [
-                        ("Old", f"#{old_num}"),
-                        ("New", f"#{new_num}"),
-                        ("Title", title[:THREAD_NAME_PREVIEW_LENGTH]),
+                    if success:
+                        stats["threads_renumbered"] += 1
+                        # Success - gradually reduce delay
+                        consecutive_rate_limits = max(0, consecutive_rate_limits - 1)
+                        adaptive_delay = max(DISCORD_API_DELAY, adaptive_delay * 0.9)
+
+                        logger.success("✅ Renumbered Debate Thread", [
+                            ("Old", f"#{old_num}"),
+                            ("New", f"#{new_num}"),
+                            ("Title", title[:THREAD_NAME_PREVIEW_LENGTH]),
+                        ])
+                    else:
+                        # edit_thread_with_retry returned False (exhausted retries)
+                        stats["errors"] += 1
+                        consecutive_rate_limits += 1
+                        adaptive_delay = min(adaptive_delay * 1.5, RATE_LIMIT_MAX_DELAY)
+                        logger.warning("Thread Renumber Failed After Retries", [
+                            ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+                            ("Adaptive Delay", f"{adaptive_delay:.1f}s"),
+                        ])
+
+                    # Use adaptive delay between operations
+                    await asyncio.sleep(adaptive_delay)
+
+            except discord.HTTPException as e:
+                if e.status == 429:
+                    # Rate limited - back off significantly
+                    retry_after = getattr(e, 'retry_after', RATE_LIMIT_BASE_DELAY)
+                    consecutive_rate_limits += 1
+                    adaptive_delay = min(adaptive_delay * 2, RATE_LIMIT_MAX_DELAY)
+                    logger.warning("Renumbering Rate Limited", [
+                        ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+                        ("Retry After", f"{retry_after:.1f}s"),
+                        ("Consecutive Limits", str(consecutive_rate_limits)),
                     ])
-
-                    # Rate limit protection (retry helper already handles some delay)
-                    await asyncio.sleep(DISCORD_API_DELAY)
-
+                    await asyncio.sleep(retry_after + 2.0)
+                else:
+                    logger.error("Failed To Renumber Thread", [
+                        ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+                        ("Error", str(e)),
+                    ])
+                stats["errors"] += 1
             except Exception as e:
                 logger.error("Failed To Renumber Thread", [
                     ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
@@ -143,10 +184,11 @@ async def reconcile_debate_numbering(bot: "OthmanBot") -> dict:
                 ])
                 stats["errors"] += 1
 
-        # Update the counter file to match the highest number
+        # Update the counter in database to match the highest number
         if debate_threads:
             highest_num = len(debate_threads) - stats["errors"]
-            await _update_counter(highest_num)
+            if hasattr(bot, 'debates_service') and bot.debates_service is not None:
+                bot.debates_service.db.set_debate_counter(highest_num)
 
         logger.success("🎉 Numbering Reconciliation Complete", [
             ("Threads Scanned", str(stats["threads_scanned"])),
@@ -179,22 +221,6 @@ def _extract_debate_number(thread_name: str) -> Optional[int]:
     if match:
         return int(match.group(1))
     return None
-
-
-async def _update_counter(new_value: int) -> None:
-    """Update the debate counter file."""
-    counter_file = Path("data/debate_counter.json")
-    try:
-        counter_file.parent.mkdir(exist_ok=True)
-        with open(counter_file, "w") as f:
-            json.dump({"count": new_value}, f)  # Use "count" to match debates.py
-        logger.info("Updated Debate Counter", [
-            ("Value", str(new_value)),
-        ])
-    except Exception as e:
-        logger.error("Failed To Update Debate Counter", [
-            ("Error", str(e)),
-        ])
 
 
 # =============================================================================
@@ -288,6 +314,8 @@ class NumberingReconciliationScheduler:
                         logger.success("Nightly Numbering Reconciliation Complete", [
                             ("Gaps Fixed", str(stats.get('threads_renumbered', 0))),
                         ])
+                        # Log success to webhook
+                        await self._send_reconciliation_webhook("Nightly (00:15 EST)", stats, success=True)
                     except Exception as e:
                         logger.error("Nightly Numbering Reconciliation Failed", [
                             ("Error Type", type(e).__name__),
@@ -295,6 +323,7 @@ class NumberingReconciliationScheduler:
                         ])
                         # Send to webhook for reconciliation errors
                         await self._send_error_webhook("Numbering Reconciliation Failed", str(e))
+                        await self._send_reconciliation_webhook("Nightly (00:15 EST)", {"error": str(e)}, success=False)
 
             except asyncio.CancelledError:
                 break
@@ -313,6 +342,14 @@ class NumberingReconciliationScheduler:
         try:
             if self.bot and hasattr(self.bot, 'webhook_alerts') and self.bot.webhook_alerts:
                 await self.bot.webhook_alerts.send_error_alert(error_type, error_msg)
+        except Exception:
+            pass  # Don't fail on webhook error
+
+    async def _send_reconciliation_webhook(self, trigger: str, stats: dict, success: bool) -> None:
+        """Send reconciliation results to webhook if bot is available."""
+        try:
+            if self.bot and hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
+                await self.bot.interaction_logger.log_numbering_reconciliation(trigger, stats, success)
         except Exception:
             pass  # Don't fail on webhook error
 

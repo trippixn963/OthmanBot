@@ -278,6 +278,22 @@ class AllowCog(commands.Cog):
                 logger.warning("Failed to log to case system", [
                     ("Error", str(e)),
                 ])
+
+            # Send DM notification to the unbanned user
+            try:
+                if self.bot.ban_notifier and member:
+                    await self.bot.ban_notifier.notify_unban(
+                        user=member,
+                        unbanned_by=interaction.user,
+                        scope=scope,
+                        thread_id=target_thread_id,
+                        reason=reason
+                    )
+            except Exception as e:
+                logger.warning("Failed to send unban notification DM", [
+                    ("User ID", str(user_id)),
+                    ("Error", str(e)),
+                ])
         else:
             logger.info("/allow Command - User Was Not Banned", [
                 ("Target User", f"{display_name} ({user_id})"),

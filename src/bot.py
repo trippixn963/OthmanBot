@@ -93,6 +93,7 @@ from src.services.webhook_alerts import get_alert_service
 from src.services.interaction_logger import InteractionLogger
 from src.services.daily_stats import DailyStatsService
 from src.services.case_log import CaseLogService
+from src.services.ban_notifier import BanNotifier
 
 
 # =============================================================================
@@ -228,6 +229,12 @@ class OthmanBot(commands.Bot):
         # =================================================================
         self.case_log_service: Optional[CaseLogService] = None
 
+        # =================================================================
+        # Ban Notifier Service
+        # DESIGN: Sends DM notifications to users when banned/unbanned
+        # =================================================================
+        self.ban_notifier: Optional[BanNotifier] = None
+
     # =========================================================================
     # Properties
     # =========================================================================
@@ -255,6 +262,9 @@ class OthmanBot(commands.Bot):
 
         # Initialize case log service (for ban/unban logging to mods server)
         self.case_log_service = CaseLogService(self)
+
+        # Initialize ban notifier service (for DM notifications)
+        self.ban_notifier = BanNotifier(self)
 
         # Load command cogs (each command in its own file)
         await self.load_extension("src.commands.toggle")
@@ -343,6 +353,23 @@ class OthmanBot(commands.Bot):
         if self.disabled:
             return
         await on_member_join_handler(self, member)
+
+    async def on_disconnect(self) -> None:
+        """Event handler for bot disconnecting from Discord.
+
+        DESIGN: Tracks disconnections for uptime monitoring
+        """
+        if self.daily_stats:
+            self.daily_stats.record_disconnect(reason="Discord disconnect")
+
+    async def on_resumed(self) -> None:
+        """Event handler for bot resuming connection after disconnect.
+
+        DESIGN: Tracks reconnections to calculate downtime
+        """
+        if self.daily_stats:
+            self.daily_stats.record_reconnect()
+        logger.info("Bot Connection Resumed")
 
     async def close(self) -> None:
         """Cleanup when bot is shutting down."""

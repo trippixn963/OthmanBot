@@ -140,6 +140,20 @@ class BanExpiryScheduler:
                             ("Error", str(e)),
                         ])
 
+                    # Send DM notification to the user whose ban expired
+                    try:
+                        if hasattr(self.bot, 'ban_notifier') and self.bot.ban_notifier:
+                            await self.bot.ban_notifier.notify_ban_expired(
+                                user_id=user_id,
+                                scope=scope,
+                                thread_id=thread_id
+                            )
+                    except Exception as e:
+                        logger.warning("Failed to send ban expiry notification DM", [
+                            ("User ID", str(user_id)),
+                            ("Error", str(e)),
+                        ])
+
                 except Exception as e:
                     # Log error but continue processing other bans
                     logger.error("Failed to process expired ban", [

@@ -2,16 +2,21 @@
 OthmanBot - Daily Stats Service
 ===============================
 
-Tracks daily statistics and sends a summary webhook at midnight NY_TZ.
+Tracks daily and weekly statistics and sends summary webhooks at midnight NY_TZ.
 All data stored in SQLite - nothing in memory that can be lost on restart.
 
 Features:
 - Debate creation/activity tracking
-- Karma vote tracking
+- Karma vote tracking (with net karma)
 - News posting stats
 - Command usage tracking
+- Moderation tracking (bans, unbans, auto-unbans)
+- Hot debate tracking
+- Bot health tracking (uptime, disconnects, restarts)
 - Daily summary webhook at 00:00 NY_TZ
 - Weekly summary webhook every Sunday at midnight
+- Weekly health report every Sunday at midnight
+- Week-over-week trend comparisons
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
@@ -34,9 +39,13 @@ from src.core.config import NY_TZ, STATUS_CHECK_INTERVAL
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 DB_PATH = DATA_DIR / "stats.db"
 
-# Colors
+# Colors for embeds
 COLOR_GREEN = 0x00FF00
 COLOR_BLUE = 0x3498DB
+COLOR_GOLD = 0xFFD700
+COLOR_ORANGE = 0xFF6B00
+COLOR_RED = 0xFF0000
+COLOR_PURPLE = 0x9B59B6
 
 
 class DailyStatsService:
@@ -88,14 +97,42 @@ class DailyStatsService:
                     messages_in_debates INTEGER DEFAULT 0,
                     upvotes_given INTEGER DEFAULT 0,
                     downvotes_given INTEGER DEFAULT 0,
+                    net_karma INTEGER DEFAULT 0,
                     news_posted INTEGER DEFAULT 0,
                     soccer_posted INTEGER DEFAULT 0,
                     gaming_posted INTEGER DEFAULT 0,
                     commands_used INTEGER DEFAULT 0,
                     users_banned INTEGER DEFAULT 0,
                     users_unbanned INTEGER DEFAULT 0,
+                    auto_unbans INTEGER DEFAULT 0,
+                    hot_debates INTEGER DEFAULT 0,
+                    unique_participants INTEGER DEFAULT 0,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(date)
+                )
+            """)
+
+            # Table for bot health events
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS bot_health_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    reason TEXT,
+                    details TEXT
+                )
+            """)
+
+            # Table for downtime tracking
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS downtime_periods (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    disconnect_time TEXT NOT NULL,
+                    reconnect_time TEXT,
+                    downtime_minutes REAL,
+                    date TEXT NOT NULL,
+                    reason TEXT
                 )
             """)
 
@@ -155,6 +192,14 @@ class DailyStatsService:
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_debate_stats_date
                 ON debate_stats(date)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_health_date
+                ON bot_health_events(date)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_downtime_date
+                ON downtime_periods(date)
             """)
 
             conn.commit()
@@ -281,22 +326,22 @@ class DailyStatsService:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # Update daily activity
+            # Update daily activity with net karma tracking
+            karma_change = 1 if is_upvote else -1
             if is_upvote:
                 cursor.execute("""
                     UPDATE daily_activity
-                    SET upvotes_given = upvotes_given + 1
+                    SET upvotes_given = upvotes_given + 1, net_karma = net_karma + 1
                     WHERE date = ?
                 """, (date,))
             else:
                 cursor.execute("""
                     UPDATE daily_activity
-                    SET downvotes_given = downvotes_given + 1
+                    SET downvotes_given = downvotes_given + 1, net_karma = net_karma - 1
                     WHERE date = ?
                 """, (date,))
 
             # Update top debaters karma received
-            karma_change = 1 if is_upvote else -1
             cursor.execute("""
                 INSERT INTO top_debaters (date, user_id, user_name, karma_received)
                 VALUES (?, ?, ?, ?)
@@ -383,8 +428,8 @@ class DailyStatsService:
         except sqlite3.Error as e:
             logger.debug("Stats DB User Banned Error", [("Error", str(e))])
 
-    def record_user_unbanned(self) -> None:
-        """Record a user unban."""
+    def record_user_unbanned(self, auto: bool = False) -> None:
+        """Record a user unban (manual or auto)."""
         if not self._db_initialized:
             return
 
@@ -394,11 +439,123 @@ class DailyStatsService:
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("UPDATE daily_activity SET users_unbanned = users_unbanned + 1 WHERE date = ?", (date,))
+            if auto:
+                cursor.execute("UPDATE daily_activity SET auto_unbans = auto_unbans + 1 WHERE date = ?", (date,))
+            else:
+                cursor.execute("UPDATE daily_activity SET users_unbanned = users_unbanned + 1 WHERE date = ?", (date,))
             conn.commit()
             conn.close()
         except sqlite3.Error as e:
             logger.debug("Stats DB User Unbanned Error", [("Error", str(e))])
+
+    def record_hot_debate(self) -> None:
+        """Record a debate becoming hot."""
+        if not self._db_initialized:
+            return
+
+        date = self._get_today()
+        self._ensure_daily_record(date)
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE daily_activity SET hot_debates = hot_debates + 1 WHERE date = ?", (date,))
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            logger.debug("Stats DB Hot Debate Error", [("Error", str(e))])
+
+    # =========================================================================
+    # Bot Health Tracking
+    # =========================================================================
+
+    def record_bot_start(self) -> None:
+        """Record bot startup event."""
+        if not self._db_initialized:
+            return
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            now = datetime.now(NY_TZ)
+
+            cursor.execute("""
+                INSERT INTO bot_health_events (event_type, timestamp, date, reason)
+                VALUES (?, ?, ?, ?)
+            """, ("start", now.isoformat(), now.strftime("%Y-%m-%d"), "Bot started"))
+
+            conn.commit()
+            conn.close()
+            logger.debug("Bot Start Recorded")
+        except Exception as e:
+            logger.warning("Failed to Record Bot Start", [("Error", str(e))])
+
+    def record_disconnect(self, reason: str = "Unknown") -> None:
+        """Record a disconnect event."""
+        if not self._db_initialized:
+            return
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            now = datetime.now(NY_TZ)
+
+            cursor.execute("""
+                INSERT INTO bot_health_events (event_type, timestamp, date, reason)
+                VALUES (?, ?, ?, ?)
+            """, ("disconnect", now.isoformat(), now.strftime("%Y-%m-%d"), reason))
+
+            cursor.execute("""
+                INSERT INTO downtime_periods (disconnect_time, date, reason)
+                VALUES (?, ?, ?)
+            """, (now.isoformat(), now.strftime("%Y-%m-%d"), reason))
+
+            conn.commit()
+            conn.close()
+            logger.debug("Disconnect Recorded", [("Reason", reason)])
+        except Exception as e:
+            logger.warning("Failed to Record Disconnect", [("Error", str(e))])
+
+    def record_reconnect(self) -> None:
+        """Record a reconnect event and calculate downtime."""
+        if not self._db_initialized:
+            return
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            now = datetime.now(NY_TZ)
+
+            cursor.execute("""
+                INSERT INTO bot_health_events (event_type, timestamp, date, reason)
+                VALUES (?, ?, ?, ?)
+            """, ("reconnect", now.isoformat(), now.strftime("%Y-%m-%d"), "Reconnected"))
+
+            # Close open downtime period
+            cursor.execute("""
+                SELECT id, disconnect_time FROM downtime_periods
+                WHERE reconnect_time IS NULL
+                ORDER BY id DESC LIMIT 1
+            """)
+            open_period = cursor.fetchone()
+
+            if open_period:
+                period_id, disconnect_time_str = open_period
+                disconnect_time = datetime.fromisoformat(disconnect_time_str)
+                downtime_mins = (now - disconnect_time).total_seconds() / 60
+
+                cursor.execute("""
+                    UPDATE downtime_periods
+                    SET reconnect_time = ?, downtime_minutes = ?
+                    WHERE id = ?
+                """, (now.isoformat(), downtime_mins, period_id))
+
+                logger.debug("Reconnect Recorded", [("Downtime", f"{downtime_mins:.1f}m")])
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning("Failed to Record Reconnect", [("Error", str(e))])
 
     # =========================================================================
     # Query Methods
@@ -416,8 +573,9 @@ class DailyStatsService:
             # Get daily activity
             cursor.execute("""
                 SELECT debates_created, debates_deleted, messages_in_debates,
-                       upvotes_given, downvotes_given, news_posted, soccer_posted,
-                       gaming_posted, commands_used, users_banned, users_unbanned
+                       upvotes_given, downvotes_given, net_karma, news_posted, soccer_posted,
+                       gaming_posted, commands_used, users_banned, users_unbanned,
+                       auto_unbans, hot_debates
                 FROM daily_activity
                 WHERE date = ?
             """, (date,))
@@ -427,15 +585,31 @@ class DailyStatsService:
                 conn.close()
                 return None
 
-            # Get top debaters
+            # Get unique participants count
+            cursor.execute("""
+                SELECT COUNT(DISTINCT user_id) FROM top_debaters WHERE date = ?
+            """, (date,))
+            unique_participants = cursor.fetchone()[0] or 0
+
+            # Get top debaters by karma
+            cursor.execute("""
+                SELECT user_id, user_name, messages, karma_received, debates_started
+                FROM top_debaters
+                WHERE date = ? AND karma_received > 0
+                ORDER BY karma_received DESC
+                LIMIT 5
+            """, (date,))
+            top_karma_earners = cursor.fetchall()
+
+            # Get most active by messages
             cursor.execute("""
                 SELECT user_id, user_name, messages, karma_received, debates_started
                 FROM top_debaters
                 WHERE date = ?
                 ORDER BY messages DESC
-                LIMIT 10
+                LIMIT 5
             """, (date,))
-            top_debaters = cursor.fetchall()
+            most_active = cursor.fetchall()
 
             # Get top commands
             cursor.execute("""
@@ -455,13 +629,18 @@ class DailyStatsService:
                 "messages_in_debates": row[2] or 0,
                 "upvotes_given": row[3] or 0,
                 "downvotes_given": row[4] or 0,
-                "news_posted": row[5] or 0,
-                "soccer_posted": row[6] or 0,
-                "gaming_posted": row[7] or 0,
-                "commands_used": row[8] or 0,
-                "users_banned": row[9] or 0,
-                "users_unbanned": row[10] or 0,
-                "top_debaters": top_debaters,
+                "net_karma": row[5] or 0,
+                "news_posted": row[6] or 0,
+                "soccer_posted": row[7] or 0,
+                "gaming_posted": row[8] or 0,
+                "commands_used": row[9] or 0,
+                "users_banned": row[10] or 0,
+                "users_unbanned": row[11] or 0,
+                "auto_unbans": row[12] or 0,
+                "hot_debates": row[13] or 0,
+                "unique_participants": unique_participants,
+                "top_karma_earners": top_karma_earners,
+                "most_active": most_active,
                 "top_commands": top_commands,
             }
 
@@ -487,25 +666,53 @@ class DailyStatsService:
             cursor.execute("""
                 SELECT
                     SUM(debates_created), SUM(messages_in_debates),
-                    SUM(upvotes_given), SUM(downvotes_given),
+                    SUM(upvotes_given), SUM(downvotes_given), SUM(net_karma),
                     SUM(news_posted), SUM(soccer_posted), SUM(gaming_posted),
-                    SUM(commands_used)
+                    SUM(commands_used), SUM(users_banned), SUM(users_unbanned),
+                    SUM(auto_unbans), SUM(hot_debates)
                 FROM daily_activity
                 WHERE date >= ? AND date < ?
             """, (week_ago_str, today_str))
             row = cursor.fetchone()
 
-            # Top debaters for the week
+            # Unique participants
             cursor.execute("""
-                SELECT user_id, user_name, SUM(messages) as total_messages,
-                       SUM(karma_received) as total_karma
+                SELECT COUNT(DISTINCT user_id) FROM top_debaters
+                WHERE date >= ? AND date < ?
+            """, (week_ago_str, today_str))
+            unique_participants = cursor.fetchone()[0] or 0
+
+            # Top karma earners for the week
+            cursor.execute("""
+                SELECT user_id, user_name, SUM(karma_received) as total_karma
+                FROM top_debaters
+                WHERE date >= ? AND date < ?
+                GROUP BY user_id
+                HAVING total_karma > 0
+                ORDER BY total_karma DESC
+                LIMIT 5
+            """, (week_ago_str, today_str))
+            top_karma_earners = cursor.fetchall()
+
+            # Most active for the week
+            cursor.execute("""
+                SELECT user_id, user_name, SUM(messages) as total_messages
                 FROM top_debaters
                 WHERE date >= ? AND date < ?
                 GROUP BY user_id
                 ORDER BY total_messages DESC
-                LIMIT 10
+                LIMIT 5
             """, (week_ago_str, today_str))
-            top_debaters = cursor.fetchall()
+            most_active = cursor.fetchall()
+
+            # Daily breakdown
+            cursor.execute("""
+                SELECT date, debates_created, messages_in_debates, net_karma
+                FROM daily_activity
+                WHERE date >= ? AND date < ?
+                ORDER BY date
+            """, (week_ago_str, today_str))
+            daily_breakdown = cursor.fetchall()
 
             conn.close()
 
@@ -516,15 +723,120 @@ class DailyStatsService:
                 "messages_in_debates": row[1] or 0,
                 "upvotes_given": row[2] or 0,
                 "downvotes_given": row[3] or 0,
-                "news_posted": row[4] or 0,
-                "soccer_posted": row[5] or 0,
-                "gaming_posted": row[6] or 0,
-                "commands_used": row[7] or 0,
-                "top_debaters": top_debaters,
+                "net_karma": row[4] or 0,
+                "news_posted": row[5] or 0,
+                "soccer_posted": row[6] or 0,
+                "gaming_posted": row[7] or 0,
+                "commands_used": row[8] or 0,
+                "users_banned": row[9] or 0,
+                "users_unbanned": row[10] or 0,
+                "auto_unbans": row[11] or 0,
+                "hot_debates": row[12] or 0,
+                "unique_participants": unique_participants,
+                "top_karma_earners": top_karma_earners,
+                "most_active": most_active,
+                "daily_breakdown": daily_breakdown,
             }
 
         except Exception as e:
             logger.warning("Weekly Stats Query Failed", [("Error", str(e))])
+            return {}
+
+    def _get_previous_week_stats(self) -> Optional[Dict]:
+        """Get stats from previous week for trend comparison."""
+        if not self._db_initialized:
+            return None
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            today = datetime.now(NY_TZ).date()
+            two_weeks_ago = (today - timedelta(days=14)).strftime("%Y-%m-%d")
+            one_week_ago = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+
+            cursor.execute("""
+                SELECT
+                    SUM(debates_created),
+                    SUM(messages_in_debates),
+                    SUM(net_karma),
+                    COUNT(DISTINCT date)
+                FROM daily_activity
+                WHERE date >= ? AND date < ?
+            """, (two_weeks_ago, one_week_ago))
+            row = cursor.fetchone()
+
+            conn.close()
+
+            if row and row[3]:  # Has data
+                return {
+                    "debates_created": row[0] or 0,
+                    "messages_in_debates": row[1] or 0,
+                    "net_karma": row[2] or 0,
+                }
+            return None
+        except Exception:
+            return None
+
+    def _get_weekly_health_stats(self) -> Dict:
+        """Get bot health stats for the past 7 days."""
+        if not self._db_initialized:
+            return {}
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            today = datetime.now(NY_TZ).date()
+            week_ago = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+            today_str = today.strftime("%Y-%m-%d")
+
+            # Count events
+            cursor.execute("""
+                SELECT
+                    SUM(CASE WHEN event_type = 'disconnect' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN event_type = 'start' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN event_type = 'reconnect' THEN 1 ELSE 0 END)
+                FROM bot_health_events
+                WHERE date >= ? AND date < ?
+            """, (week_ago, today_str))
+            row = cursor.fetchone()
+
+            # Total downtime
+            cursor.execute("""
+                SELECT SUM(downtime_minutes) FROM downtime_periods
+                WHERE date >= ? AND date < ? AND downtime_minutes IS NOT NULL
+            """, (week_ago, today_str))
+            downtime = cursor.fetchone()[0] or 0
+
+            # Calculate uptime percentage
+            total_mins = 7 * 24 * 60
+            uptime_pct = ((total_mins - downtime) / total_mins) * 100 if total_mins > 0 else 100
+
+            # Daily breakdown
+            cursor.execute("""
+                SELECT date,
+                    SUM(CASE WHEN event_type = 'disconnect' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN event_type = 'start' THEN 1 ELSE 0 END)
+                FROM bot_health_events
+                WHERE date >= ? AND date < ?
+                GROUP BY date
+                ORDER BY date
+            """, (week_ago, today_str))
+            daily_breakdown = cursor.fetchall()
+
+            conn.close()
+
+            return {
+                "total_disconnects": row[0] or 0,
+                "total_starts": row[1] or 0,
+                "total_reconnects": row[2] or 0,
+                "total_downtime_mins": downtime,
+                "uptime_percentage": min(uptime_pct, 100),
+                "daily_breakdown": daily_breakdown,
+            }
+        except Exception as e:
+            logger.warning("Weekly Health Stats Query Failed", [("Error", str(e))])
             return {}
 
     # =========================================================================
@@ -548,59 +860,90 @@ class DailyStatsService:
         # Build fields
         fields = []
 
-        # Debates section
-        if stats["debates_created"] > 0 or stats["messages_in_debates"] > 0:
-            fields.append({
-                "name": "💬 Debates",
-                "value": f"Created: `{stats['debates_created']}` | Messages: `{stats['messages_in_debates']}`",
-                "inline": True
-            })
+        # Main stats row
+        fields.append({
+            "name": "📝 Debates Created",
+            "value": f"`{stats['debates_created']}`",
+            "inline": True
+        })
+        fields.append({
+            "name": "💬 Messages Sent",
+            "value": f"`{stats['messages_in_debates']}`",
+            "inline": True
+        })
+        fields.append({
+            "name": "👥 Participants",
+            "value": f"`{stats['unique_participants']}`",
+            "inline": True
+        })
 
-        # Karma section
-        total_votes = stats["upvotes_given"] + stats["downvotes_given"]
-        if total_votes > 0:
-            fields.append({
-                "name": "⬆️ Karma",
-                "value": f"Upvotes: `{stats['upvotes_given']}` | Downvotes: `{stats['downvotes_given']}`",
-                "inline": True
-            })
+        # Karma row
+        fields.append({
+            "name": "⬆️ Upvotes",
+            "value": f"`{stats['upvotes_given']}`",
+            "inline": True
+        })
+        fields.append({
+            "name": "⬇️ Downvotes",
+            "value": f"`{stats['downvotes_given']}`",
+            "inline": True
+        })
+        net_karma_str = f"+{stats['net_karma']}" if stats['net_karma'] >= 0 else str(stats['net_karma'])
+        fields.append({
+            "name": "✨ Net Karma",
+            "value": f"`{net_karma_str}`",
+            "inline": True
+        })
 
-        # News section
-        total_posts = stats["news_posted"] + stats["soccer_posted"] + stats["gaming_posted"]
-        if total_posts > 0:
+        # Moderation stats (only if any)
+        mod_actions = stats['users_banned'] + stats['users_unbanned'] + stats['auto_unbans']
+        if mod_actions > 0:
+            mod_str = f"🚫 Bans: `{stats['users_banned']}` • ✅ Unbans: `{stats['users_unbanned']}` • ⏰ Auto: `{stats['auto_unbans']}`"
             fields.append({
-                "name": "📰 Content Posted",
-                "value": f"News: `{stats['news_posted']}` | Soccer: `{stats['soccer_posted']}` | Gaming: `{stats['gaming_posted']}`",
+                "name": "⚖️ Moderation",
+                "value": mod_str,
                 "inline": False
             })
 
-        # Commands section
-        if stats["commands_used"] > 0:
-            cmd_list = ", ".join([f"`/{cmd}` ({count})" for cmd, count in stats["top_commands"][:5]])
+        # Hot debates
+        if stats['hot_debates'] > 0:
             fields.append({
-                "name": "⚡ Commands Used",
-                "value": f"Total: `{stats['commands_used']}`\n{cmd_list}" if cmd_list else f"Total: `{stats['commands_used']}`",
-                "inline": False
+                "name": "🔥 Hot Debates",
+                "value": f"`{stats['hot_debates']}`",
+                "inline": True
             })
 
-        # Top debaters
-        if stats["top_debaters"]:
+        # Top karma earners
+        if stats["top_karma_earners"]:
             top_list = "\n".join([
-                f"**{i+1}.** {name} - `{msgs}` msgs, `{karma:+}` karma"
-                for i, (user_id, name, msgs, karma, debates) in enumerate(stats["top_debaters"][:5])
+                f"**{i+1}.** {name} `[{user_id}]` - `+{karma}`"
+                for i, (user_id, name, msgs, karma, debates) in enumerate(stats["top_karma_earners"][:5])
             ])
             fields.append({
-                "name": "🏆 Top Debaters",
+                "name": "🏆 Top Karma Earners",
                 "value": top_list,
                 "inline": False
             })
 
-        # Moderation
-        if stats["users_banned"] > 0 or stats["users_unbanned"] > 0:
+        # Most active
+        if stats["most_active"]:
+            active_list = ", ".join([
+                f"{name} (`{msgs}`)"
+                for _, name, msgs, _, _ in stats["most_active"][:5]
+            ])
             fields.append({
-                "name": "🛡️ Moderation",
-                "value": f"Banned: `{stats['users_banned']}` | Unbanned: `{stats['users_unbanned']}`",
-                "inline": True
+                "name": "💬 Most Active",
+                "value": active_list,
+                "inline": False
+            })
+
+        # Commands section
+        if stats["commands_used"] > 0 and stats["top_commands"]:
+            cmd_list = ", ".join([f"`/{cmd}` ({count})" for cmd, count in stats["top_commands"][:5]])
+            fields.append({
+                "name": "⚡ Commands Used",
+                "value": f"Total: `{stats['commands_used']}` • {cmd_list}",
+                "inline": False
             })
 
         embed = {
@@ -612,23 +955,12 @@ class DailyStatsService:
             "footer": {"text": "OthmanBot Daily Summary"}
         }
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.webhook_url,
-                    json={"embeds": [embed]},
-                    headers={"Content-Type": "application/json"}
-                ) as response:
-                    if response.status == 204:
-                        logger.success("Daily Stats Webhook Sent", [
-                            ("Date", date),
-                            ("Debates", str(stats["debates_created"])),
-                            ("Messages", str(stats["messages_in_debates"])),
-                        ])
-                    else:
-                        logger.error("Stats Webhook Failed", [("Status", str(response.status))])
-        except Exception as e:
-            logger.error("Stats Webhook Error", [("Error", str(e))])
+        await self._send_webhook(embed)
+        logger.info("Daily Stats Webhook Sent", [
+            ("Date", date),
+            ("Debates", str(stats["debates_created"])),
+            ("Messages", str(stats["messages_in_debates"])),
+        ])
 
     async def send_weekly_summary(self) -> None:
         """Send weekly stats summary to webhook."""
@@ -639,49 +971,187 @@ class DailyStatsService:
         if not weekly:
             return
 
+        # Get previous week for trend comparison
+        prev_week = self._get_previous_week_stats()
+
+        def get_trend(current: float, previous: float) -> str:
+            if not previous or previous == 0:
+                return ""
+            change = ((current - previous) / previous) * 100
+            if change > 0:
+                return f" ↑{change:.0f}%"
+            elif change < 0:
+                return f" ↓{abs(change):.0f}%"
+            return ""
+
+        debates_trend = get_trend(weekly['debates_created'], prev_week['debates_created']) if prev_week else ""
+        messages_trend = get_trend(weekly['messages_in_debates'], prev_week['messages_in_debates']) if prev_week else ""
+        karma_trend = get_trend(weekly['net_karma'], prev_week['net_karma']) if prev_week and prev_week['net_karma'] else ""
+
         # Build fields
         fields = [
             {
-                "name": "💬 Debates",
-                "value": f"Created: `{weekly['debates_created']}` | Messages: `{weekly['messages_in_debates']}`",
+                "name": "📝 Debates Created",
+                "value": f"`{weekly['debates_created']}`{debates_trend}",
                 "inline": True
             },
             {
-                "name": "⬆️ Karma",
-                "value": f"Upvotes: `{weekly['upvotes_given']}` | Downvotes: `{weekly['downvotes_given']}`",
+                "name": "💬 Messages Sent",
+                "value": f"`{weekly['messages_in_debates']}`{messages_trend}",
+                "inline": True
+            },
+            {
+                "name": "👥 Participants",
+                "value": f"`{weekly['unique_participants']}`",
+                "inline": True
+            },
+            {
+                "name": "⬆️ Upvotes",
+                "value": f"`{weekly['upvotes_given']}`",
+                "inline": True
+            },
+            {
+                "name": "⬇️ Downvotes",
+                "value": f"`{weekly['downvotes_given']}`",
                 "inline": True
             },
         ]
 
-        # News section
-        total_posts = weekly["news_posted"] + weekly["soccer_posted"] + weekly["gaming_posted"]
-        if total_posts > 0:
+        net_karma_str = f"+{weekly['net_karma']}" if weekly['net_karma'] >= 0 else str(weekly['net_karma'])
+        fields.append({
+            "name": "✨ Net Karma",
+            "value": f"`{net_karma_str}`{karma_trend}",
+            "inline": True
+        })
+
+        # Moderation stats (only if any)
+        mod_actions = weekly['users_banned'] + weekly['users_unbanned'] + weekly['auto_unbans']
+        if mod_actions > 0:
+            mod_str = f"🚫 Bans: `{weekly['users_banned']}` • ✅ Unbans: `{weekly['users_unbanned']}` • ⏰ Auto: `{weekly['auto_unbans']}`"
             fields.append({
-                "name": "📰 Content Posted",
-                "value": f"News: `{weekly['news_posted']}` | Soccer: `{weekly['soccer_posted']}` | Gaming: `{weekly['gaming_posted']}`",
+                "name": "⚖️ Moderation",
+                "value": mod_str,
                 "inline": False
             })
 
-        # Top debaters
-        if weekly["top_debaters"]:
-            top_list = "\n".join([
-                f"**{i+1}.** {name} - `{msgs}` msgs, `{karma:+}` karma"
-                for i, (user_id, name, msgs, karma) in enumerate(weekly["top_debaters"][:5])
+        # Hot debates
+        if weekly['hot_debates'] > 0:
+            fields.append({
+                "name": "🔥 Hot Debates",
+                "value": f"`{weekly['hot_debates']}`",
+                "inline": True
+            })
+
+        # Daily breakdown
+        if weekly["daily_breakdown"]:
+            daily_list = "\n".join([
+                f"`{date}` - {debates} debates, {msgs} msgs, {'+' if karma >= 0 else ''}{karma} karma"
+                for date, debates, msgs, karma in weekly["daily_breakdown"]
             ])
             fields.append({
-                "name": "🏆 Top Debaters This Week",
+                "name": "📅 Daily Breakdown",
+                "value": daily_list,
+                "inline": False
+            })
+
+        # Top karma earners
+        if weekly["top_karma_earners"]:
+            top_list = "\n".join([
+                f"**{i+1}.** {name} `[{user_id}]` - `+{karma}`"
+                for i, (user_id, name, karma) in enumerate(weekly["top_karma_earners"][:5])
+            ])
+            fields.append({
+                "name": "🏆 Top Karma Earners",
                 "value": top_list,
+                "inline": False
+            })
+
+        # Most active
+        if weekly["most_active"]:
+            active_list = ", ".join([
+                f"{name} (`{msgs}`)"
+                for _, name, msgs in weekly["most_active"][:5]
+            ])
+            fields.append({
+                "name": "💬 Most Active",
+                "value": active_list,
                 "inline": False
             })
 
         embed = {
             "title": "📊 OthmanBot - Weekly Stats",
-            "description": f"**Period:** {weekly['start_date']} to {weekly['end_date']}",
-            "color": COLOR_GREEN,
+            "description": f"**Week:** {weekly['start_date']} → {weekly['end_date']}",
+            "color": COLOR_GOLD,
             "fields": fields,
             "timestamp": datetime.now(NY_TZ).isoformat(),
             "footer": {"text": "OthmanBot Weekly Summary"}
         }
+
+        await self._send_webhook(embed)
+        logger.info("Weekly Stats Webhook Sent", [
+            ("Week", f"{weekly['start_date']} → {weekly['end_date']}"),
+            ("Debates", str(weekly['debates_created'])),
+        ])
+
+    async def send_weekly_health_report(self) -> None:
+        """Send weekly bot health report."""
+        if not self.webhook_url:
+            return
+
+        health = self._get_weekly_health_stats()
+        if not health:
+            return
+
+        uptime = health["uptime_percentage"]
+        if uptime >= 99:
+            color = COLOR_GREEN
+            status = "Excellent"
+        elif uptime >= 95:
+            color = COLOR_ORANGE
+            status = "Good"
+        else:
+            color = COLOR_RED
+            status = "Needs Attention"
+
+        fields = [
+            {"name": "⏱️ Uptime", "value": f"`{uptime:.2f}%` ({status})", "inline": True},
+            {"name": "⚠️ Disconnects", "value": f"`{health['total_disconnects']}`", "inline": True},
+            {"name": "🔄 Restarts", "value": f"`{health['total_starts']}`", "inline": True},
+            {"name": "⏰ Total Downtime", "value": f"`{health['total_downtime_mins']:.1f}` minutes", "inline": True},
+        ]
+
+        # Daily breakdown
+        if health["daily_breakdown"]:
+            daily_list = "\n".join([
+                f"`{date}` - {disc} disconnects, {starts} restarts"
+                for date, disc, starts in health["daily_breakdown"]
+                if disc > 0 or starts > 0
+            ])
+            if daily_list:
+                fields.append({
+                    "name": "📅 Daily Events",
+                    "value": daily_list,
+                    "inline": False
+                })
+
+        embed = {
+            "title": "🤖 OthmanBot - Weekly Health Report",
+            "color": color,
+            "fields": fields,
+            "timestamp": datetime.now(NY_TZ).isoformat(),
+            "footer": {"text": "OthmanBot Weekly Health Report"}
+        }
+
+        await self._send_webhook(embed)
+        logger.info("Weekly Health Report Sent", [
+            ("Uptime", f"{uptime:.2f}%"),
+            ("Disconnects", str(health['total_disconnects'])),
+        ])
+
+    async def _send_webhook(self, embed: dict) -> None:
+        """Send an embed to the webhook."""
+        if not self.webhook_url:
+            return
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -690,14 +1160,10 @@ class DailyStatsService:
                     json={"embeds": [embed]},
                     headers={"Content-Type": "application/json"}
                 ) as response:
-                    if response.status == 204:
-                        logger.success("Weekly Stats Webhook Sent", [
-                            ("Period", f"{weekly['start_date']} to {weekly['end_date']}"),
-                        ])
-                    else:
-                        logger.error("Weekly Stats Webhook Failed", [("Status", str(response.status))])
+                    if response.status not in (200, 204):
+                        logger.warning("Stats Webhook Error", [("Status", str(response.status))])
         except Exception as e:
-            logger.error("Weekly Stats Webhook Error", [("Error", str(e))])
+            logger.warning("Stats Webhook Failed", [("Error", str(e))])
 
     # =========================================================================
     # Scheduler
@@ -719,36 +1185,45 @@ class DailyStatsService:
                     wait_seconds = (tomorrow - now).total_seconds()
 
                     logger.debug("Stats Scheduler Waiting", [
-                        ("Next Run", tomorrow.strftime('%Y-%m-%d %I:%M %p NY_TZ')),
-                        ("Wait", f"{int(wait_seconds)}s"),
+                        ("Next Run", tomorrow.strftime('%Y-%m-%d %H:%M EST')),
+                        ("Wait", f"{wait_seconds / 3600:.1f}h"),
                     ])
 
                     await asyncio.sleep(wait_seconds)
 
                     # Send daily summary for yesterday
-                    yesterday = (datetime.now(NY_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+                    yesterday = (datetime.now(NY_TZ) - timedelta(seconds=1)).strftime("%Y-%m-%d")
                     await self.send_daily_summary(yesterday)
 
-                    # If it's Sunday, send weekly summary
+                    # If it's Sunday, send weekly summaries
                     if datetime.now(NY_TZ).weekday() == 6:
+                        await asyncio.sleep(2)
                         await self.send_weekly_summary()
+                        await asyncio.sleep(2)
+                        await self.send_weekly_health_report()
 
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
                     logger.error("Stats Scheduler Error", [("Error", str(e))])
-                    await asyncio.sleep(STATUS_CHECK_INTERVAL)
+                    await asyncio.sleep(60)
 
         self._scheduler_task = asyncio.create_task(scheduler_loop())
         logger.info("Stats Scheduler Started", [
-            ("Schedule", "Midnight NY_TZ daily"),
-            ("Weekly", "Sunday midnight"),
+            ("Daily", "00:00 EST"),
+            ("Weekly", "Sunday 00:00 EST"),
         ])
 
-    def stop_scheduler(self) -> None:
+    async def stop_scheduler(self) -> None:
         """Stop the midnight stats scheduler."""
         if self._scheduler_task and not self._scheduler_task.done():
             self._scheduler_task.cancel()
+            try:
+                await self._scheduler_task
+            except asyncio.CancelledError:
+                pass
+            self._scheduler_task = None
+            logger.info("Stats Scheduler Stopped")
 
 
 # =============================================================================

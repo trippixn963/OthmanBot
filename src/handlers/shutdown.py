@@ -174,6 +174,16 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
     if hasattr(bot, 'health_server') and bot.health_server:
         cleanup_tasks.append(("Health Check Server", bot.health_server.stop()))
 
+    # 16. Close interaction logger session
+    if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+        cleanup_tasks.append(("Interaction Logger", bot.interaction_logger.close()))
+
+    # 17. Stop daily stats scheduler
+    if hasattr(bot, 'daily_stats') and bot.daily_stats:
+        if hasattr(bot.daily_stats, '_scheduler_task') and bot.daily_stats._scheduler_task:
+            bot.daily_stats._scheduler_task.cancel()
+            cleanup_tasks.append(("Daily Stats Scheduler", _cancel_task(bot.daily_stats._scheduler_task)))
+
     # Execute all cleanup tasks with timeout
     if cleanup_tasks:
         try:

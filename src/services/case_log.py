@@ -271,8 +271,30 @@ Severe/Habitual          →  Permanent
                 # If no reason provided, ping moderator
                 if not reason:
                     await case_thread.send(
-                        f"{banned_by.mention} Please provide a reason for this ban."
+                        f"{banned_by.mention} Please provide a reason for this disallow."
                     )
+
+                # REPEAT OFFENDER ESCALATION: 3+ disallows and not already permanent
+                is_permanent = duration.lower() in ("permanent", "perm", "forever", "indefinite")
+                if ban_count >= 3 and not is_permanent:
+                    escalation_embed = discord.Embed(
+                        title="⚠️ Repeat Offender Alert",
+                        color=discord.Color.orange(),
+                        description=f"**{user.display_name}** has been disallowed **{ban_count} times**."
+                    )
+                    escalation_embed.add_field(
+                        name="Recommendation",
+                        value="Consider a **permanent disallow** for this user.\n"
+                              f"Use: `/disallow user:{user.id} duration:permanent`",
+                        inline=False
+                    )
+                    escalation_embed.set_footer(text="This alert triggers at 3+ disallows when not permanent")
+                    await case_thread.send(embed=escalation_embed)
+
+                    logger.info("Case Log: Repeat Offender Alert Sent", [
+                        ("User", f"{user.display_name} ({user.id})"),
+                        ("Disallow Count", str(ban_count)),
+                    ])
 
                 logger.tree("Case Log: Ban Logged", [
                     ("User", f"{user.display_name} ({user.id})"),
