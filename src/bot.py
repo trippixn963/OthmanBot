@@ -273,6 +273,8 @@ class OthmanBot(commands.Bot):
         await self.load_extension("src.commands.allow")
         await self.load_extension("src.commands.rename")
         await self.load_extension("src.commands.cases")
+        await self.load_extension("src.commands.close")
+        await self.load_extension("src.commands.open")
 
         # Note: Commands will be synced in on_ready for instant guild-specific sync
         logger.info("Bot setup complete - commands will sync on ready")
