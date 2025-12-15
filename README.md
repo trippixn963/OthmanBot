@@ -118,16 +118,38 @@ This bot was custom-built for **discord.gg/syria** and is provided as-is for edu
 
 ```
 src/
-├── bot.py              # Main bot class
-├── core/               # Config, logging, presence
-├── commands/           # Slash commands
-├── handlers/           # Event handlers (debates, ready, shutdown)
-├── services/           # Business logic
-│   ├── debates/        # Karma, analytics, reconciliation
-│   ├── scrapers/       # News, soccer, gaming
-│   └── daily_stats.py  # Activity tracking
-├── posting/            # Content posting logic
-└── utils/              # Helpers, retry logic, caching
+├── bot.py                  # Main bot class and event routing
+├── core/                   # Config, logging, health, presence, backup
+├── commands/               # Slash commands
+│   ├── karma.py            # Karma stats lookup
+│   ├── disallow.py         # Ban user from debates
+│   ├── allow.py            # Unban user from debates
+│   ├── close.py            # Close debate thread
+│   ├── open.py             # Reopen closed thread
+│   ├── rename.py           # Rename debate thread
+│   └── cases.py            # Search moderation cases
+├── handlers/               # Discord event handlers
+│   ├── debates.py          # Karma voting, thread creation
+│   ├── reactions.py        # Announcement reactions
+│   ├── ready.py            # Bot startup initialization
+│   └── shutdown.py         # Graceful shutdown
+├── services/
+│   ├── debates/            # Debates system
+│   │   ├── database.py     # SQLite operations
+│   │   ├── analytics.py    # Thread analytics embeds
+│   │   ├── leaderboard.py  # Karma rankings
+│   │   ├── reconciliation.py # Karma sync
+│   │   └── tags.py         # AI topic tagging
+│   ├── scrapers/           # Content scrapers
+│   ├── schedulers/         # Content rotation
+│   ├── appeal_service.py   # Appeal submission/review
+│   ├── case_log.py         # Moderation case threads
+│   ├── ban_notifier.py     # DM notifications
+│   └── daily_stats.py      # Activity tracking
+├── posting/                # Content posting logic
+├── views/                  # Discord UI components
+│   └── appeals.py          # Appeal buttons/modals
+└── utils/                  # Helpers, retry, caching, translation
 ```
 
 ---
