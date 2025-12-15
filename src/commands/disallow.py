@@ -346,6 +346,24 @@ class DisallowCog(commands.Cog):
                     ("Error", str(e)),
                 ])
 
+            # Send DM notification to the banned user
+            try:
+                if self.bot.ban_notifier:
+                    await self.bot.ban_notifier.notify_ban(
+                        user=user,
+                        banned_by=interaction.user,
+                        scope=scope,
+                        duration=duration_display,
+                        expires_at=expires_at,
+                        thread_id=target_thread_id,
+                        reason=reason
+                    )
+            except Exception as e:
+                logger.warning("Failed to send ban notification DM", [
+                    ("User", f"{user.name} ({user.id})"),
+                    ("Error", str(e)),
+                ])
+
             # Remove user's reactions in background (so they must re-acknowledge rules when unbanned)
             asyncio.create_task(self._remove_user_reactions(user, target_thread_id))
         else:

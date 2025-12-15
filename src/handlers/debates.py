@@ -9,11 +9,8 @@ Server: discord.gg/syria
 """
 
 import asyncio
-import fcntl
-import json
 import sqlite3
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Dict, Optional, TYPE_CHECKING
 import discord
 
@@ -61,15 +58,86 @@ UPVOTE_EMOJI = "\u2b06\ufe0f"  # ⬆️
 DOWNVOTE_EMOJI = "\u2b07\ufe0f"  # ⬇️
 PARTICIPATE_EMOJI = "✅"  # Checkmark for participation access control
 
-DEBATE_COUNTER_FILE = Path("data/debate_counter.json")
 DEBATE_MANAGEMENT_ROLE_ID = MODERATOR_ROLE_ID  # Debate Management role - can post without reacting
 
 # Ban evasion detection - accounts younger than this are flagged
 BAN_EVASION_ACCOUNT_AGE_DAYS = 7
 
-# Track users we've already alerted about (to avoid spam)
-# Set of user IDs that have been flagged for potential ban evasion
-_ban_evasion_alerted_users: set[int] = set()
+# How long to remember ban evasion alerts (24 hours)
+BAN_EVASION_ALERT_EXPIRY_HOURS = 24
+
+
+# =============================================================================
+# Ban Evasion Alert Cache
+# =============================================================================
+
+class BanEvasionAlertCache:
+    """
+    Time-based cache for tracking ban evasion alerts.
+
+    Prevents alert spam by remembering which users have been flagged,
+    but automatically expires entries after a configurable time period
+    to prevent unbounded memory growth.
+
+    DESIGN: Uses a dict mapping user_id -> alert_timestamp instead of a simple set.
+    Cleanup happens on each access to keep memory bounded.
+    """
+
+    def __init__(self, expiry_hours: int = BAN_EVASION_ALERT_EXPIRY_HOURS) -> None:
+        """
+        Initialize the alert cache.
+
+        Args:
+            expiry_hours: Hours before an alert entry expires and user can be re-alerted
+        """
+        self._alerts: Dict[int, datetime] = {}
+        self._expiry = timedelta(hours=expiry_hours)
+
+    def should_alert(self, user_id: int) -> bool:
+        """
+        Check if we should alert for this user.
+
+        Performs cleanup of expired entries on each check.
+
+        Args:
+            user_id: Discord user ID to check
+
+        Returns:
+            True if we should send an alert, False if already alerted recently
+        """
+        self._cleanup()
+
+        if user_id in self._alerts:
+            return False  # Already alerted and not expired
+        return True
+
+    def record_alert(self, user_id: int) -> None:
+        """
+        Record that we've alerted about this user.
+
+        Args:
+            user_id: Discord user ID that was flagged
+        """
+        self._alerts[user_id] = datetime.now()
+
+    def _cleanup(self) -> None:
+        """Remove expired entries from cache."""
+        now = datetime.now()
+        expired = [
+            user_id for user_id, alert_time in self._alerts.items()
+            if now - alert_time > self._expiry
+        ]
+        for user_id in expired:
+            del self._alerts[user_id]
+
+    @property
+    def size(self) -> int:
+        """Return current cache size (for monitoring)."""
+        return len(self._alerts)
+
+
+# Module-level instance for ban evasion tracking
+_ban_evasion_cache = BanEvasionAlertCache()
 
 
 # =============================================================================
@@ -277,48 +345,95 @@ async def update_analytics_embed(bot: "OthmanBot", thread: discord.Thread, force
         ])
 
 
-def _get_next_debate_number_sync() -> int:
+async def refresh_all_analytics_embeds(bot: "OthmanBot") -> int:
     """
-    Synchronous helper for get_next_debate_number.
-    Uses file locking to prevent race conditions when multiple threads
-    are created simultaneously.
-    """
-    DEBATE_COUNTER_FILE.parent.mkdir(exist_ok=True)
-    lock_file = DEBATE_COUNTER_FILE.with_suffix('.lock')
+    Refresh all analytics embeds for active debate threads.
 
+    This is a one-time migration function to update existing embeds
+    with new fields (e.g., created_at timestamp).
+
+    Args:
+        bot: The OthmanBot instance
+
+    Returns:
+        Number of embeds updated
+    """
+    if not hasattr(bot, 'debates_service') or bot.debates_service is None:
+        logger.warning("Cannot refresh analytics - debates service not available")
+        return 0
+
+    if not DEBATES_FORUM_ID:
+        logger.warning("Cannot refresh analytics - DEBATES_FORUM_ID not set")
+        return 0
+
+    forum = bot.get_channel(DEBATES_FORUM_ID)
+    if not forum or not isinstance(forum, discord.ForumChannel):
+        logger.warning("Cannot refresh analytics - forum channel not found")
+        return 0
+
+    updated_count = 0
+    error_count = 0
+
+    logger.info("📊 Starting Analytics Embed Refresh", [
+        ("Forum", forum.name),
+    ])
+
+    # Get all active (non-archived) threads
+    for thread in forum.threads:
+        if thread.archived:
+            continue
+
+        try:
+            await update_analytics_embed(bot, thread, force=True)
+            updated_count += 1
+
+            # Small delay to avoid rate limits
+            await asyncio.sleep(DISCORD_API_DELAY)
+
+        except Exception as e:
+            error_count += 1
+            logger.warning("📊 Failed To Refresh Analytics For Thread", [
+                ("Thread", thread.name[:50]),
+                ("Error", str(e)),
+            ])
+
+    logger.success("📊 Analytics Embed Refresh Complete", [
+        ("Updated", str(updated_count)),
+        ("Errors", str(error_count)),
+    ])
+
+    return updated_count
+
+
+async def get_next_debate_number(bot: "OthmanBot") -> int:
+    """
+    Get and increment the debate counter atomically.
+
+    Uses database atomic increment to prevent race conditions when multiple
+    threads are created simultaneously. Falls back to timestamp-based number
+    if database is unavailable.
+
+    Args:
+        bot: The OthmanBot instance
+
+    Returns:
+        Next debate number (guaranteed unique)
+    """
     try:
-        # Use exclusive file lock to prevent race conditions
-        with open(lock_file, 'w') as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            try:
-                if DEBATE_COUNTER_FILE.exists():
-                    with open(DEBATE_COUNTER_FILE, "r") as f:
-                        data = json.load(f)
-                        current = data.get("count", 0)
-                else:
-                    current = 0
-
-                # Increment and save
-                next_num = current + 1
-                with open(DEBATE_COUNTER_FILE, "w") as f:
-                    json.dump({"count": next_num}, f)
-
-                return next_num
-            finally:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-    except (json.JSONDecodeError, IOError, OSError) as e:
+        if hasattr(bot, 'debates_service') and bot.debates_service is not None:
+            # Use atomic database increment - thread safe via database lock
+            return bot.debates_service.db.get_next_debate_number()
+        else:
+            logger.warning("🔢 Debates service not available - using fallback")
+            import time
+            return int(time.time()) % 100000
+    except Exception as e:
         logger.error("🔢 Failed To Get Debate Number - Using Fallback", [
             ("Error", str(e)),
             ("Fallback", "Returning timestamp-based number to avoid duplicates"),
         ])
-        # Use timestamp-based fallback to avoid duplicate debate numbers
         import time
-        return int(time.time()) % 100000  # Unique fallback number
-
-
-async def get_next_debate_number() -> int:
-    """Get and increment the debate counter (non-blocking)."""
-    return await asyncio.to_thread(_get_next_debate_number_sync)
+        return int(time.time()) % 100000
 
 
 def is_debates_forum_message(channel) -> bool:
@@ -416,16 +531,16 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
         return
 
     # BAN EVASION DETECTION: Check if this is a new account posting in debates
-    # Only alert once per user (tracked in _ban_evasion_alerted_users)
-    if message.author.id not in _ban_evasion_alerted_users:
+    # Only alert once per user per 24 hours (tracked in _ban_evasion_cache)
+    if _ban_evasion_cache.should_alert(message.author.id):
         # Calculate account age
         account_created = message.author.created_at
         now = datetime.now(account_created.tzinfo) if account_created.tzinfo else datetime.utcnow()
         account_age_days = (now - account_created).days
 
         if account_age_days < BAN_EVASION_ACCOUNT_AGE_DAYS:
-            # Flag this user - add to set so we don't alert again
-            _ban_evasion_alerted_users.add(message.author.id)
+            # Record this alert so we don't spam (expires after 24 hours)
+            _ban_evasion_cache.record_alert(message.author.id)
 
             logger.warning("🚨 Potential Ban Evasion Detected", [
                 ("User", f"{message.author.name} ({message.author.id})"),
@@ -759,7 +874,7 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
             return
 
         # Get next debate number and rename thread
-        debate_number = await get_next_debate_number()
+        debate_number = await get_next_debate_number(bot)
 
         # Only add number if not already numbered
         if not original_title.split("|")[0].strip().isdigit():
@@ -931,66 +1046,84 @@ async def on_debate_reaction_add(
         reaction: The reaction that was added
         user: The user who added the reaction
     """
-    # Wait for bot to be fully ready (prevents init race conditions)
-    if not _is_bot_ready(bot):
-        return
-
-    # Ignore bot reactions
-    if user.bot:
-        return
-
-    # Check if it's in debates forum
-    if not is_debates_forum_message(reaction.message.channel):
-        return
-
-    # Check if it's an upvote or downvote
-    emoji = str(reaction.emoji)
-    if emoji not in (UPVOTE_EMOJI, DOWNVOTE_EMOJI):
-        return
-
-    # Get debates service
-    if not hasattr(bot, 'debates_service') or bot.debates_service is None:
-        return
-
-    message = reaction.message
-    author_id = message.author.id
-    voter_id = user.id
-
-    # Prevent self-voting
-    if voter_id == author_id:
-        try:
-            await reaction.remove(user)
-            vote_type = "Upvote" if emoji == UPVOTE_EMOJI else "Downvote"
-            logger.info("Self-Vote Prevented", [
-                ("User", f"{user.name} ({user.id})"),
-                ("Thread", f"{message.channel.name} ({message.channel.id})"),
-                ("Message ID", str(message.id)),
-            ])
-
-            # Log to webhook
-            if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
-                await bot.interaction_logger.log_self_vote_blocked(
-                    user, message.channel.name, vote_type
-                )
-        except discord.HTTPException as e:
-            logger.warning("🗳️ Failed To Remove Self-Vote Reaction", [
-                ("Error", str(e)),
-            ])
-        return
-
-    # Record the vote with error handling
-    vote_type = "Upvote" if emoji == UPVOTE_EMOJI else "Downvote"
     try:
-        if emoji == UPVOTE_EMOJI:
-            success = await bot.debates_service.record_upvote_async(voter_id, message.id, author_id)
-        else:
-            success = await bot.debates_service.record_downvote_async(voter_id, message.id, author_id)
+        # Null safety checks for Discord API objects
+        if reaction is None or user is None or reaction.message is None:
+            return
 
-        if not success:
-            logger.warning("Vote Recording Failed (No Change)", [
+        # Wait for bot to be fully ready (prevents init race conditions)
+        if not _is_bot_ready(bot):
+            return
+
+        # Ignore bot reactions
+        if user.bot:
+            return
+
+        # Check if it's in debates forum
+        if not is_debates_forum_message(reaction.message.channel):
+            return
+
+        # Check if it's an upvote or downvote
+        emoji = str(reaction.emoji)
+        if emoji not in (UPVOTE_EMOJI, DOWNVOTE_EMOJI):
+            return
+
+        # Get debates service
+        if not hasattr(bot, 'debates_service') or bot.debates_service is None:
+            return
+
+        message = reaction.message
+        author_id = message.author.id
+        voter_id = user.id
+
+        # Prevent self-voting
+        if voter_id == author_id:
+            try:
+                await reaction.remove(user)
+                vote_type = "Upvote" if emoji == UPVOTE_EMOJI else "Downvote"
+                logger.info("Self-Vote Prevented", [
+                    ("User", f"{user.name} ({user.id})"),
+                    ("Thread", f"{message.channel.name} ({message.channel.id})"),
+                    ("Message ID", str(message.id)),
+                ])
+
+                # Log to webhook
+                if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+                    await bot.interaction_logger.log_self_vote_blocked(
+                        user, message.channel.name, vote_type
+                    )
+            except discord.HTTPException as e:
+                logger.warning("🗳️ Failed To Remove Self-Vote Reaction", [
+                    ("Error", str(e)),
+                ])
+            return
+
+        # Record the vote with error handling
+        vote_type = "Upvote" if emoji == UPVOTE_EMOJI else "Downvote"
+        try:
+            if emoji == UPVOTE_EMOJI:
+                success = await bot.debates_service.record_upvote_async(voter_id, message.id, author_id)
+            else:
+                success = await bot.debates_service.record_downvote_async(voter_id, message.id, author_id)
+
+            if not success:
+                logger.warning("Vote Recording Failed (No Change)", [
+                    ("Voter", str(voter_id)),
+                    ("Message", str(message.id)),
+                    ("Type", vote_type),
+                ])
+                # Remove the reaction to signal the vote didn't count
+                try:
+                    await reaction.remove(user)
+                except discord.HTTPException:
+                    pass
+                return
+        except Exception as e:
+            logger.error("Vote Recording Exception", [
                 ("Voter", str(voter_id)),
                 ("Message", str(message.id)),
                 ("Type", vote_type),
+                ("Error", str(e)),
             ])
             # Remove the reaction to signal the vote didn't count
             try:
@@ -998,46 +1131,41 @@ async def on_debate_reaction_add(
             except discord.HTTPException:
                 pass
             return
-    except Exception as e:
-        logger.error("Vote Recording Exception", [
-            ("Voter", str(voter_id)),
-            ("Message", str(message.id)),
+
+        logger.info("Vote Recorded", [
+            ("Voter", f"{user.name} ({user.id})"),
+            ("Author", f"{message.author.name} ({author_id})"),
             ("Type", vote_type),
-            ("Error", str(e)),
+            ("Thread", f"{message.channel.name} ({message.channel.id})"),
+            ("Message ID", str(message.id)),
         ])
-        # Remove the reaction to signal the vote didn't count
-        try:
-            await reaction.remove(user)
-        except discord.HTTPException:
-            pass
-        return
 
-    logger.info("Vote Recorded", [
-        ("Voter", f"{user.name} ({user.id})"),
-        ("Author", f"{message.author.name} ({author_id})"),
-        ("Type", vote_type),
-        ("Thread", f"{message.channel.name} ({message.channel.id})"),
-        ("Message ID", str(message.id)),
-    ])
+        # Get updated karma for logging
+        karma_data = bot.debates_service.get_karma(author_id)
+        change = 1 if emoji == UPVOTE_EMOJI else -1
 
-    # Get updated karma for logging
-    karma_data = bot.debates_service.get_karma(author_id)
-    change = 1 if emoji == UPVOTE_EMOJI else -1
+        # Log karma change to webhook
+        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+            await bot.interaction_logger.log_karma_change(
+                message.author, user, change, karma_data.total_karma, message.channel.name
+            )
 
-    # Log karma change to webhook
-    if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
-        await bot.interaction_logger.log_karma_change(
-            message.author, user, change, karma_data.total_karma, message.channel.name
-        )
+        # Track stats
+        if hasattr(bot, 'daily_stats') and bot.daily_stats:
+            bot.daily_stats.record_karma_vote(
+                author_id, message.author.name, emoji == UPVOTE_EMOJI
+            )
 
-    # Track stats
-    if hasattr(bot, 'daily_stats') and bot.daily_stats:
-        bot.daily_stats.record_karma_vote(
-            author_id, message.author.name, emoji == UPVOTE_EMOJI
-        )
+        # Update analytics embed
+        await update_analytics_embed(bot, reaction.message.channel)
 
-    # Update analytics embed
-    await update_analytics_embed(bot, reaction.message.channel)
+    except Exception as e:
+        # Top-level exception handler to prevent bot crashes
+        logger.error("🗳️ Unhandled Exception In Reaction Add Handler", [
+            ("Error Type", type(e).__name__),
+            ("Error", str(e)),
+            ("User", str(user.id) if user else "Unknown"),
+        ])
 
 
 async def on_debate_reaction_remove(
@@ -1053,65 +1181,78 @@ async def on_debate_reaction_remove(
         reaction: The reaction that was removed
         user: The user who removed the reaction
     """
-    # Wait for bot to be fully ready (prevents init race conditions)
-    if not _is_bot_ready(bot):
-        return
-
-    # Ignore bot reactions
-    if user.bot:
-        return
-
-    # Check if it's in debates forum
-    if not is_debates_forum_message(reaction.message.channel):
-        return
-
-    # Check if it's an upvote or downvote
-    emoji = str(reaction.emoji)
-    if emoji not in (UPVOTE_EMOJI, DOWNVOTE_EMOJI):
-        return
-
-    # Get debates service
-    if not hasattr(bot, 'debates_service') or bot.debates_service is None:
-        return
-
-    # Remove the vote and check if it existed
-    vote_type = "Upvote" if emoji == UPVOTE_EMOJI else "Downvote"
-    removed = bot.debates_service.remove_vote(user.id, reaction.message.id)
-
-    if not removed:
-        # Vote wasn't in database (already removed or never recorded)
-        logger.debug("Vote Already Removed Or Not Found", [
-            ("Voter", f"{user.name} ({user.id})"),
-            ("Message", str(reaction.message.id)),
-            ("Type", vote_type),
-        ])
-        return
-
-    logger.info("Vote Removed", [
-        ("Voter", f"{user.name} ({user.id})"),
-        ("Author", f"{reaction.message.author.name} ({reaction.message.author.id})"),
-        ("Type", vote_type),
-        ("Thread", f"{reaction.message.channel.name} ({reaction.message.channel.id})"),
-        ("Message ID", str(reaction.message.id)),
-    ])
-
-    # Log to webhook - vote removal (negative karma change)
     try:
-        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
-            karma_data = bot.debates_service.get_karma(reaction.message.author.id)
-            # Vote removal = negative change (removing upvote = -1, removing downvote = +1)
-            change = -1 if emoji == UPVOTE_EMOJI else 1
-            await bot.interaction_logger.log_karma_change(
-                reaction.message.author, user, change,
-                karma_data.total_karma, reaction.message.channel.name
-            )
-    except Exception as e:
-        logger.warning("Failed to log vote removal to webhook", [
-            ("Error", str(e)),
+        # Null safety checks for Discord API objects
+        if reaction is None or user is None or reaction.message is None:
+            return
+
+        # Wait for bot to be fully ready (prevents init race conditions)
+        if not _is_bot_ready(bot):
+            return
+
+        # Ignore bot reactions
+        if user.bot:
+            return
+
+        # Check if it's in debates forum
+        if not is_debates_forum_message(reaction.message.channel):
+            return
+
+        # Check if it's an upvote or downvote
+        emoji = str(reaction.emoji)
+        if emoji not in (UPVOTE_EMOJI, DOWNVOTE_EMOJI):
+            return
+
+        # Get debates service
+        if not hasattr(bot, 'debates_service') or bot.debates_service is None:
+            return
+
+        # Remove the vote and check if it existed
+        vote_type = "Upvote" if emoji == UPVOTE_EMOJI else "Downvote"
+        removed = bot.debates_service.remove_vote(user.id, reaction.message.id)
+
+        if not removed:
+            # Vote wasn't in database (already removed or never recorded)
+            logger.debug("Vote Already Removed Or Not Found", [
+                ("Voter", f"{user.name} ({user.id})"),
+                ("Message", str(reaction.message.id)),
+                ("Type", vote_type),
+            ])
+            return
+
+        logger.info("Vote Removed", [
+            ("Voter", f"{user.name} ({user.id})"),
+            ("Author", f"{reaction.message.author.name} ({reaction.message.author.id})"),
+            ("Type", vote_type),
+            ("Thread", f"{reaction.message.channel.name} ({reaction.message.channel.id})"),
+            ("Message ID", str(reaction.message.id)),
         ])
 
-    # Update analytics embed
-    await update_analytics_embed(bot, reaction.message.channel)
+        # Log to webhook - vote removal (negative karma change)
+        try:
+            if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+                karma_data = bot.debates_service.get_karma(reaction.message.author.id)
+                # Vote removal = negative change (removing upvote = -1, removing downvote = +1)
+                change = -1 if emoji == UPVOTE_EMOJI else 1
+                await bot.interaction_logger.log_karma_change(
+                    reaction.message.author, user, change,
+                    karma_data.total_karma, reaction.message.channel.name
+                )
+        except Exception as e:
+            logger.warning("Failed to log vote removal to webhook", [
+                ("Error", str(e)),
+            ])
+
+        # Update analytics embed
+        await update_analytics_embed(bot, reaction.message.channel)
+
+    except Exception as e:
+        # Top-level exception handler to prevent bot crashes
+        logger.error("🗳️ Unhandled Exception In Reaction Remove Handler", [
+            ("Error Type", type(e).__name__),
+            ("Error", str(e)),
+            ("User", str(user.id) if user else "Unknown"),
+        ])
 
 
 # =============================================================================
@@ -1161,50 +1302,20 @@ async def on_member_remove_handler(bot: "OthmanBot", member: discord.Member) -> 
     case_id = case_log.get('case_id') if case_log else None
 
     # Remove all votes cast by this user (their votes shouldn't count if they left)
-    # First get the votes so we can remove reactions from Discord
-    votes = db.get_votes_by_user(member.id)
+    # NOTE: We skip removing Discord reactions because:
+    # 1. Discord automatically invalidates reactions from users who left
+    # 2. Scanning all threads for each vote is O(n*m) and very slow
+    # 3. The karma is properly reversed in the database regardless
     votes_removed = 0
-    reactions_removed = 0
 
-    if votes:
-        # Get debates forum to scan for reactions
-        debates_forum = bot.get_channel(DEBATES_FORUM_ID)
-        if debates_forum and isinstance(debates_forum, discord.ForumChannel):
-            # Remove reactions from Discord messages
-            for vote in votes:
-                try:
-                    message_id = vote["message_id"]
-                    vote_type = vote["vote_type"]
-                    emoji = UPVOTE_EMOJI if vote_type > 0 else DOWNVOTE_EMOJI
+    # Remove votes from database (reverses karma effects on recipients)
+    result = db.remove_votes_by_user(member.id)
+    votes_removed = result.get("votes_removed", 0)
 
-                    # Find the message in active threads
-                    for thread in debates_forum.threads:
-                        try:
-                            message = await thread.fetch_message(message_id)
-                            # Remove the user's reaction
-                            # Note: member has left so we use a fake user object
-                            await message.remove_reaction(emoji, discord.Object(id=member.id))
-                            reactions_removed += 1
-                            await asyncio.sleep(0.1)  # Rate limit protection
-                            break  # Found the message, move to next vote
-                        except discord.NotFound:
-                            continue  # Message not in this thread
-                        except discord.HTTPException:
-                            continue  # Can't remove reaction, continue
-                except Exception as e:
-                    logger.debug("Failed To Remove Reaction", [
-                        ("Message ID", str(vote.get("message_id"))),
-                        ("Error", str(e)),
-                    ])
-
-        # Remove votes from database (reverses karma effects on recipients)
-        result = db.remove_votes_by_user(member.id)
-        votes_removed = result.get("votes_removed", 0)
-
+    if votes_removed > 0:
         logger.info("👋 Removed Leaving User's Votes", [
             ("User", f"{member.name} ({member.id})"),
             ("Votes Removed", str(votes_removed)),
-            ("Reactions Removed", str(reactions_removed)),
         ])
 
     # Update leaderboard to mark user as left
@@ -1442,22 +1553,16 @@ async def _renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int
                     if num is not None:
                         max_number = max(max_number, num)
 
-            # Update the counter file with file locking to prevent race conditions
-            lock_file = DEBATE_COUNTER_FILE.with_suffix('.lock')
+            # Update the counter in database (atomic, no race conditions)
             try:
-                with open(lock_file, 'w') as lock:
-                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-                    try:
-                        with open(DEBATE_COUNTER_FILE, "w") as f:
-                            json.dump({"count": max_number}, f)
-                    finally:
-                        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+                if hasattr(bot, 'debates_service') and bot.debates_service is not None:
+                    bot.debates_service.db.set_debate_counter(max_number)
                 logger.info("🔢 Debate Counter Updated", [
                     ("New Count", str(max_number)),
                     ("Renamed", str(len(successfully_renamed))),
                     ("Failed", str(len(threads_to_renumber) - len(successfully_renamed))),
                 ])
-            except (IOError, OSError) as e:
+            except Exception as e:
                 logger.warning("🔢 Failed To Update Debate Counter", [
                     ("Error", str(e)),
                 ])
@@ -1545,4 +1650,5 @@ __all__ = [
     "on_member_remove_handler",
     "on_member_join_handler",
     "on_thread_delete_handler",
+    "refresh_all_analytics_embeds",
 ]

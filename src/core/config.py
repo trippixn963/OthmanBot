@@ -256,7 +256,7 @@ MIN_MESSAGE_LENGTH_ARABIC: int = int(os.getenv("MIN_MESSAGE_LENGTH_ARABIC", "400
 # Analytics Throttling
 # =============================================================================
 
-ANALYTICS_UPDATE_COOLDOWN: int = int(os.getenv("ANALYTICS_UPDATE_COOLDOWN", "30"))  # Seconds between updates
+ANALYTICS_UPDATE_COOLDOWN: int = int(os.getenv("ANALYTICS_UPDATE_COOLDOWN", "60"))  # Seconds between updates
 ANALYTICS_CACHE_MAX_SIZE: int = int(os.getenv("ANALYTICS_CACHE_MAX_SIZE", "100"))  # Max throttle cache entries
 ANALYTICS_CACHE_CLEANUP_AGE: int = int(os.getenv("ANALYTICS_CACHE_CLEANUP_AGE", "3600"))  # Remove entries older than 1 hour
 

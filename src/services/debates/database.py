@@ -205,13 +205,25 @@ class DebatesDatabase:
                     ])
 
     # Current schema version - increment when adding migrations
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 8
 
     # Valid table names for SQL injection prevention
     VALID_TABLES = frozenset({
         'votes', 'users', 'debate_threads', 'debate_bans',
         'debate_participation', 'debate_creators', 'case_logs',
-        'analytics_messages', 'schema_version', 'user_streaks'
+        'analytics_messages', 'schema_version', 'user_streaks', 'linked_accounts',
+        'debate_counter', 'audit_log'
+    })
+
+    # Audit action types for consistency
+    AUDIT_ACTIONS = frozenset({
+        'ban_add', 'ban_remove', 'ban_expire',
+        'vote_add', 'vote_remove', 'vote_change',
+        'karma_adjust', 'karma_reset',
+        'debate_create', 'debate_deprecate',
+        'account_link', 'account_unlink',
+        'case_create', 'case_update',
+        'counter_set', 'counter_reset',
     })
 
     def _init_database(self) -> None:
@@ -427,6 +439,105 @@ class DebatesDatabase:
                 )
             """)
             logger.info("Migration 4: Added user_streaks table")
+            migrations_run += 1
+
+        # Migration 5: Add linked_accounts table for alt account tracking
+        if current_version < 5:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS linked_accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    main_user_id INTEGER NOT NULL,
+                    alt_user_id INTEGER NOT NULL UNIQUE,
+                    linked_by INTEGER NOT NULL,
+                    reason TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_linked_main ON linked_accounts(main_user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_linked_alt ON linked_accounts(alt_user_id)")
+            logger.info("Migration 5: Added linked_accounts table")
+            migrations_run += 1
+
+        # Migration 6: Add debate_counter table for atomic debate numbering
+        if current_version < 6:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS debate_counter (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    counter INTEGER NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            # Migrate existing counter from JSON file if it exists
+            try:
+                import json
+                counter_file = Path("data/debate_counter.json")
+                if counter_file.exists():
+                    with open(counter_file, "r") as f:
+                        data = json.load(f)
+                        # Check both "count" and "counter" keys for backwards compatibility
+                        existing_count = data.get("count", data.get("counter", 0))
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO debate_counter (id, counter) VALUES (1, ?)",
+                        (existing_count,)
+                    )
+                    logger.info("Migration 6: Migrated debate counter from JSON", [
+                        ("Count", str(existing_count)),
+                    ])
+                else:
+                    cursor.execute("INSERT OR IGNORE INTO debate_counter (id, counter) VALUES (1, 0)")
+            except Exception as e:
+                cursor.execute("INSERT OR IGNORE INTO debate_counter (id, counter) VALUES (1, 0)")
+                logger.warning("Migration 6: Could not migrate JSON counter", [
+                    ("Error", str(e)),
+                ])
+            logger.info("Migration 6: Added debate_counter table")
+            migrations_run += 1
+
+        # Migration 7: Add audit_log table for accountability tracking
+        if current_version < 7:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    action TEXT NOT NULL,
+                    actor_id INTEGER,
+                    target_id INTEGER,
+                    target_type TEXT,
+                    old_value TEXT,
+                    new_value TEXT,
+                    metadata TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            # Index for querying by actor (who did what)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id)")
+            # Index for querying by target (what happened to whom)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_id, target_type)")
+            # Index for querying by action type
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action)")
+            # Index for time-based queries
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(created_at)")
+            logger.info("Migration 7: Added audit_log table")
+            migrations_run += 1
+
+        # Migration 8: Add performance indexes for frequently-queried columns
+        if current_version < 8:
+            # Index on votes.voter_id - for checking if user has voted, removing user's votes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_votes_voter ON votes(voter_id)")
+            # Index on votes.author_id - for calculating karma (SUM WHERE author_id = ?)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_votes_author ON votes(author_id)")
+            # Index on votes.message_id - for getting votes on specific message
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_votes_message ON votes(message_id)")
+            # Index on debate_participation.user_id - for user analytics queries
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_participation_user ON debate_participation(user_id)")
+            # Index on debate_bans.user_id - for checking if user is banned
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_bans_user ON debate_bans(user_id)")
+            # Index on debate_bans.expires_at - for finding expired bans
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_bans_expiry ON debate_bans(expires_at)")
+            # Index on debate_creators.user_id - for counting debates created by user
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_creators_user ON debate_creators(user_id)")
+            # Index on user_streaks.user_id - for streak lookups
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_streaks_user ON user_streaks(user_id)")
+            logger.info("Migration 8: Added performance indexes")
             migrations_run += 1
 
         # Update schema version
@@ -1437,6 +1548,16 @@ class DebatesDatabase:
                     (user_id, thread_id, banned_by, reason, expires_at)
                 )
                 conn.commit()
+
+                # Audit log the ban
+                self.audit_log(
+                    action='ban_add',
+                    actor_id=banned_by,
+                    target_id=user_id,
+                    target_type='user',
+                    new_value=str(thread_id) if thread_id else 'all',
+                    metadata={'reason': reason, 'expires_at': expires_at}
+                )
                 return True
             except sqlite3.IntegrityError as e:
                 # User already banned (unique constraint violation)
@@ -1492,8 +1613,18 @@ class DebatesDatabase:
                     "DELETE FROM debate_bans WHERE user_id = ? AND thread_id = ?",
                     (user_id, thread_id)
                 )
+            removed = cursor.rowcount > 0
             conn.commit()
-            return cursor.rowcount > 0
+
+            # Audit log the unban
+            if removed:
+                self.audit_log(
+                    action='ban_remove',
+                    target_id=user_id,
+                    target_type='user',
+                    old_value=str(thread_id) if thread_id else 'all',
+                )
+            return removed
 
     async def remove_debate_ban_async(self, user_id: int, thread_id: Optional[int]) -> bool:
         """Async wrapper for remove_debate_ban - runs in thread pool."""
@@ -2412,6 +2543,15 @@ class DebatesDatabase:
                 ("Thread ID", str(thread_id)),
             ])
 
+            # Audit log the case creation
+            self.audit_log(
+                action='case_create',
+                target_id=user_id,
+                target_type='user',
+                new_value=str(case_id),
+                metadata={'thread_id': thread_id}
+            )
+
     def get_next_case_id(self) -> int:
         """
         Get the next available case ID.
@@ -2426,6 +2566,94 @@ class DebatesDatabase:
             row = cursor.fetchone()
             max_id = row[0] if row and row[0] else 0
             return max_id + 1
+
+    # =========================================================================
+    # Debate Counter (Atomic)
+    # =========================================================================
+
+    def get_next_debate_number(self) -> int:
+        """
+        Atomically increment and return the next debate number.
+
+        Uses a single UPDATE...RETURNING pattern to prevent race conditions
+        when multiple threads are created simultaneously.
+
+        Returns:
+            Next debate number (guaranteed unique)
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Atomic increment: UPDATE and get new value in one operation
+            cursor.execute("""
+                UPDATE debate_counter
+                SET counter = counter + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+            """)
+
+            # Get the new value
+            cursor.execute("SELECT counter FROM debate_counter WHERE id = 1")
+            row = cursor.fetchone()
+
+            if row is None:
+                # Table might be empty (shouldn't happen after migration)
+                cursor.execute("INSERT INTO debate_counter (id, counter) VALUES (1, 1)")
+                conn.commit()
+                return 1
+
+            conn.commit()
+            return row[0]
+
+    def set_debate_counter(self, value: int) -> None:
+        """
+        Set the debate counter to a specific value.
+
+        Used during numbering reconciliation to update the counter
+        after renumbering threads.
+
+        Args:
+            value: The new counter value
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Get old value for audit
+            cursor.execute("SELECT counter FROM debate_counter WHERE id = 1")
+            row = cursor.fetchone()
+            old_value = row[0] if row else 0
+
+            cursor.execute(
+                "UPDATE debate_counter SET counter = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1",
+                (value,)
+            )
+            conn.commit()
+            logger.info("DB: Debate Counter Updated", [
+                ("New Value", str(value)),
+            ])
+
+            # Audit log the counter change
+            self.audit_log(
+                action='counter_set',
+                target_type='debate_counter',
+                old_value=str(old_value),
+                new_value=str(value),
+            )
+
+    def get_debate_counter(self) -> int:
+        """
+        Get the current debate counter value.
+
+        Returns:
+            Current counter value
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT counter FROM debate_counter WHERE id = 1")
+            row = cursor.fetchone()
+            return row[0] if row else 0
 
     def increment_ban_count(self, user_id: int) -> int:
         """
@@ -2569,6 +2797,582 @@ class DebatesDatabase:
             ])
 
             return results
+
+    # -------------------------------------------------------------------------
+    # Linked Accounts (Alt Account Tracking)
+    # -------------------------------------------------------------------------
+
+    def link_accounts(
+        self,
+        main_user_id: int,
+        alt_user_id: int,
+        linked_by: int,
+        reason: Optional[str] = None
+    ) -> bool:
+        """
+        Link an alt account to a main account.
+
+        Args:
+            main_user_id: The main account's user ID
+            alt_user_id: The alt account's user ID
+            linked_by: Moderator who confirmed the link
+            reason: Optional reason/evidence for the link
+
+        Returns:
+            True if linked successfully, False if already linked
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            try:
+                cursor.execute(
+                    """INSERT INTO linked_accounts (main_user_id, alt_user_id, linked_by, reason)
+                       VALUES (?, ?, ?, ?)""",
+                    (main_user_id, alt_user_id, linked_by, reason)
+                )
+                conn.commit()
+
+                logger.info("DB: Accounts Linked", [
+                    ("Main Account", str(main_user_id)),
+                    ("Alt Account", str(alt_user_id)),
+                    ("Linked By", str(linked_by)),
+                ])
+
+                # Audit log the account link
+                self.audit_log(
+                    action='account_link',
+                    actor_id=linked_by,
+                    target_id=alt_user_id,
+                    target_type='user',
+                    new_value=str(main_user_id),
+                    metadata={'reason': reason}
+                )
+                return True
+
+            except sqlite3.IntegrityError:
+                # Alt already linked to someone
+                logger.warning("DB: Alt Account Already Linked", [
+                    ("Alt Account", str(alt_user_id)),
+                ])
+                return False
+
+    def unlink_account(self, alt_user_id: int) -> bool:
+        """
+        Unlink an alt account.
+
+        Args:
+            alt_user_id: The alt account's user ID
+
+        Returns:
+            True if unlinked, False if not found
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Get main account before deleting for audit
+            cursor.execute(
+                "SELECT main_user_id FROM linked_accounts WHERE alt_user_id = ?",
+                (alt_user_id,)
+            )
+            row = cursor.fetchone()
+            main_user_id = row[0] if row else None
+
+            cursor.execute(
+                "DELETE FROM linked_accounts WHERE alt_user_id = ?",
+                (alt_user_id,)
+            )
+            deleted = cursor.rowcount > 0
+            conn.commit()
+
+            if deleted:
+                logger.info("DB: Account Unlinked", [
+                    ("Alt Account", str(alt_user_id)),
+                ])
+                # Audit log the unlink
+                self.audit_log(
+                    action='account_unlink',
+                    target_id=alt_user_id,
+                    target_type='user',
+                    old_value=str(main_user_id) if main_user_id else None,
+                )
+
+            return deleted
+
+    def get_linked_accounts(self, user_id: int) -> list[dict]:
+        """
+        Get all accounts linked to a user (whether they're the main or an alt).
+
+        Args:
+            user_id: User ID to check
+
+        Returns:
+            List of linked account records
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Check if user_id is a main account
+            cursor.execute(
+                """SELECT alt_user_id, linked_by, reason, created_at
+                   FROM linked_accounts
+                   WHERE main_user_id = ?""",
+                (user_id,)
+            )
+            alts = [
+                {
+                    "user_id": row[0],
+                    "is_alt": True,
+                    "linked_by": row[1],
+                    "reason": row[2],
+                    "created_at": row[3]
+                }
+                for row in cursor.fetchall()
+            ]
+
+            # Check if user_id is an alt account
+            cursor.execute(
+                """SELECT main_user_id, linked_by, reason, created_at
+                   FROM linked_accounts
+                   WHERE alt_user_id = ?""",
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            main_account = None
+            if row:
+                main_account = {
+                    "user_id": row[0],
+                    "is_alt": False,  # This is the main account
+                    "linked_by": row[1],
+                    "reason": row[2],
+                    "created_at": row[3]
+                }
+
+            # Combine results
+            linked = []
+            if main_account:
+                linked.append(main_account)
+                # Also get any other alts of the main account
+                cursor.execute(
+                    """SELECT alt_user_id, linked_by, reason, created_at
+                       FROM linked_accounts
+                       WHERE main_user_id = ? AND alt_user_id != ?""",
+                    (main_account["user_id"], user_id)
+                )
+                for r in cursor.fetchall():
+                    linked.append({
+                        "user_id": r[0],
+                        "is_alt": True,
+                        "linked_by": r[1],
+                        "reason": r[2],
+                        "created_at": r[3]
+                    })
+            else:
+                linked.extend(alts)
+
+            return linked
+
+    def get_main_account(self, alt_user_id: int) -> Optional[int]:
+        """
+        Get the main account for an alt.
+
+        Args:
+            alt_user_id: The alt account's user ID
+
+        Returns:
+            Main account user ID, or None if not an alt
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT main_user_id FROM linked_accounts WHERE alt_user_id = ?",
+                (alt_user_id,)
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    # -------------------------------------------------------------------------
+    # Orphan Vote Cleanup Operations
+    # -------------------------------------------------------------------------
+
+    def get_all_voted_message_ids(self) -> set[int]:
+        """
+        Get all unique message IDs that have votes in the database.
+
+        Returns:
+            Set of message IDs with votes
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT DISTINCT message_id FROM votes")
+                return {row[0] for row in cursor.fetchall()}
+            finally:
+                cursor.close()
+
+    def cleanup_orphaned_votes(self, orphan_message_ids: set[int]) -> dict:
+        """
+        Remove votes for messages that no longer exist and reverse karma effects.
+
+        This properly decrements the karma for each author whose message votes
+        are being removed, maintaining karma consistency.
+
+        Args:
+            orphan_message_ids: Set of message IDs that no longer exist
+
+        Returns:
+            Dict with cleanup stats: votes_deleted, users_affected, errors
+        """
+        stats = {
+            "votes_deleted": 0,
+            "users_affected": 0,
+            "karma_reversed": 0,
+            "errors": 0,
+        }
+
+        if not orphan_message_ids:
+            return stats
+
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            try:
+                cursor.execute("BEGIN IMMEDIATE")
+
+                affected_authors: set[int] = set()
+
+                # Process each orphaned message
+                for message_id in orphan_message_ids:
+                    try:
+                        # Get all votes for this message before deleting
+                        cursor.execute(
+                            """SELECT author_id, vote_type, COUNT(*) as cnt
+                               FROM votes
+                               WHERE message_id = ?
+                               GROUP BY author_id, vote_type""",
+                            (message_id,)
+                        )
+                        vote_groups = cursor.fetchall()
+
+                        # Reverse karma for each author/vote_type combo
+                        for author_id, vote_type, count in vote_groups:
+                            karma_reversal = -vote_type * count  # Negate the karma
+                            counter_field = "upvotes_received" if vote_type > 0 else "downvotes_received"
+
+                            cursor.execute(
+                                f"""UPDATE users SET
+                                    total_karma = total_karma + ?,
+                                    {counter_field} = MAX(0, {counter_field} - ?)
+                                    WHERE user_id = ?""",
+                                (karma_reversal, count, author_id)
+                            )
+                            affected_authors.add(author_id)
+                            stats["karma_reversed"] += abs(karma_reversal)
+
+                        # Delete votes for this message
+                        cursor.execute(
+                            "DELETE FROM votes WHERE message_id = ?",
+                            (message_id,)
+                        )
+                        stats["votes_deleted"] += cursor.rowcount
+
+                    except Exception as e:
+                        logger.error("Error Cleaning Up Votes For Message", [
+                            ("Message ID", str(message_id)),
+                            ("Error", str(e)),
+                        ])
+                        stats["errors"] += 1
+
+                stats["users_affected"] = len(affected_authors)
+                conn.commit()
+
+                if stats["votes_deleted"] > 0:
+                    logger.success("DB: Orphan Votes Cleaned Up", [
+                        ("Votes Deleted", str(stats["votes_deleted"])),
+                        ("Users Affected", str(stats["users_affected"])),
+                        ("Karma Reversed", str(stats["karma_reversed"])),
+                        ("Errors", str(stats["errors"])),
+                    ])
+
+                return stats
+
+            except sqlite3.Error as e:
+                conn.rollback()
+                logger.error("Orphan Vote Cleanup Failed - Rolled Back", [
+                    ("Error", str(e)),
+                ])
+                stats["errors"] += 1
+                return stats
+
+    def get_vote_count(self) -> int:
+        """
+        Get total number of votes in the database.
+
+        Returns:
+            Total vote count
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM votes")
+            return cursor.fetchone()[0]
+
+    # -------------------------------------------------------------------------
+    # Audit Log Operations
+    # -------------------------------------------------------------------------
+
+    def audit_log(
+        self,
+        action: str,
+        actor_id: Optional[int] = None,
+        target_id: Optional[int] = None,
+        target_type: Optional[str] = None,
+        old_value: Optional[str] = None,
+        new_value: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        """
+        Record an action in the audit log for accountability.
+
+        Args:
+            action: Action type (e.g., 'ban_add', 'vote_remove', 'karma_adjust')
+            actor_id: User ID who performed the action (None for system actions)
+            target_id: ID of the affected entity (user_id, thread_id, etc.)
+            target_type: Type of target ('user', 'thread', 'message', etc.)
+            old_value: Previous value (for changes)
+            new_value: New value (for changes)
+            metadata: Additional context as dict (will be JSON serialized)
+
+        DESIGN: This method is intentionally fire-and-forget. Audit logging
+        should never block or fail the primary operation. Errors are logged
+        but not raised.
+        """
+        try:
+            import json
+            metadata_json = json.dumps(metadata) if metadata else None
+
+            with self._lock:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    """INSERT INTO audit_log
+                       (action, actor_id, target_id, target_type, old_value, new_value, metadata)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (action, actor_id, target_id, target_type, old_value, new_value, metadata_json)
+                )
+                conn.commit()
+        except Exception as e:
+            # Never fail the primary operation due to audit logging
+            logger.warning("Audit Log Failed", [
+                ("Action", action),
+                ("Error", str(e)),
+            ])
+
+    def get_audit_log(
+        self,
+        action: Optional[str] = None,
+        actor_id: Optional[int] = None,
+        target_id: Optional[int] = None,
+        target_type: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """
+        Query the audit log with optional filters.
+
+        Args:
+            action: Filter by action type
+            actor_id: Filter by who performed the action
+            target_id: Filter by affected entity ID
+            target_type: Filter by target type
+            limit: Maximum records to return
+            offset: Number of records to skip
+
+        Returns:
+            List of audit log entries as dicts
+        """
+        import json
+
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Build query with optional filters
+            query = "SELECT id, action, actor_id, target_id, target_type, old_value, new_value, metadata, created_at FROM audit_log WHERE 1=1"
+            params = []
+
+            if action:
+                query += " AND action = ?"
+                params.append(action)
+            if actor_id is not None:
+                query += " AND actor_id = ?"
+                params.append(actor_id)
+            if target_id is not None:
+                query += " AND target_id = ?"
+                params.append(target_id)
+            if target_type:
+                query += " AND target_type = ?"
+                params.append(target_type)
+
+            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+
+            cursor.execute(query, params)
+
+            results = []
+            for row in cursor.fetchall():
+                metadata_parsed = None
+                if row[7]:
+                    try:
+                        metadata_parsed = json.loads(row[7])
+                    except json.JSONDecodeError:
+                        metadata_parsed = row[7]
+
+                results.append({
+                    "id": row[0],
+                    "action": row[1],
+                    "actor_id": row[2],
+                    "target_id": row[3],
+                    "target_type": row[4],
+                    "old_value": row[5],
+                    "new_value": row[6],
+                    "metadata": metadata_parsed,
+                    "created_at": row[8],
+                })
+
+            return results
+
+    def get_user_audit_history(self, user_id: int, limit: int = 20) -> list[dict]:
+        """
+        Get all audit entries involving a user (as actor or target).
+
+        Args:
+            user_id: Discord user ID
+            limit: Maximum records to return
+
+        Returns:
+            List of audit log entries
+        """
+        import json
+
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """SELECT id, action, actor_id, target_id, target_type, old_value, new_value, metadata, created_at
+                   FROM audit_log
+                   WHERE actor_id = ? OR (target_id = ? AND target_type = 'user')
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (user_id, user_id, limit)
+            )
+
+            results = []
+            for row in cursor.fetchall():
+                metadata_parsed = None
+                if row[7]:
+                    try:
+                        metadata_parsed = json.loads(row[7])
+                    except json.JSONDecodeError:
+                        metadata_parsed = row[7]
+
+                results.append({
+                    "id": row[0],
+                    "action": row[1],
+                    "actor_id": row[2],
+                    "target_id": row[3],
+                    "target_type": row[4],
+                    "old_value": row[5],
+                    "new_value": row[6],
+                    "metadata": metadata_parsed,
+                    "created_at": row[8],
+                })
+
+            return results
+
+    def get_audit_stats(self, days: int = 7) -> dict:
+        """
+        Get audit log statistics for the specified time period.
+
+        Args:
+            days: Number of days to look back
+
+        Returns:
+            Dict with action counts and summary stats
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Get counts by action type
+            cursor.execute(
+                """SELECT action, COUNT(*) as count
+                   FROM audit_log
+                   WHERE created_at >= datetime('now', ?)
+                   GROUP BY action
+                   ORDER BY count DESC""",
+                (f'-{days} days',)
+            )
+            action_counts = {row[0]: row[1] for row in cursor.fetchall()}
+
+            # Get total count
+            cursor.execute(
+                """SELECT COUNT(*) FROM audit_log
+                   WHERE created_at >= datetime('now', ?)""",
+                (f'-{days} days',)
+            )
+            total_count = cursor.fetchone()[0]
+
+            # Get unique actors
+            cursor.execute(
+                """SELECT COUNT(DISTINCT actor_id) FROM audit_log
+                   WHERE created_at >= datetime('now', ?) AND actor_id IS NOT NULL""",
+                (f'-{days} days',)
+            )
+            unique_actors = cursor.fetchone()[0]
+
+            return {
+                "total_actions": total_count,
+                "unique_actors": unique_actors,
+                "action_counts": action_counts,
+                "period_days": days,
+            }
+
+    def cleanup_old_audit_logs(self, days_to_keep: int = 90) -> int:
+        """
+        Remove audit log entries older than specified days.
+
+        Args:
+            days_to_keep: Number of days of logs to retain
+
+        Returns:
+            Number of records deleted
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """DELETE FROM audit_log
+                   WHERE created_at < datetime('now', ?)""",
+                (f'-{days_to_keep} days',)
+            )
+            deleted = cursor.rowcount
+            conn.commit()
+
+            if deleted > 0:
+                logger.info("Audit Log Cleanup", [
+                    ("Deleted", str(deleted)),
+                    ("Retained Days", str(days_to_keep)),
+                ])
+
+            return deleted
 
 
 # =============================================================================

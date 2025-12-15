@@ -26,6 +26,9 @@ import discord
 from src.core.logger import logger
 from src.core.config import NY_TZ
 
+# Webhook request timeout (seconds)
+WEBHOOK_TIMEOUT = aiohttp.ClientTimeout(total=10)
+
 if TYPE_CHECKING:
     from src.bot import OthmanBot
 
@@ -65,9 +68,9 @@ class InteractionLogger:
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session."""
+        """Get or create aiohttp session with timeout."""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            self._session = aiohttp.ClientSession(timeout=WEBHOOK_TIMEOUT)
         return self._session
 
     async def _send_log(self, embed: discord.Embed) -> None:
@@ -860,6 +863,258 @@ class InteractionLogger:
 
         for name, value in fields.items():
             embed.add_field(name=name, value=value, inline=True)
+
+        await self._send_log(embed)
+
+    async def log_karma_reconciliation(
+        self,
+        trigger: str,
+        stats: dict,
+        success: bool = True
+    ) -> None:
+        """
+        Log karma reconciliation results.
+
+        Args:
+            trigger: What triggered the reconciliation ("Startup", "Nightly", etc.)
+            stats: Reconciliation stats dict
+            success: Whether reconciliation succeeded
+        """
+        now = datetime.now(NY_TZ)
+        time_str = now.strftime("%I:%M %p EST")
+
+        threads_scanned = stats.get('threads_scanned', 0)
+        messages_scanned = stats.get('messages_scanned', 0)
+        votes_added = stats.get('votes_added', 0)
+        votes_removed = stats.get('votes_removed', 0)
+        reactions_fixed = stats.get('reactions_fixed', 0)
+        errors = stats.get('errors', 0)
+
+        # Determine if any changes were made
+        changes_made = votes_added > 0 or votes_removed > 0 or reactions_fixed > 0
+
+        if success:
+            if changes_made:
+                title = "🔄 Karma Reconciliation Complete (Changes Made)"
+                color = COLOR_KARMA
+            else:
+                title = "✅ Karma Reconciliation Complete (No Changes)"
+                color = COLOR_SUCCESS
+        else:
+            title = "❌ Karma Reconciliation Failed"
+            color = COLOR_ERROR
+
+        embed = discord.Embed(
+            title=title,
+            color=color,
+        )
+
+        embed.add_field(name="Trigger", value=f"`{trigger}`", inline=True)
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+        embed.add_field(name="Threads Scanned", value=f"`{threads_scanned}`", inline=True)
+        embed.add_field(name="Messages Scanned", value=f"`{messages_scanned}`", inline=True)
+        embed.add_field(name="Votes Added", value=f"`+{votes_added}`", inline=True)
+        embed.add_field(name="Votes Removed", value=f"`-{votes_removed}`", inline=True)
+
+        if reactions_fixed > 0:
+            embed.add_field(name="Reactions Fixed", value=f"`{reactions_fixed}`", inline=True)
+
+        if errors > 0:
+            embed.add_field(name="Errors", value=f"`{errors}`", inline=True)
+
+        await self._send_log(embed)
+
+    async def log_numbering_reconciliation(
+        self,
+        trigger: str,
+        stats: dict,
+        success: bool = True
+    ) -> None:
+        """
+        Log numbering reconciliation results.
+
+        Args:
+            trigger: What triggered the reconciliation ("Startup", "Nightly", etc.)
+            stats: Reconciliation stats dict
+            success: Whether reconciliation succeeded
+        """
+        now = datetime.now(NY_TZ)
+        time_str = now.strftime("%I:%M %p EST")
+
+        threads_scanned = stats.get('threads_scanned', 0)
+        gaps_found = stats.get('gaps_found', 0)
+        threads_renumbered = stats.get('threads_renumbered', 0)
+        errors = stats.get('errors', 0)
+
+        # Determine if any changes were made
+        changes_made = threads_renumbered > 0
+
+        if success:
+            if changes_made:
+                title = "🔢 Numbering Reconciliation Complete (Gaps Fixed)"
+                color = COLOR_DEBATE
+            else:
+                title = "✅ Numbering Reconciliation Complete (No Gaps)"
+                color = COLOR_SUCCESS
+        else:
+            title = "❌ Numbering Reconciliation Failed"
+            color = COLOR_ERROR
+
+        embed = discord.Embed(
+            title=title,
+            color=color,
+        )
+
+        embed.add_field(name="Trigger", value=f"`{trigger}`", inline=True)
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+        embed.add_field(name="Threads Scanned", value=f"`{threads_scanned}`", inline=True)
+
+        if gaps_found > 0:
+            embed.add_field(name="Gaps Found", value=f"`{gaps_found}`", inline=True)
+            embed.add_field(name="Threads Renumbered", value=f"`{threads_renumbered}`", inline=True)
+
+        if errors > 0:
+            embed.add_field(name="Errors", value=f"`{errors}`", inline=True)
+
+        await self._send_log(embed)
+
+    async def log_orphan_vote_cleanup(
+        self,
+        stats: dict
+    ) -> None:
+        """
+        Log orphan vote cleanup results.
+
+        Args:
+            stats: Cleanup stats dict with orphans_found, votes_cleaned, karma_reversed, errors
+        """
+        now = datetime.now(NY_TZ)
+        time_str = now.strftime("%I:%M %p EST")
+
+        orphans_found = stats.get('orphans_found', 0)
+        votes_cleaned = stats.get('votes_cleaned', 0)
+        karma_reversed = stats.get('karma_reversed', 0)
+        errors = stats.get('errors', 0)
+
+        # Only log if orphans were found or there were errors
+        if orphans_found == 0 and errors == 0:
+            return
+
+        if orphans_found > 0:
+            title = "🧹 Orphan Vote Cleanup Complete"
+            color = COLOR_DEBATE
+        elif errors > 0:
+            title = "⚠️ Orphan Vote Cleanup Had Errors"
+            color = COLOR_ERROR
+        else:
+            title = "✅ Orphan Vote Cleanup Complete (No Orphans)"
+            color = COLOR_SUCCESS
+
+        embed = discord.Embed(
+            title=title,
+            color=color,
+        )
+
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+
+        if orphans_found > 0:
+            embed.add_field(name="Orphan Messages", value=f"`{orphans_found}`", inline=True)
+            embed.add_field(name="Votes Cleaned", value=f"`{votes_cleaned}`", inline=True)
+            embed.add_field(name="Karma Reversed", value=f"`{karma_reversed}`", inline=True)
+
+        if errors > 0:
+            embed.add_field(name="Errors", value=f"`{errors}`", inline=True)
+
+        await self._send_log(embed)
+
+    async def log_ban_notification_dm(
+        self,
+        action: str,
+        scope: str,
+        success: bool,
+        user: Optional[discord.User] = None,
+        user_id: Optional[int] = None,
+        moderator: Optional[discord.User] = None,
+        duration: Optional[str] = None,
+        thread_id: Optional[int] = None,
+        reason: Optional[str] = None,
+        error: Optional[str] = None
+    ) -> None:
+        """
+        Log ban notification DM attempt to webhook.
+
+        Args:
+            action: Type of notification ("ban", "unban", "expired")
+            scope: Ban scope
+            success: Whether DM was sent successfully
+            user: The user object (if available)
+            user_id: The user ID (fallback)
+            moderator: The moderator who took the action
+            duration: Ban duration (for ban)
+            thread_id: Specific thread ID if applicable
+            reason: Reason for the action
+            error: Error message if failed
+        """
+        now = datetime.now(NY_TZ)
+        time_str = now.strftime("%I:%M %p EST")
+
+        # Determine title and color based on action and success
+        action_titles = {
+            "ban": ("Ban", "🚫"),
+            "unban": ("Unban", "✅"),
+            "expired": ("Ban Expiry", "⏰")
+        }
+        action_name, action_emoji = action_titles.get(action, ("Action", "📬"))
+
+        if success:
+            title = f"{action_emoji} {action_name} DM Sent"
+            color = COLOR_SUCCESS
+        else:
+            title = f"⚠️ {action_name} DM Failed"
+            color = COLOR_ERROR
+
+        embed = discord.Embed(
+            title=title,
+            color=color,
+        )
+
+        # User info
+        if user:
+            embed.add_field(name="User", value=f"{user.mention}\n`{user.id}`", inline=True)
+            embed.set_thumbnail(url=user.display_avatar.url)
+        elif user_id:
+            embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
+
+        # Moderator (for ban/unban)
+        if moderator:
+            embed.add_field(name="Moderator", value=f"{moderator.mention}", inline=True)
+
+        # Action type
+        embed.add_field(name="Action", value=f"`{action.upper()}`", inline=True)
+
+        # Scope
+        if thread_id:
+            embed.add_field(name="Scope", value=f"`Thread`\n<#{thread_id}>", inline=True)
+        else:
+            embed.add_field(name="Scope", value=f"`{scope}`", inline=True)
+
+        # Duration (for bans)
+        if duration:
+            embed.add_field(name="Duration", value=f"`{duration}`", inline=True)
+
+        # Time
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+
+        # Status
+        embed.add_field(name="DM Status", value="`Sent`" if success else "`Failed`", inline=True)
+
+        # Error (if failed)
+        if error:
+            embed.add_field(name="Error", value=f"`{error[:100]}`", inline=False)
+
+        # Reason (if provided)
+        if reason:
+            embed.add_field(name="Reason", value=reason[:200], inline=False)
 
         await self._send_log(embed)
 

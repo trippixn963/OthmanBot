@@ -45,6 +45,7 @@ from src.posting.news import post_news
 from src.posting.soccer import post_soccer_news
 from src.posting.gaming import post_gaming_news
 from src.posting.debates import post_hot_debate
+from src.handlers.debates import refresh_all_analytics_embeds
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -99,6 +100,23 @@ async def _safe_init(
             ("Status", "Skipped - continuing startup"),
         ])
         return False
+
+
+async def _refresh_analytics_background(bot: "OthmanBot") -> None:
+    """
+    Background task to refresh all analytics embeds on startup.
+
+    This ensures all existing debate threads get updated embeds
+    with any new fields (like created_at timestamp).
+    """
+    try:
+        # Small delay to let other startup tasks complete first
+        await asyncio.sleep(5.0)
+        await refresh_all_analytics_embeds(bot)
+    except Exception as e:
+        logger.warning("Background analytics refresh failed", [
+            ("Error", str(e)),
+        ])
 
 
 async def on_ready_handler(bot: "OthmanBot") -> None:
@@ -188,6 +206,10 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
     # Initialize daily stats scheduler
     init_results.append(("Daily Stats", await _safe_init("Daily Stats", _init_daily_stats, bot)))
 
+    # Record bot start for health tracking
+    if bot.daily_stats:
+        bot.daily_stats.record_bot_start()
+
     # Update status channel to show online (with timeout)
     try:
         async with asyncio.timeout(10.0):
@@ -196,6 +218,10 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
         logger.warning("Timeout updating status channel")
     except Exception as e:
         logger.warning("Failed to update status channel", [("Error", str(e))])
+
+    # One-time migration: refresh all analytics embeds to include new fields
+    # This runs in the background to avoid blocking startup
+    asyncio.create_task(_refresh_analytics_background(bot))
 
     # Log initialization summary
     succeeded = sum(1 for _, ok in init_results if ok)
@@ -309,8 +335,9 @@ async def _init_karma_reconciliation(bot: "OthmanBot") -> None:
     bot._background_tasks.append(reconciliation_task)
 
     # Start nightly scheduler (pass bot for webhook alerts)
+    # Uses days_back=None for full scan of ALL threads at midnight
     bot.karma_reconciliation_scheduler = KarmaReconciliationScheduler(
-        lambda: reconcile_karma(bot),
+        lambda: reconcile_karma(bot, days_back=None),
         bot=bot
     )
     await bot.karma_reconciliation_scheduler.start()
@@ -342,28 +369,84 @@ async def _run_startup_reconciliation(bot: "OthmanBot") -> None:
     # Wait a bit for bot to fully initialize
     await asyncio.sleep(BOT_STARTUP_DELAY)
 
-    logger.info("🔄 Running Startup Karma Reconciliation")
+    logger.info("🔄 Running Startup Karma Reconciliation (Full Scan)")
     try:
-        stats = await reconcile_karma(bot, days_back=7)
+        # Scan ALL threads (days_back=None) for 100% accuracy at startup
+        stats = await reconcile_karma(bot, days_back=None)
         logger.tree("Startup Reconciliation Complete", [
             ("Threads Scanned", str(stats['threads_scanned'])),
             ("Votes Added", f"+{stats['votes_added']}"),
             ("Votes Removed", f"-{stats['votes_removed']}"),
         ], emoji="🔄")
+
+        # Log to webhook
+        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+            await bot.interaction_logger.log_karma_reconciliation("Startup", stats, success=True)
+
     except Exception as e:
         logger.error("🔄 Startup Karma Reconciliation Failed", [
             ("Error", str(e)),
         ])
+        # Log failure to webhook
+        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+            await bot.interaction_logger.log_karma_reconciliation(
+                "Startup",
+                {"error": str(e)},
+                success=False
+            )
+
+
+async def _run_startup_numbering_reconciliation(bot: "OthmanBot") -> None:
+    """Run startup numbering reconciliation after a short delay."""
+    # Wait a bit for bot to fully initialize
+    await asyncio.sleep(BOT_STARTUP_DELAY + 5)  # Run after karma reconciliation
+
+    logger.info("🔢 Running Startup Numbering Reconciliation")
+    try:
+        stats = await reconcile_debate_numbering(bot)
+        if stats['gaps_found'] > 0:
+            logger.tree("Startup Numbering Reconciliation Complete", [
+                ("Threads Scanned", str(stats['threads_scanned'])),
+                ("Gaps Found", str(stats['gaps_found'])),
+                ("Threads Renumbered", str(stats['threads_renumbered'])),
+            ], emoji="🔢")
+        else:
+            logger.info("🔢 Startup Numbering Check Complete - No Gaps Found", [
+                ("Threads Scanned", str(stats['threads_scanned'])),
+            ])
+
+        # Log to webhook
+        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+            await bot.interaction_logger.log_numbering_reconciliation("Startup", stats, success=True)
+
+    except Exception as e:
+        logger.error("🔢 Startup Numbering Reconciliation Failed", [
+            ("Error", str(e)),
+        ])
+        # Log failure to webhook
+        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
+            await bot.interaction_logger.log_numbering_reconciliation(
+                "Startup",
+                {"error": str(e)},
+                success=False
+            )
 
 
 async def _init_numbering_reconciliation(bot: "OthmanBot") -> None:
-    """Initialize nightly debate numbering reconciliation scheduler.
+    """Initialize numbering reconciliation - startup scan and nightly scheduler.
 
-    DESIGN: Runs at 00:00 EST every night to fix any gaps in debate numbering
-    - Scans all non-deprecated debates
-    - Renumbers threads to fill any gaps
-    - Updates the counter file
+    DESIGN: Ensures debate numbers are always sequential
+    - Runs immediately on startup to fix any gaps
+    - Schedules nightly sync at 00:15 EST for ongoing accuracy
     """
+    # Run startup numbering reconciliation in background (don't block bot startup)
+    numbering_task = asyncio.create_task(_run_startup_numbering_reconciliation(bot))
+    numbering_task.add_done_callback(_handle_task_exception)
+    if not hasattr(bot, '_background_tasks'):
+        bot._background_tasks: List[asyncio.Task] = []
+    bot._background_tasks.append(numbering_task)
+
+    # Start nightly scheduler
     bot.numbering_reconciliation_scheduler = NumberingReconciliationScheduler(
         lambda: reconcile_debate_numbering(bot),
         bot=bot

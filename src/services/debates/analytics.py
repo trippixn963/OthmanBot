@@ -22,6 +22,7 @@ from src.core.logger import logger
 from src.core.config import NY_TZ, LOG_TITLE_PREVIEW_LENGTH
 from src.utils import get_developer_avatar
 
+import math
 
 # =============================================================================
 # Constants
@@ -34,6 +35,74 @@ THREAD_HISTORY_TIMEOUT: float = 30.0
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+def _calculate_avg_response_time(messages: List[discord.Message]) -> Optional[float]:
+    """
+    Calculate average time between consecutive messages in minutes.
+
+    Args:
+        messages: List of Discord messages (should be non-bot messages)
+
+    Returns:
+        Average response time in minutes, or None if not enough messages
+    """
+    if len(messages) < 2:
+        return None
+
+    # Sort messages by creation time (oldest first)
+    sorted_msgs = sorted(messages, key=lambda m: m.created_at)
+
+    # Calculate time differences between consecutive messages
+    response_times = []
+    for i in range(1, len(sorted_msgs)):
+        delta = (sorted_msgs[i].created_at - sorted_msgs[i-1].created_at).total_seconds()
+        # Only count reasonable response times (< 24 hours) to filter outliers
+        if delta < 86400:  # 24 hours in seconds
+            response_times.append(delta / 60.0)  # Convert to minutes
+
+    if not response_times:
+        return None
+
+    return sum(response_times) / len(response_times)
+
+
+def _calculate_diversity_score(reply_counts: Dict[int, int]) -> Optional[float]:
+    """
+    Calculate participation diversity using normalized entropy.
+
+    A diversity score of 1.0 means everyone participates equally.
+    A score of 0.0 means one person dominates completely.
+
+    Args:
+        reply_counts: Dict mapping user_id to their reply count
+
+    Returns:
+        Diversity score between 0 and 1, or None if not enough participants
+
+    DESIGN: Uses Shannon entropy normalized by log(n) where n = participant count.
+    This gives us a score between 0-1 regardless of participant count.
+    """
+    if len(reply_counts) < 2:
+        return None
+
+    total = sum(reply_counts.values())
+    if total == 0:
+        return None
+
+    # Calculate Shannon entropy
+    entropy = 0.0
+    for count in reply_counts.values():
+        if count > 0:
+            p = count / total
+            entropy -= p * math.log2(p)
+
+    # Normalize by maximum possible entropy (log2 of participant count)
+    max_entropy = math.log2(len(reply_counts))
+    if max_entropy == 0:
+        return None
+
+    return entropy / max_entropy
+
 
 async def _collect_messages_with_timeout(
     thread: discord.Thread,
@@ -80,8 +149,11 @@ class DebateAnalytics:
         total_replies: int,
         total_karma: int,
         last_activity: datetime,
+        created_at: Optional[datetime] = None,
         top_contributor: Optional[tuple[str, int]] = None,  # (username, reply_count)
         activity_graph: str = "",
+        avg_response_minutes: Optional[float] = None,  # Average time between posts
+        diversity_score: Optional[float] = None,  # How evenly distributed participation is (0-1)
     ):
         """
         Initialize debate analytics container.
@@ -91,15 +163,21 @@ class DebateAnalytics:
             total_replies: Total number of replies in the thread.
             total_karma: Sum of all karma earned in this debate.
             last_activity: Timestamp of the most recent message.
+            created_at: When the debate thread was created.
             top_contributor: Tuple of (username, reply_count) for top participant.
             activity_graph: ASCII representation of activity over time.
+            avg_response_minutes: Average time between consecutive posts in minutes.
+            diversity_score: Participation diversity (0-1, higher = more evenly distributed).
         """
         self.participants = participants
         self.total_replies = total_replies
         self.total_karma = total_karma
         self.last_activity = last_activity
+        self.created_at = created_at
         self.top_contributor = top_contributor
         self.activity_graph = activity_graph
+        self.avg_response_minutes = avg_response_minutes
+        self.diversity_score = diversity_score
 
 
 # =============================================================================
@@ -193,13 +271,22 @@ async def calculate_debate_analytics(
         # Generate activity graph
         activity_graph = generate_activity_graph(hourly_activity)
 
+        # Calculate quality metrics
+        # Filter non-bot messages for response time calculation
+        non_bot_messages = [m for m in messages if not m.author.bot]
+        avg_response_minutes = _calculate_avg_response_time(non_bot_messages)
+        diversity_score = _calculate_diversity_score(reply_counts)
+
         return DebateAnalytics(
             participants=len(participants),
             total_replies=total_replies,
             total_karma=total_thread_karma,  # Now shows karma earned in THIS thread
             last_activity=last_activity,
+            created_at=thread.created_at,
             top_contributor=top_contributor,
             activity_graph=activity_graph,
+            avg_response_minutes=avg_response_minutes,
+            diversity_score=diversity_score,
         )
 
     except Exception as e:
@@ -264,37 +351,55 @@ async def generate_analytics_embed(bot: "OthmanBot", analytics: DebateAnalytics)
         color=discord.Color.orange(),
     )
 
-    # Format last activity as relative time
-    now = datetime.now(NY_TZ)
-    delta = now - analytics.last_activity
-
-    if delta.total_seconds() < 60:
-        last_activity_str = "Just now"
-    elif delta.total_seconds() < 3600:
-        minutes = int(delta.total_seconds() / 60)
-        last_activity_str = f"{minutes}m ago"
-    elif delta.total_seconds() < 86400:
-        hours = int(delta.total_seconds() / 3600)
-        last_activity_str = f"{hours}h ago"
+    # Format created_at as relative time using Discord's timestamp format
+    if analytics.created_at:
+        created_timestamp = int(analytics.created_at.timestamp())
+        created_str = f"<t:{created_timestamp}:R>"
     else:
-        days = int(delta.total_seconds() / 86400)
-        last_activity_str = f"{days}d ago"
+        created_str = "Unknown"
 
     # Stats field (compact)
     stats = (
         f"👥 `{analytics.participants}` participants\n"
         f"💬 `{analytics.total_replies}` replies\n"
         f"⬆️ `+{analytics.total_karma}` karma\n"
-        f"⏱️ {last_activity_str}"
+        f"📅 {created_str}"
     )
     embed.add_field(name="📊 Stats", value=stats, inline=True)
+
+    # Quality metrics field
+    quality_lines = []
+
+    # Response time (format nicely)
+    if analytics.avg_response_minutes is not None:
+        if analytics.avg_response_minutes < 60:
+            response_str = f"`{analytics.avg_response_minutes:.0f}m`"
+        else:
+            hours = analytics.avg_response_minutes / 60
+            response_str = f"`{hours:.1f}h`"
+        quality_lines.append(f"⏱️ {response_str} avg response")
+
+    # Diversity score (show as percentage with emoji indicator)
+    if analytics.diversity_score is not None:
+        pct = analytics.diversity_score * 100
+        if pct >= 80:
+            diversity_emoji = "🟢"
+        elif pct >= 50:
+            diversity_emoji = "🟡"
+        else:
+            diversity_emoji = "🔴"
+        quality_lines.append(f"{diversity_emoji} `{pct:.0f}%` diversity")
+
+    # Only show quality field if we have metrics
+    if quality_lines:
+        embed.add_field(name="📈 Quality", value="\n".join(quality_lines), inline=True)
 
     # Rules field (compact)
     rules = (
         "• Be respectful\n"
         "• No hate speech\n"
         "• Stay on topic\n"
-        "• No spam\n\n\n"
+        "• No spam\n\n"
         "✅ React below to join"
     )
     embed.add_field(name="📜 Rules", value=rules, inline=True)
