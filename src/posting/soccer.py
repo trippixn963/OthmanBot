@@ -17,7 +17,7 @@ from src.core.logger import logger
 from src.posting.poster import download_image, cleanup_temp_file, build_forum_content
 from src.posting.announcements import send_soccer_announcement
 from src.services import Article as SoccerArticle
-from src.core.config import SOCCER_TEAM_TAG_IDS
+from src.core.config import SOCCER_TEAM_TAG_IDS, NY_TZ
 from src.utils.retry import exponential_backoff
 
 if TYPE_CHECKING:
@@ -140,7 +140,7 @@ async def post_soccer_article_to_forum(
         )
 
         # Format thread name
-        post_date = datetime.now().strftime("%m-%d-%y")
+        post_date = datetime.now(NY_TZ).strftime("%m-%d-%y")
         thread_name = f"📅 {post_date} | {article.title}"
         if len(thread_name) > 100:
             thread_name = f"📅 {post_date} | {article.title[:80]}..."

@@ -13,19 +13,14 @@ Server: discord.gg/syria
 import asyncio
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
-from zoneinfo import ZoneInfo
 
 import discord
 
 from src.core.logger import logger
-from src.core.config import PRESENCE_UPDATE_INTERVAL
+from src.core.config import PRESENCE_UPDATE_INTERVAL, NY_TZ
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
-
-
-# Timezone for promo scheduling
-EST = ZoneInfo("America/New_York")
 
 # Promotional presence settings
 PROMO_TEXT = "🌐 trippixn.com/othman"
@@ -90,7 +85,7 @@ async def update_presence(bot: "OthmanBot", status_text: Optional[str] = None) -
     if _promo_active:
         return
 
-    now = datetime.now()
+    now = datetime.now(NY_TZ)
 
     # If no custom status, rotate through statuses
     if status_text is None:
@@ -232,7 +227,7 @@ async def _promo_loop(bot: "OthmanBot") -> None:
 
     while True:
         try:
-            now = datetime.now(EST)
+            now = datetime.now(NY_TZ)
             # Calculate seconds until next hour
             minutes_until_hour = 60 - now.minute
             seconds_until_hour = minutes_until_hour * 60 - now.second
@@ -248,7 +243,7 @@ async def _promo_loop(bot: "OthmanBot") -> None:
             )
             await bot.change_presence(activity=activity)
 
-            promo_time = datetime.now(EST)
+            promo_time = datetime.now(NY_TZ)
             logger.info("📢 Promo Presence Activated", [
                 ("Text", PROMO_TEXT),
                 ("Duration", f"{PROMO_DURATION_MINUTES} minutes"),

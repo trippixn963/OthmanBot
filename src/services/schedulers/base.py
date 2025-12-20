@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Optional, Callable, Any
 
 from src.core.logger import logger
+from src.core.config import NY_TZ
 
 
 # =============================================================================
@@ -179,7 +180,7 @@ class BaseScheduler:
         while self.is_running:
             try:
                 next_post_time: datetime = self._calculate_next_post_time()
-                wait_seconds: float = (next_post_time - datetime.now()).total_seconds()
+                wait_seconds: float = (next_post_time - datetime.now(NY_TZ)).total_seconds()
 
                 if wait_seconds > 0:
                     logger.tree("Next Post Scheduled", [
@@ -220,7 +221,7 @@ class BaseScheduler:
         Returns:
             datetime object for next post time
         """
-        now: datetime = datetime.now()
+        now: datetime = datetime.now(NY_TZ)
 
         if now.minute < self.post_minute:
             next_post: datetime = now.replace(
@@ -263,7 +264,7 @@ class BaseScheduler:
                 next_post.strftime("%I:%M %p") if next_post else "N/A"
             ),
             "next_post_in_minutes": (
-                int((next_post - datetime.now()).total_seconds() / 60)
+                int((next_post - datetime.now(NY_TZ)).total_seconds() / 60)
                 if next_post
                 else None
             ),
