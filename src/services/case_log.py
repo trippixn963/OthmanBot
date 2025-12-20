@@ -3,15 +3,13 @@ Othman Discord Bot - Case Log Service
 ======================================
 
 Service for logging ban/unban actions to forum threads in the mods server.
-Each user gets a unique case ID and thread that persists across all their moderation actions.
 
-DESIGN:
-- Thread title format: [XXXX] | Discord Username
-- First message: User profile info + initial ban embed
-- All subsequent ban/unban events logged to the same thread
-- Auto-unbans (expired bans) also logged
-- Ban count tracked and displayed in embed titles
-- Clickable thread links in scope field
+Features:
+- Unique case ID and thread per user
+- Thread title format: [XXXX] | Username
+- Ban/unban events logged to same thread
+- Auto-unbans (expired bans) logged
+- Ban count tracked in embed titles
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
