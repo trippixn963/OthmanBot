@@ -18,6 +18,7 @@ from src.core.logger import logger
 from src.core.config import SECONDS_PER_HOUR, NY_TZ
 from src.services.debates.reconciliation import cleanup_orphan_votes
 from src.utils.footer import refresh_avatar
+from src.utils.banner import refresh_banner
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -125,8 +126,9 @@ class KarmaReconciliationScheduler:
                         if self.bot:
                             await self._run_orphan_cleanup()
 
-                        # Refresh footer avatar at midnight
+                        # Refresh footer avatar and bot banner at midnight
                         await refresh_avatar()
+                        await refresh_banner()
 
                     except Exception as e:
                         logger.error("Nightly Karma Reconciliation Failed", [

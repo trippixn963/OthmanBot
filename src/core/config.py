@@ -399,10 +399,22 @@ DEBATES_MANAGEMENT_ROLE_ID: Optional[int] = _load_optional_id("DEBATES_MANAGEMEN
 
 # User IDs allowed to review appeals (approve/deny) in the mods server
 # These users can review appeals even without the Debates Management role
-APPEAL_REVIEWER_IDS: set[int] = {
-    511806208366084097,   # adonis_a
-    1249397157702795396,  # 66j1
-}
+# Format in .env: APPEAL_REVIEWER_IDS=123,456,789
+def _load_appeal_reviewer_ids() -> set[int]:
+    """Load appeal reviewer IDs from comma-separated env var."""
+    raw = os.getenv("APPEAL_REVIEWER_IDS", "")
+    if not raw:
+        return set()
+    try:
+        return {int(id.strip()) for id in raw.split(",") if id.strip()}
+    except ValueError:
+        logger.warning("Invalid APPEAL_REVIEWER_IDS format", [
+            ("Value", raw),
+            ("Expected", "Comma-separated integers"),
+        ])
+        return set()
+
+APPEAL_REVIEWER_IDS: set[int] = _load_appeal_reviewer_ids()
 
 
 # =============================================================================
