@@ -80,17 +80,28 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int | None = 7) -> dict:
         # Collect all active threads
         threads_to_scan = []
 
-        # Active threads (skip deprecated)
+        # Get Open Discussion thread ID to skip it (no karma tracking)
+        open_discussion_thread_id = None
+        if hasattr(bot, 'open_discussion') and bot.open_discussion:
+            open_discussion_thread_id = bot.open_discussion.get_thread_id()
+
+        # Active threads (skip deprecated and open discussion)
         for thread in debates_forum.threads:
             if thread.name.startswith("[DEPRECATED]"):
+                continue
+            # Skip Open Discussion thread (no karma tracking)
+            if open_discussion_thread_id and thread.id == open_discussion_thread_id:
                 continue
             # If no cutoff, include all; otherwise check date
             if cutoff_time is None or (thread.created_at and thread.created_at > cutoff_time):
                 threads_to_scan.append(thread)
 
-        # Recently archived threads (skip deprecated)
+        # Recently archived threads (skip deprecated and open discussion)
         async for thread in debates_forum.archived_threads(limit=DISCORD_ARCHIVED_THREADS_LIMIT):
             if thread.name.startswith("[DEPRECATED]"):
+                continue
+            # Skip Open Discussion thread (no karma tracking)
+            if open_discussion_thread_id and thread.id == open_discussion_thread_id:
                 continue
             # If no cutoff, include all; otherwise check date
             if cutoff_time is None or (thread.created_at and thread.created_at > cutoff_time):

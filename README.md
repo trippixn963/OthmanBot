@@ -41,6 +41,7 @@ OthmanBot automates content posting and community engagement for Discord servers
 | **Karma Voting** | Reaction-based upvote/downvote with persistent tracking |
 | **Auto-Tagging** | AI detects relevant topic tags for new debates |
 | **Hot Tag Manager** | Dynamic "Hot" tag based on activity |
+| **Open Discussion** | Pinned casual chat thread (no karma tracking) |
 | **Leaderboard** | Monthly/all-time rankings updated hourly |
 | **Case Logging** | All ban/unban actions tracked per-user |
 | **Appeal System** | Users can appeal disallows and closures via DM |
@@ -133,6 +134,7 @@ OthmanBot/
 | `closure_history` | Thread closure records with reopen tracking |
 | `case_logs` | Moderation case tracking per user |
 | `appeals` | User appeals for disallows and closures |
+| `open_discussion` | Open Discussion thread state |
 | `audit_log` | All database changes for accountability |
 
 ---

@@ -233,7 +233,6 @@ DISCORD_THREAD_NAME_LIMIT: int = 100  # Discord thread name character limit
 TEASER_LENGTH: int = 100  # Summary teaser length for embeds
 LEADERBOARD_TOP_USERS: int = 10  # Top users to show in leaderboards
 LEADERBOARD_TOP_ITEMS: int = 3  # Top items (streaks, debates, etc.)
-DISCORD_AUTOCOMPLETE_LIMIT: int = 25  # Discord autocomplete max choices
 
 # =============================================================================
 # Cache Constants
@@ -315,6 +314,15 @@ EMBED_NO_VALUE = "_None provided_"
 
 MIN_MESSAGE_LENGTH: int = int(os.getenv("MIN_MESSAGE_LENGTH", "200"))  # Minimum chars for Latin/English
 MIN_MESSAGE_LENGTH_ARABIC: int = int(os.getenv("MIN_MESSAGE_LENGTH_ARABIC", "400"))  # Min chars for Arabic
+
+
+# =============================================================================
+# Open Discussion Configuration
+# =============================================================================
+# The Open Discussion thread is a special pinned thread in the debates forum
+# where users can have casual conversations without karma tracking.
+
+OPEN_DISCUSSION_ACKNOWLEDGMENT_EMOJI: str = "✅"  # Emoji users must react with to participate
 
 
 # =============================================================================
@@ -615,7 +623,6 @@ __all__ = [
     "TEASER_LENGTH",
     "LEADERBOARD_TOP_USERS",
     "LEADERBOARD_TOP_ITEMS",
-    "DISCORD_AUTOCOMPLETE_LIMIT",
     # Cache Constants
     "AI_CACHE_MAX_ENTRIES",
     "CACHE_CLEANUP_RATIO",
@@ -654,4 +661,6 @@ __all__ = [
     "EmbedIcons",
     "EMBED_FOOTER_TEXT",
     "EMBED_NO_VALUE",
+    # Open Discussion
+    "OPEN_DISCUSSION_ACKNOWLEDGMENT_EMOJI",
 ]

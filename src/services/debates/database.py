@@ -178,7 +178,7 @@ class DebatesDatabase:
                 return False
 
     # Current schema version - increment when adding migrations
-    SCHEMA_VERSION = 13
+    SCHEMA_VERSION = 14
 
     # Valid table names for SQL injection prevention
     VALID_TABLES = frozenset({
@@ -186,7 +186,7 @@ class DebatesDatabase:
         'debate_participation', 'debate_creators', 'case_logs',
         'analytics_messages', 'schema_version', 'user_streaks', 'linked_accounts',
         'appeals',
-        'debate_counter', 'audit_log'
+        'debate_counter', 'audit_log', 'open_discussion'
     })
 
     # Audit action types for consistency
@@ -590,6 +590,22 @@ class DebatesDatabase:
             if not self._column_exists(cursor, "appeals", "case_message_id"):
                 cursor.execute("ALTER TABLE appeals ADD COLUMN case_message_id INTEGER")
                 logger.info("Migration 13: Added case_message_id to appeals")
+            migrations_run += 1
+
+        # Migration 14: Add open_discussion table for casual discussion thread management
+        if current_version < 14:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS open_discussion (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    thread_id INTEGER,
+                    sticky_message_id INTEGER,
+                    message_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("INSERT OR IGNORE INTO open_discussion (id) VALUES (1)")
+            logger.info("Migration 14: Added open_discussion table")
             migrations_run += 1
 
         # Update schema version
@@ -1087,6 +1103,52 @@ class DebatesDatabase:
                     """SELECT COUNT(*) FROM votes
                        WHERE DATE(created_at) = DATE('now')"""
                 )
+                return cursor.fetchone()[0]
+            finally:
+                cursor.close()
+
+    def get_karma_changes_today(self, user_ids: list[int]) -> dict[int, int]:
+        """
+        Get karma change today for a list of users.
+
+        Args:
+            user_ids: List of user IDs to get karma changes for
+
+        Returns:
+            Dict mapping user_id to karma change (+/- int)
+        """
+        if not user_ids:
+            return {}
+
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                placeholders = ",".join("?" * len(user_ids))
+                cursor.execute(
+                    f"""SELECT author_id, SUM(vote_type) as karma_change
+                        FROM votes
+                        WHERE DATE(created_at) = DATE('now')
+                        AND author_id IN ({placeholders})
+                        GROUP BY author_id""",
+                    user_ids
+                )
+                return {row[0]: row[1] for row in cursor.fetchall()}
+            finally:
+                cursor.close()
+
+    def get_total_votes(self) -> int:
+        """
+        Get total number of votes cast all-time.
+
+        Returns:
+            Total count of all votes ever cast
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute("""SELECT COUNT(*) FROM votes""")
                 return cursor.fetchone()[0]
             finally:
                 cursor.close()
@@ -2836,6 +2898,196 @@ class DebatesDatabase:
                 for row in cursor.fetchall()
             ]
 
+    def get_karma_history(self, user_id: int, days: int = 7) -> list[int]:
+        """
+        Get daily karma totals for a user over the last N days.
+
+        Args:
+            user_id: Discord user ID
+            days: Number of days of history to return
+
+        Returns:
+            List of karma values for each day (oldest to newest)
+        """
+        from src.core.config import NY_TZ
+
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Get daily karma changes from votes table
+            cursor.execute(
+                """SELECT DATE(created_at) as vote_date,
+                          SUM(CASE WHEN author_id = ? THEN vote_type ELSE 0 END) as daily_karma
+                   FROM votes
+                   WHERE created_at >= DATE('now', ?)
+                   AND author_id = ?
+                   GROUP BY DATE(created_at)
+                   ORDER BY vote_date ASC""",
+                (user_id, f'-{days} days', user_id)
+            )
+            rows = cursor.fetchall()
+
+            # Build date -> karma map
+            date_karma = {row[0]: row[1] for row in rows}
+
+            # Create array for each day
+            result = []
+            for i in range(days - 1, -1, -1):
+                target_date = (datetime.now(NY_TZ) - timedelta(days=i)).strftime("%Y-%m-%d")
+                result.append(date_karma.get(target_date, 0))
+
+            return result
+
+    def get_rank_change(self, user_id: int) -> int:
+        """
+        Get rank change since yesterday (positive = moved up).
+
+        Args:
+            user_id: Discord user ID
+
+        Returns:
+            Rank change (positive = improved, negative = dropped)
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Get current rank
+            cursor.execute(
+                """SELECT COUNT(*) + 1
+                   FROM users
+                   WHERE total_karma > (SELECT COALESCE(total_karma, 0) FROM users WHERE user_id = ?)""",
+                (user_id,)
+            )
+            current_rank = cursor.fetchone()[0]
+
+            # Calculate what rank would have been yesterday by excluding today's votes
+            cursor.execute(
+                """SELECT COUNT(*) + 1
+                   FROM users u
+                   WHERE (u.total_karma - COALESCE((
+                       SELECT SUM(vote_type)
+                       FROM votes
+                       WHERE author_id = u.user_id
+                       AND DATE(created_at) = DATE('now')
+                   ), 0)) > (
+                       SELECT COALESCE(total_karma, 0) - COALESCE((
+                           SELECT SUM(vote_type)
+                           FROM votes
+                           WHERE author_id = ?
+                           AND DATE(created_at) = DATE('now')
+                       ), 0)
+                       FROM users
+                       WHERE user_id = ?
+                   )""",
+                (user_id, user_id)
+            )
+            yesterday_rank = cursor.fetchone()[0]
+
+            # Positive means moved up (lower rank number is better)
+            return yesterday_rank - current_rank
+
+    def get_user_recent_debates(self, user_id: int, limit: int = 5) -> list[dict]:
+        """
+        Get recent debates a user participated in.
+
+        Args:
+            user_id: Discord user ID
+            limit: Maximum number of debates to return
+
+        Returns:
+            List of dicts with thread_id, message_count, created_at
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """SELECT dp.thread_id, dp.message_count, dp.created_at
+                   FROM debate_participation dp
+                   WHERE dp.user_id = ?
+                   ORDER BY dp.created_at DESC
+                   LIMIT ?""",
+                (user_id, limit)
+            )
+            return [
+                {
+                    "thread_id": row[0],
+                    "message_count": row[1],
+                    "created_at": row[2]
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def get_category_leaderboards(self, limit: int = 10) -> dict:
+        """
+        Get all category leaderboards in one efficient query batch.
+
+        Args:
+            limit: Number of users per category
+
+        Returns:
+            Dict with streaks, active, and creators leaderboards
+        """
+        from src.core.config import NY_TZ
+
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Get top streaks
+            today = datetime.now(NY_TZ).strftime('%Y-%m-%d')
+            yesterday = (datetime.now(NY_TZ) - timedelta(days=1)).strftime('%Y-%m-%d')
+
+            cursor.execute(
+                """SELECT user_id, current_streak, longest_streak
+                   FROM user_streaks
+                   WHERE current_streak > 0
+                   AND last_active_date IN (?, ?)
+                   ORDER BY current_streak DESC, longest_streak DESC
+                   LIMIT ?""",
+                (today, yesterday, limit)
+            )
+            streaks = [
+                {"user_id": row[0], "current_streak": row[1], "longest_streak": row[2]}
+                for row in cursor.fetchall()
+            ]
+
+            # Get most active participants
+            cursor.execute(
+                """SELECT user_id, SUM(message_count) as total_messages
+                   FROM debate_participation
+                   GROUP BY user_id
+                   ORDER BY total_messages DESC
+                   LIMIT ?""",
+                (limit,)
+            )
+            active = [
+                {"user_id": row[0], "message_count": row[1]}
+                for row in cursor.fetchall()
+            ]
+
+            # Get top debate starters
+            cursor.execute(
+                """SELECT user_id, COUNT(*) as debate_count
+                   FROM debate_creators
+                   GROUP BY user_id
+                   ORDER BY debate_count DESC
+                   LIMIT ?""",
+                (limit,)
+            )
+            creators = [
+                {"user_id": row[0], "debate_count": row[1]}
+                for row in cursor.fetchall()
+            ]
+
+            return {
+                "streaks": streaks,
+                "active": active,
+                "creators": creators
+            }
+
     def get_all_debate_thread_ids(self) -> list[int]:
         """
         Get all unique thread IDs from the database.
@@ -4181,6 +4433,138 @@ class DebatesDatabase:
             )
             conn.commit()
             return cursor.rowcount > 0
+
+    # -------------------------------------------------------------------------
+    # Open Discussion Operations
+    # -------------------------------------------------------------------------
+
+    def get_open_discussion_thread_id(self) -> int | None:
+        """
+        Get the Open Discussion thread ID.
+
+        Returns:
+            Thread ID if set, None otherwise
+
+        DESIGN: Single-row table ensures atomic access to thread state.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT thread_id FROM open_discussion WHERE id = 1")
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    def set_open_discussion_thread_id(self, thread_id: int) -> None:
+        """
+        Set the Open Discussion thread ID.
+
+        Args:
+            thread_id: Discord thread ID for the open discussion
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE open_discussion
+                   SET thread_id = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = 1""",
+                (thread_id,)
+            )
+            conn.commit()
+            logger.tree("Open Discussion Thread Set", [
+                ("Thread ID", str(thread_id)),
+            ], emoji="💬")
+
+    def get_open_discussion_sticky_message_id(self) -> int | None:
+        """
+        Get the current sticky message ID.
+
+        Returns:
+            Message ID if set, None otherwise
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT sticky_message_id FROM open_discussion WHERE id = 1")
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    def set_open_discussion_sticky_message_id(self, message_id: int) -> None:
+        """
+        Set the sticky message ID.
+
+        Args:
+            message_id: Discord message ID of the sticky rules message
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE open_discussion
+                   SET sticky_message_id = ?, message_count = 0, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = 1""",
+                (message_id,)
+            )
+            conn.commit()
+
+    def get_open_discussion_message_count(self) -> int:
+        """
+        Get the current message count since last sticky.
+
+        Returns:
+            Number of messages since last sticky message
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT message_count FROM open_discussion WHERE id = 1")
+            row = cursor.fetchone()
+            return row[0] if row else 0
+
+    def increment_open_discussion_message_count(self) -> int:
+        """
+        Increment the message count and return the new value.
+
+        Returns:
+            New message count after increment
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE open_discussion
+                   SET message_count = message_count + 1, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = 1
+                   RETURNING message_count"""
+            )
+            row = cursor.fetchone()
+            conn.commit()
+            return row[0] if row else 1
+
+    def reset_open_discussion_message_count(self) -> None:
+        """Reset the message count to 0 after posting sticky."""
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE open_discussion
+                   SET message_count = 0, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = 1"""
+            )
+            conn.commit()
+
+    def is_open_discussion_thread(self, thread_id: int) -> bool:
+        """
+        Check if a thread is the Open Discussion thread.
+
+        Args:
+            thread_id: Thread ID to check
+
+        Returns:
+            True if this is the open discussion thread
+        """
+        stored_id = self.get_open_discussion_thread_id()
+        return stored_id is not None and stored_id == thread_id
 
 
 # =============================================================================

@@ -501,6 +501,14 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
     if is_thread_starter:
         return  # Already processed by on_thread_create_handler
 
+    # Handle Open Discussion thread separately (no karma/participation tracking)
+    if hasattr(bot, 'open_discussion') and bot.open_discussion:
+        is_open_discussion = await bot.open_discussion.on_message(message)
+        if is_open_discussion:
+            # Skip all debate processing for Open Discussion
+            # The on_message handler already handles sticky message management
+            return
+
     # Check if bot is disabled - still track participation but skip everything else
     bot_disabled = getattr(bot, 'disabled', False)
 
@@ -799,6 +807,15 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
         if starter_message.author.bot:
             return
 
+        # Skip processing for Open Discussion thread (no numbering, no analytics)
+        # The OpenDiscussionService handles this thread separately
+        if hasattr(bot, 'open_discussion') and bot.open_discussion:
+            if bot.open_discussion.is_open_discussion_thread(thread.id):
+                logger.debug("Skipping Thread Create Processing for Open Discussion", [
+                    ("Thread ID", str(thread.id)),
+                ])
+                return
+
         # Add upvote reaction to the original post (always, regardless of language)
         # Only upvote on original posts - downvote reserved for replies
         try:
@@ -1076,6 +1093,11 @@ async def on_debate_reaction_add(
         if not hasattr(bot, 'debates_service') or bot.debates_service is None:
             return
 
+        # Skip vote tracking for Open Discussion thread (no karma tracking)
+        if hasattr(bot, 'open_discussion') and bot.open_discussion:
+            if bot.open_discussion.is_open_discussion_thread(reaction.message.channel.id):
+                return
+
         message = reaction.message
         author_id = message.author.id
         voter_id = user.id
@@ -1214,6 +1236,11 @@ async def on_debate_reaction_remove(
         # Get debates service
         if not hasattr(bot, 'debates_service') or bot.debates_service is None:
             return
+
+        # Skip vote tracking for Open Discussion thread (no karma tracking)
+        if hasattr(bot, 'open_discussion') and bot.open_discussion:
+            if bot.open_discussion.is_open_discussion_thread(reaction.message.channel.id):
+                return
 
         # Remove the vote and check if it existed
         vote_type = "Upvote" if emoji == UPVOTE_EMOJI else "Downvote"

@@ -43,7 +43,7 @@ from src.handlers.debates import (
     on_member_remove_handler,
     on_member_join_handler,
 )
-from src.services.debates import DebatesService
+from src.services.debates import DebatesService, OpenDiscussionService
 from src.services.webhook_alerts import get_alert_service
 from src.services.interaction_logger import InteractionLogger
 from src.services.case_log import CaseLogService
@@ -151,6 +151,8 @@ class OthmanBot(commands.Bot):
         self.soccer_scraper = None    # SoccerScraper - fetches Kooora soccer news
         self.content_rotation_scheduler = None  # Rotates content hourly
         self.debates_service = None   # Karma tracking and debate management
+        self.open_discussion = None   # Open Discussion service (casual chat, no karma)
+        self.stats_api = None         # Stats API for dashboard
 
         # =================================================================
         # Background Tasks
@@ -219,6 +221,9 @@ class OthmanBot(commands.Bot):
         """Setup hook called when bot is starting."""
         # Initialize debates service
         self.debates_service = DebatesService()
+
+        # Initialize open discussion service (casual chat, no karma tracking)
+        self.open_discussion = OpenDiscussionService(self, self.debates_service.db)
 
         # Initialize interaction logger
         self.interaction_logger = InteractionLogger(self)
