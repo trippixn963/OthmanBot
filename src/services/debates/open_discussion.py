@@ -288,6 +288,9 @@ class OpenDiscussionService:
             # Clean up reactions on the original post - only ✅ should be there
             await self._cleanup_reactions(thread)
 
+            # Refresh the original post embed (ensures footer has developer avatar)
+            await self._refresh_original_embed(thread)
+
         except discord.HTTPException as e:
             logger.warning("Failed To Restore Open Discussion Thread Health", [
                 ("Thread ID", str(thread.id)),
@@ -323,6 +326,43 @@ class OpenDiscussionService:
             pass  # Starter message not found
         except discord.HTTPException:
             pass  # Non-critical, ignore errors
+
+    async def _refresh_original_embed(self, thread: discord.Thread) -> None:
+        """
+        Refresh the original post embed to ensure footer has developer avatar.
+
+        Called on startup to fix threads created before footer was initialized.
+
+        Args:
+            thread: The Open Discussion thread
+        """
+        try:
+            # Fetch the starter message (ID equals thread ID for forum threads)
+            starter_message = await thread.fetch_message(thread.id)
+
+            # Build fresh embed with current footer
+            new_embed = self._build_rules_embed()
+
+            # Check if embed needs updating (compare footer icon)
+            current_embeds = starter_message.embeds
+            if current_embeds:
+                current_footer = current_embeds[0].footer
+                new_footer = new_embed.footer
+
+                # Only update if footer icon is different or missing
+                if current_footer.icon_url != new_footer.icon_url:
+                    await starter_message.edit(embed=new_embed)
+                    logger.info("Open Discussion Embed Refreshed", [
+                        ("Thread ID", str(thread.id)),
+                        ("Reason", "Footer updated with developer avatar"),
+                    ])
+
+        except discord.NotFound:
+            pass  # Starter message not found
+        except discord.HTTPException as e:
+            logger.debug("Could Not Refresh Open Discussion Embed", [
+                ("Error", str(e)),
+            ])
 
     # -------------------------------------------------------------------------
     # Rules Embed
@@ -367,8 +407,19 @@ class OpenDiscussionService:
         if not self._db.is_open_discussion_thread(message.channel.id):
             return False
 
-        # Skip bot messages and system messages
-        if message.author.bot or message.type != discord.MessageType.default:
+        # Delete system messages (e.g., "changed the post title")
+        if message.type != discord.MessageType.default:
+            try:
+                await message.delete()
+                logger.debug("Open Discussion System Message Deleted", [
+                    ("Type", str(message.type)),
+                ])
+            except discord.HTTPException:
+                pass
+            return True
+
+        # Skip bot messages
+        if message.author.bot:
             return True
 
         # Check if user has acknowledged the rules
@@ -388,6 +439,15 @@ class OpenDiscussionService:
                 ("User", f"{message.author.name} ({message.author.id})"),
                 ("Thread ID", str(message.channel.id)),
             ])
+
+            # Log to webhook
+            if hasattr(self._bot, 'interaction_logger') and self._bot.interaction_logger:
+                await self._bot.interaction_logger.log_open_discussion_blocked(
+                    user=message.author,
+                    thread_name=message.channel.name,
+                    guild_id=message.guild.id if message.guild else None,
+                    thread_id=message.channel.id
+                )
 
         return True
 
@@ -435,7 +495,7 @@ class OpenDiscussionService:
         """
         Send an auto-deleting reminder to the user to acknowledge the rules.
 
-        The message is deleted after 15 seconds to keep the channel clean.
+        The message is deleted after 8 seconds to keep the channel clean.
 
         Args:
             thread: The Open Discussion thread
@@ -458,9 +518,9 @@ class OpenDiscussionService:
             )
             set_footer(embed)
 
-            # Send message and delete after 15 seconds
+            # Send message and delete after 8 seconds (consistent with regular debates)
             reminder_msg = await thread.send(embed=embed)
-            await reminder_msg.delete(delay=15)
+            await reminder_msg.delete(delay=8)
 
         except discord.HTTPException as e:
             logger.warning("Failed To Send Acknowledgment Reminder", [
