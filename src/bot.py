@@ -1,79 +1,17 @@
 """
 Othman Discord Bot - Main Bot Class
-===================================
+====================================
 
-Core Discord client with modular architecture for the Syria Discord server.
-Combines automated news posting with a debates forum featuring karma tracking,
-moderation tools, and an appeal system.
-
-ARCHITECTURE OVERVIEW:
-======================
-The bot follows a layered architecture with clear separation of concerns:
-
-┌─────────────────────────────────────────────────────────────────┐
-│                        BOT LAYER (bot.py)                        │
-│  - Discord client setup and event routing                       │
-│  - Service initialization and lifecycle management              │
-│  - Persistent button handling for appeal system                 │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        ▼                     ▼                     ▼
-┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-│   HANDLERS    │    │   SERVICES    │    │   COMMANDS    │
-│ - ready.py    │    │ - scrapers/   │    │ - karma.py    │
-│ - debates.py  │    │ - schedulers/ │    │ - disallow.py │
-│ - reactions.py│    │ - debates/    │    │ - allow.py    │
-│ - shutdown.py │    │ - case_log.py │    │ - close.py    │
-└───────────────┘    │ - appeal_svc  │    │ - open.py     │
-                     │ - ban_notify  │    │ - rename.py   │
-                     └───────────────┘    │ - cases.py    │
-                              │           └───────────────┘
-                              ▼
-                    ┌───────────────────┐
-                    │     POSTING       │
-                    │ - news.py         │
-                    │ - soccer.py       │
-                    │ - debates.py      │
-                    └───────────────────┘
-
-KEY DESIGN DECISIONS:
-=====================
-1. CONTENT ROTATION: Posts rotate hourly (news → soccer)
-   to spread API costs and provide variety
-
-2. KARMA SYSTEM: Reddit-style upvote/downvote with ⬆️/⬇️ reactions
-   - Stored in SQLite for persistence
-   - Nightly reconciliation catches missed votes
-   - Self-voting is blocked
-
-3. HOT TAG MANAGEMENT: Automatic "Hot" tag based on activity thresholds
-   - 10+ messages in 1 hour = Hot
-   - No activity for 6+ hours = Remove Hot
-
-4. APPEAL SYSTEM: Users can appeal disallows and thread closures
-   - Appeal button in DM notifications and thread embeds
-   - Appeals posted to user's case thread with Approve/Deny buttons
-   - Persistent buttons work across bot restarts via on_interaction routing
-   - Denial requires moderator to provide a reason
-
-5. CASE LOG SYSTEM: Per-user case threads in moderator forum
-   - Tracks ban/unban history
-   - Appeal submissions and reviews logged
-   - Provides audit trail for moderation actions
-
-6. GRACEFUL SHUTDOWN: All services properly cleaned up
-   - Database connections closed
-   - HTTP sessions terminated
-   - Background tasks cancelled
+Core Discord client for the Syria Discord server combining automated
+news posting with a debates forum featuring karma tracking.
 
 Features:
-- Fully automated hourly news posting (news, soccer)
-- Hot debates forum with karma tracking
+- Automated hourly news posting (news, soccer rotation)
+- Debates forum with karma tracking
 - Moderation tools (disallow, close, rename)
 - Appeal system with persistent buttons
 - Case logging to moderator forum
-- AI-powered content summarization (OpenAI)
+- AI-powered content summarization
 - Health check HTTP endpoint
 
 Author: حَـــــنَّـــــا

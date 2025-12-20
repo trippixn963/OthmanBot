@@ -4,55 +4,12 @@ Othman Discord Bot - Debates Database
 
 SQLite database operations for karma tracking and debate statistics.
 
-DATABASE SCHEMA:
-================
-┌─────────────────────────────────────────────────────────────────┐
-│                         votes                                    │
-├─────────────────────────────────────────────────────────────────┤
-│ voter_id (INT)     - User who voted                             │
-│ message_id (INT)   - Message that was voted on                  │
-│ author_id (INT)    - Author of the message (receives karma)     │
-│ vote_value (INT)   - +1 for upvote, -1 for downvote            │
-│ created_at (TEXT)  - Timestamp of vote                          │
-│ PRIMARY KEY: (voter_id, message_id) - One vote per user/message │
-└─────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────┐
-│                    debate_participation                          │
-├─────────────────────────────────────────────────────────────────┤
-│ thread_id (INT)    - Debate thread ID                           │
-│ user_id (INT)      - User who participated                      │
-│ message_count (INT)- Number of messages in thread               │
-│ updated_at (TEXT)  - Last update timestamp                      │
-│ PRIMARY KEY: (thread_id, user_id)                               │
-└─────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────┐
-│                     debate_creators                              │
-├─────────────────────────────────────────────────────────────────┤
-│ thread_id (INT)    - Debate thread ID (PRIMARY KEY)             │
-│ user_id (INT)      - User who created the debate                │
-│ created_at (TEXT)  - When the debate was created                │
-└─────────────────────────────────────────────────────────────────┘
-
-DESIGN DECISIONS:
-=================
-1. WAL MODE: Write-Ahead Logging for better read/write concurrency
-   - Readers don't block writers
-   - Writers don't block readers
-   - Perfect for Discord bot with frequent reads
-
-2. THREAD SAFETY: Uses threading.Lock() for all operations
-   - check_same_thread=False allows multi-thread access
-   - Lock prevents race conditions
-
-3. PERSISTENT CONNECTION: Single connection reused for all operations
-   - Avoids connection overhead
-   - Auto-reconnects if connection drops
-
-4. KARMA CALCULATION: SUM(vote_value) WHERE author_id = user_id
-   - Upvotes (+1) and downvotes (-1) are summed
-   - Net karma can be negative
+Features:
+- Vote tracking with karma calculations
+- Debate participation statistics
+- Ban/unban management with expiry
+- Thread closure history
+- WAL mode for concurrent access
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
