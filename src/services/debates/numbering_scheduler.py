@@ -68,9 +68,19 @@ async def reconcile_debate_numbering(bot: "OthmanBot") -> dict:
         debate_threads: list[tuple[int, "discord.Thread"]] = []
         deprecated_count = 0
 
+        # Get Open Discussion thread ID to skip it
+        open_discussion_thread_id = None
+        if hasattr(bot, 'open_discussion') and bot.open_discussion:
+            open_discussion_thread_id = bot.open_discussion.get_thread_id()
+
         for thread in debates_forum.threads:
+            # Skip deprecated threads
             if thread.name.startswith("[DEPRECATED]"):
                 deprecated_count += 1
+                continue
+
+            # Skip Open Discussion thread (no numbering)
+            if open_discussion_thread_id and thread.id == open_discussion_thread_id:
                 continue
 
             debate_num = _extract_debate_number(thread.name)

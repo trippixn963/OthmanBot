@@ -25,6 +25,7 @@ from src.services import (
     NewsScraper,
     SoccerScraper,
 )
+from src.services.stats_api import OthmanAPI
 from src.services.schedulers.rotation import ContentRotationScheduler
 from src.services.debates.scheduler import DebatesScheduler
 from src.services.debates.hot_tag_manager import HotTagManager
@@ -170,6 +171,7 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
     init_results.append(("Content Rotation", await _safe_init("Content Rotation", _init_content_rotation, bot)))
     init_results.append(("Debates Scheduler", await _safe_init("Debates Scheduler", _init_debates_scheduler, bot)))
     init_results.append(("Hot Tag Manager", await _safe_init("Hot Tag Manager", _init_hot_tag_manager, bot)))
+    init_results.append(("Open Discussion", await _safe_init("Open Discussion", _init_open_discussion, bot)))
     init_results.append(("Karma Reconciliation", await _safe_init("Karma Reconciliation", _init_karma_reconciliation, bot)))
     init_results.append(("Numbering Reconciliation", await _safe_init("Numbering Reconciliation", _init_numbering_reconciliation, bot)))
     init_results.append(("Ban Expiry Scheduler", await _safe_init("Ban Expiry Scheduler", _init_ban_expiry_scheduler, bot)))
@@ -206,6 +208,15 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
     except Exception as e:
         logger.error("Failed To Start Health Server", [("Error", str(e))])
         init_results.append(("Health Server", False))
+
+    # Start stats API server (for dashboard)
+    try:
+        bot.stats_api = OthmanAPI(bot)
+        await bot.stats_api.start()
+        init_results.append(("Stats API", True))
+    except Exception as e:
+        logger.error("Failed To Start Stats API", [("Error", str(e))])
+        init_results.append(("Stats API", False))
 
     # Initialize webhook alerts
     init_results.append(("Webhook Alerts", await _safe_init("Webhook Alerts", _init_webhook_alerts, bot)))
@@ -309,6 +320,37 @@ async def _init_hot_tag_manager(bot: "OthmanBot") -> None:
     logger.tree("Hot Tag Manager Started", [
         ("Check Interval", "every 10 minutes"),
     ], emoji="🏷️")
+
+
+async def _init_open_discussion(bot: "OthmanBot") -> None:
+    """Initialize Open Discussion thread in debates forum.
+
+    DESIGN: Creates a pinned "Open Discussion" thread for casual conversation
+    - No karma tracking (upvotes/downvotes don't affect score)
+    - Sticky rules message that reposts every 25 messages
+    - Users must acknowledge rules before posting
+    """
+    if not hasattr(bot, 'open_discussion') or not bot.open_discussion:
+        logger.info("💬 Open Discussion Service Not Initialized - Skipping")
+        return
+
+    # Ensure the thread exists (creates if needed)
+    thread = await bot.open_discussion.ensure_thread_exists()
+    if thread:
+        # Check pinned status using flags (for forum threads)
+        is_pinned = False
+        if hasattr(thread, 'flags') and hasattr(thread.flags, 'pinned'):
+            is_pinned = thread.flags.pinned
+        elif hasattr(thread, 'pinned'):
+            is_pinned = thread.pinned
+
+        logger.tree("Open Discussion Thread Ready", [
+            ("Thread ID", str(thread.id)),
+            ("Thread Name", thread.name),
+            ("Pinned", "Yes" if is_pinned else "No"),
+        ], emoji="💬")
+    else:
+        logger.warning("💬 Failed To Create Open Discussion Thread")
 
 
 async def _init_karma_reconciliation(bot: "OthmanBot") -> None:

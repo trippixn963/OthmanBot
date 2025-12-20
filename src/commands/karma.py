@@ -69,16 +69,6 @@ class KarmaCog(commands.Cog):
         target = user or interaction.user
         karma_data = self.bot.debates_service.get_karma(target.id)
         rank = self.bot.debates_service.get_rank(target.id)
-        analytics = self.bot.debates_service.db.get_user_analytics(target.id)
-        streak = self.bot.debates_service.db.get_user_streak(target.id)
-
-        # Calculate engagement ratio
-        total_votes = karma_data.upvotes_received + karma_data.downvotes_received
-        if total_votes > 0:
-            approval_rate = (karma_data.upvotes_received / total_votes) * 100
-            approval_display = f"`{approval_rate:.1f}%`"
-        else:
-            approval_display = "`N/A`"
 
         embed = discord.Embed(
             title=f"Karma for {target.display_name}",
@@ -98,51 +88,10 @@ class KarmaCog(commands.Cog):
             inline=True
         )
         embed.add_field(
-            name="Approval Rate",
-            value=approval_display,
-            inline=True
-        )
-
-        # Row 2: Votes breakdown
-        embed.add_field(
             name="Votes Received",
-            value=f"⬆️ `{karma_data.upvotes_received:,}` | ⬇️ `{karma_data.downvotes_received:,}`",
-            inline=False
-        )
-
-        # Row 3: Participation stats
-        embed.add_field(
-            name="Debates Participated",
-            value=f"`{analytics['debates_participated']:,}`",
+            value=f"⬆️ `{karma_data.upvotes_received:,}` ⬇️ `{karma_data.downvotes_received:,}`",
             inline=True
         )
-        embed.add_field(
-            name="Debates Created",
-            value=f"`{analytics['debates_created']:,}`",
-            inline=True
-        )
-        embed.add_field(
-            name="Total Messages",
-            value=f"`{analytics['total_messages']:,}`",
-            inline=True
-        )
-
-        # Row 4: Streak stats
-        current_streak = streak['current_streak']
-        longest_streak = streak['longest_streak']
-        streak_emoji = "🔥" if current_streak >= 7 else "⚡" if current_streak >= 3 else "📅"
-        embed.add_field(
-            name=f"{streak_emoji} Daily Streak",
-            value=f"`{current_streak}` day{'s' if current_streak != 1 else ''}",
-            inline=True
-        )
-        embed.add_field(
-            name="🏆 Longest Streak",
-            value=f"`{longest_streak}` day{'s' if longest_streak != 1 else ''}",
-            inline=True
-        )
-        # Empty field for alignment
-        embed.add_field(name="\u200b", value="\u200b", inline=True)
 
         set_footer(embed)
 
@@ -151,11 +100,18 @@ class KarmaCog(commands.Cog):
             ("Target User", f"{target.name} ({target.id})"),
             ("Karma", str(karma_data.total_karma)),
             ("Rank", f"#{rank}"),
-            ("Approval", approval_display.strip('`')),
-            ("Debates", str(analytics['debates_participated'])),
         ])
 
-        await interaction.response.send_message(embed=embed)
+        # Create view with leaderboard button
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.link,
+            label="Leaderboard & More",
+            url=f"https://trippixn.com/othman/leaderboard/{target.id}",
+            emoji=discord.PartialEmoji.from_str("<:leaderboard:1452015571120951316>")
+        ))
+
+        await interaction.response.send_message(embed=embed, view=view)
 
         # Get the message ID for direct linking in webhook
         message_id = None
