@@ -50,8 +50,6 @@ class NewsScraper(BaseScraper):
     def __init__(self) -> None:
         """Initialize the news scraper."""
         super().__init__(
-            cache_filename="data/posted_urls.json",
-            ai_cache_filename="data/news_ai_cache.json",
             content_type="news",
             log_emoji="📰",
         )

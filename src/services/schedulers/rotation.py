@@ -2,10 +2,10 @@
 Othman Discord Bot - Content Rotation Scheduler
 ================================================
 
-Unified scheduler that rotates between news, soccer, and gaming content hourly.
+Unified scheduler that rotates between news and soccer content hourly.
 
 Features:
-- Hourly content rotation (News → Soccer → Gaming → repeat)
+- Hourly content rotation (News → Soccer → repeat)
 - Skips content types with no new unposted articles
 - Saves OpenAI API tokens by posting only 1 content type per hour
 - State persistence across restarts
@@ -33,7 +33,6 @@ class ContentType(Enum):
     """Enum for content types in rotation."""
     NEWS = "news"
     SOCCER = "soccer"
-    GAMING = "gaming"
 
 
 # =============================================================================
@@ -42,9 +41,9 @@ class ContentType(Enum):
 
 class ContentRotationScheduler:
     """
-    Unified scheduler that rotates between news, soccer, and gaming content.
+    Unified scheduler that rotates between news and soccer content.
 
-    Posts one content type per hour in rotation: News → Soccer → Gaming → repeat.
+    Posts one content type per hour in rotation: News → Soccer → repeat.
     If a content type has no new unposted content, it skips to the next type.
 
     This reduces OpenAI API token usage by posting less frequently while still
@@ -55,10 +54,8 @@ class ContentRotationScheduler:
         self,
         news_callback: Callable[[], Any],
         soccer_callback: Callable[[], Any],
-        gaming_callback: Callable[[], Any],
         news_scraper: Any,
         soccer_scraper: Any,
-        gaming_scraper: Any,
         bot: Any = None,
     ) -> None:
         """
@@ -67,29 +64,24 @@ class ContentRotationScheduler:
         Args:
             news_callback: Async function to call when posting news
             soccer_callback: Async function to call when posting soccer
-            gaming_callback: Async function to call when posting gaming
             news_scraper: News scraper instance (to check for new content)
             soccer_scraper: Soccer scraper instance (to check for new content)
-            gaming_scraper: Gaming scraper instance (to check for new content)
             bot: Bot instance (to check disabled state)
         """
         self.bot = bot
         self.callbacks = {
             ContentType.NEWS: news_callback,
             ContentType.SOCCER: soccer_callback,
-            ContentType.GAMING: gaming_callback,
         }
 
         self.scrapers = {
             ContentType.NEWS: news_scraper,
             ContentType.SOCCER: soccer_scraper,
-            ContentType.GAMING: gaming_scraper,
         }
 
         self.emojis = {
             ContentType.NEWS: "📰",
             ContentType.SOCCER: "⚽",
-            ContentType.GAMING: "🎮",
         }
 
         self.is_running: bool = False
@@ -219,7 +211,7 @@ class ContentRotationScheduler:
         """
         Main scheduling loop - posts one content type per hour in rotation.
 
-        DESIGN: Rotates through news → soccer → gaming hourly
+        DESIGN: Rotates through news → soccer hourly
         Skips content types with no new unposted articles
         Falls back to news if all content types are exhausted
         """
@@ -271,7 +263,7 @@ class ContentRotationScheduler:
         back to news.
         """
         attempts = 0
-        max_attempts = 3  # Try all 3 content types
+        max_attempts = 2  # Try both content types
 
         while attempts < max_attempts:
             content_type = self.next_content_type
@@ -317,7 +309,7 @@ class ContentRotationScheduler:
 
         # All content types exhausted - log and wait for next hour
         logger.warning("🔄 No Content Available", [
-            ("Sources Checked", "All (news, soccer, gaming)"),
+            ("Sources Checked", "All (news, soccer)"),
             ("Action", "Skipping this hour"),
         ])
 
@@ -336,10 +328,8 @@ class ContentRotationScheduler:
             # Fetch articles using the appropriate method for each scraper type
             if content_type == ContentType.NEWS:
                 articles = await scraper.fetch_latest_news(max_articles=1, hours_back=24)
-            elif content_type == ContentType.SOCCER:
+            else:  # SOCCER
                 articles = await scraper.fetch_latest_soccer_news(max_articles=1, hours_back=24)
-            else:  # GAMING
-                articles = await scraper.fetch_latest_gaming_news(max_articles=1, hours_back=24)
 
             # If we got articles, there's new content
             # The scrapers already filter out posted content
@@ -356,9 +346,7 @@ class ContentRotationScheduler:
         """Move to the next content type in rotation."""
         if self.next_content_type == ContentType.NEWS:
             self.next_content_type = ContentType.SOCCER
-        elif self.next_content_type == ContentType.SOCCER:
-            self.next_content_type = ContentType.GAMING
-        else:  # GAMING
+        else:  # SOCCER
             self.next_content_type = ContentType.NEWS
 
     def _calculate_next_post_time(self) -> datetime:

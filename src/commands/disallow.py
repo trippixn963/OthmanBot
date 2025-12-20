@@ -23,9 +23,10 @@ from discord.ext import commands
 from src.core.logger import logger
 from src.core.config import (
     DEBATES_FORUM_ID, NY_TZ, BATCH_PROCESSING_DELAY, REACTION_DELAY,
-    DISCORD_API_DELAY, DISCORD_AUTOCOMPLETE_LIMIT, has_debates_management_role
+    DISCORD_API_DELAY, DISCORD_AUTOCOMPLETE_LIMIT, has_debates_management_role, EmbedColors
 )
-from src.utils import get_developer_avatar, remove_reaction_safe
+from src.utils import remove_reaction_safe
+from src.utils.footer import set_footer
 from src.views.appeals import AppealButtonView
 
 if TYPE_CHECKING:
@@ -335,7 +336,7 @@ class DisallowCog(commands.Cog):
                     f"**{user.mention}** has been banned from {scope}.\n\n"
                     f"They can no longer post messages there."
                 ),
-                color=discord.Color.red()
+                color=EmbedColors.BAN
             )
             embed.set_thumbnail(url=user.display_avatar.url)
             embed.add_field(name="Banned By", value=interaction.user.mention, inline=True)
@@ -349,8 +350,7 @@ class DisallowCog(commands.Cog):
                     inline=True
                 )
 
-            developer_avatar_url = await get_developer_avatar(self.bot)
-            embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
+            set_footer(embed)
 
             # Create appeal button view for the banned user
             appeal_view = AppealButtonView(

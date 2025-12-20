@@ -16,13 +16,13 @@ import discord
 from src.core.logger import logger
 from src.core.config import SYRIA_GUILD_ID, ALLOWED_GUILD_IDS, BOT_STARTUP_DELAY
 from src.core.health import HealthCheckServer
-from src.core.presence import update_presence, presence_update_loop
+from src.core.presence import update_presence, presence_update_loop, start_promo_scheduler
 from src.core.backup import BackupScheduler
+from src.utils.footer import init_footer
 from src.posting.poster import cleanup_old_temp_files
 from src.services import (
     NewsScraper,
     SoccerScraper,
-    GamingScraper,
 )
 from src.services.schedulers.rotation import ContentRotationScheduler
 from src.services.debates.scheduler import DebatesScheduler
@@ -33,17 +33,10 @@ from src.services.debates.numbering_scheduler import (
     NumberingReconciliationScheduler,
     reconcile_debate_numbering,
 )
-from src.services.debates.leaderboard import LeaderboardManager
-from src.services.debates.backfill import (
-    backfill_debate_stats,
-    reconcile_debate_stats,
-    StatsReconciliationScheduler,
-)
 from src.services.debates.ban_expiry_scheduler import BanExpiryScheduler
 from src.services.case_archive_scheduler import CaseArchiveScheduler
 from src.posting.news import post_news
 from src.posting.soccer import post_soccer_news
-from src.posting.gaming import post_gaming_news
 from src.posting.debates import post_hot_debate
 from src.handlers.debates import refresh_all_analytics_embeds
 
@@ -148,7 +141,6 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
             ("Mode", "Fully Automated"),
             ("News Channel", str(bot.news_channel_id) if bot.news_channel_id else "Not Set"),
             ("Soccer Channel", str(bot.soccer_channel_id) if bot.soccer_channel_id else "Not Set"),
-            ("Gaming Channel", str(bot.gaming_channel_id) if bot.gaming_channel_id else "Not Set"),
         ],
         emoji="✅",
     )
@@ -160,6 +152,12 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
     except asyncio.TimeoutError:
         logger.error("Timeout syncing commands - continuing startup")
 
+    # Initialize footer with cached avatar (for embed footers)
+    try:
+        await init_footer(bot)
+    except Exception as e:
+        logger.warning("Failed to initialize footer", [("Error", str(e))])
+
     # Initialize all services with error recovery
     # Each service can fail independently without blocking others
     init_results.append(("Content Rotation", await _safe_init("Content Rotation", _init_content_rotation, bot)))
@@ -167,7 +165,6 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
     init_results.append(("Hot Tag Manager", await _safe_init("Hot Tag Manager", _init_hot_tag_manager, bot)))
     init_results.append(("Karma Reconciliation", await _safe_init("Karma Reconciliation", _init_karma_reconciliation, bot)))
     init_results.append(("Numbering Reconciliation", await _safe_init("Numbering Reconciliation", _init_numbering_reconciliation, bot)))
-    init_results.append(("Leaderboard", await _safe_init("Leaderboard", _init_leaderboard, bot)))
     init_results.append(("Ban Expiry Scheduler", await _safe_init("Ban Expiry Scheduler", _init_ban_expiry_scheduler, bot)))
     init_results.append(("Case Archive Scheduler", await _safe_init("Case Archive Scheduler", _init_case_archive_scheduler, bot)))
     init_results.append(("Backup Scheduler", await _safe_init("Backup Scheduler", _init_backup_scheduler, bot)))
@@ -187,6 +184,9 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
         ("Interval", "60 seconds"),
     ])
 
+    # Start promotional presence scheduler (shows trippixn.com/othman on the hour)
+    await start_promo_scheduler(bot)
+
     # Clean up old temp files from previous sessions
     cleanup_old_temp_files()
     logger.info("🧹 Cleaned Up Old Temp Files")
@@ -202,13 +202,6 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
 
     # Initialize webhook alerts
     init_results.append(("Webhook Alerts", await _safe_init("Webhook Alerts", _init_webhook_alerts, bot)))
-
-    # Initialize daily stats scheduler
-    init_results.append(("Daily Stats", await _safe_init("Daily Stats", _init_daily_stats, bot)))
-
-    # Record bot start for health tracking
-    if bot.daily_stats:
-        bot.daily_stats.record_bot_start()
 
     # Update status channel to show online (with timeout)
     try:
@@ -248,7 +241,7 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
 async def _init_content_rotation(bot: "OthmanBot") -> None:
     """Initialize unified content rotation scheduler.
 
-    DESIGN: Rotates through news → soccer → gaming content hourly
+    DESIGN: Rotates through news → soccer content hourly
     Posts only ONE content type per hour to save OpenAI API tokens
     Skips content types with no new unposted articles
     State persists across bot restarts
@@ -260,24 +253,19 @@ async def _init_content_rotation(bot: "OthmanBot") -> None:
     bot.soccer_scraper = SoccerScraper()
     await bot.soccer_scraper.__aenter__()
 
-    bot.gaming_scraper = GamingScraper()
-    await bot.gaming_scraper.__aenter__()
-
     # Create unified content rotation scheduler
     bot.content_rotation_scheduler = ContentRotationScheduler(
         news_callback=lambda: post_news(bot),
         soccer_callback=lambda: post_soccer_news(bot),
-        gaming_callback=lambda: post_gaming_news(bot),
         news_scraper=bot.news_scraper,
         soccer_scraper=bot.soccer_scraper,
-        gaming_scraper=bot.gaming_scraper,
         bot=bot,
     )
 
     # Start the rotation scheduler
     await bot.content_rotation_scheduler.start(post_immediately=False)
     logger.tree("Content Rotation Scheduler Started", [
-        ("Rotation", "news → soccer → gaming"),
+        ("Rotation", "news → soccer"),
         ("Interval", "hourly"),
     ], emoji="🔄")
 
@@ -470,50 +458,6 @@ async def _init_webhook_alerts(bot: "OthmanBot") -> None:
     logger.tree("Webhook Alerts Initialized", [
         ("Status", "Enabled" if bot.alert_service.enabled else "Disabled"),
     ], emoji="🔔")
-
-
-async def _init_daily_stats(bot: "OthmanBot") -> None:
-    """Initialize daily stats scheduler.
-
-    DESIGN: Tracks daily activity and sends summaries at midnight EST
-    - Daily summary sent at 00:00 EST
-    - Weekly summary sent every Sunday at midnight
-    """
-    if bot.daily_stats:
-        await bot.daily_stats.start_scheduler()
-        logger.tree("Daily Stats Scheduler Started", [
-            ("Schedule", "Midnight EST daily"),
-            ("Weekly", "Sunday midnight"),
-        ], emoji="📊")
-
-
-async def _init_leaderboard(bot: "OthmanBot") -> None:
-    """Initialize debates leaderboard manager.
-
-    DESIGN: Creates or finds leaderboard post in debates forum
-    Updates hourly with monthly and all-time top 3 debaters
-    Handles user leave/rejoin by showing "(left)" suffix
-    """
-    if not hasattr(bot, 'debates_service') or not bot.debates_service:
-        logger.info("📊 Debates Service Not Initialized - Skipping Leaderboard")
-        return
-
-    try:
-        # Run one-time backfill for debate stats (if tables are empty)
-        await backfill_debate_stats(bot)
-
-        bot.leaderboard_manager = LeaderboardManager(bot, bot.debates_service.db)
-        await bot.leaderboard_manager.start()
-
-        # Start nightly stats reconciliation scheduler (00:30 EST)
-        bot.stats_reconciliation_scheduler = StatsReconciliationScheduler(
-            lambda: reconcile_debate_stats(bot)
-        )
-        await bot.stats_reconciliation_scheduler.start()
-    except Exception as e:
-        logger.error("📊 Failed To Initialize Leaderboard", [
-            ("Error", str(e)),
-        ])
 
 
 async def _init_ban_expiry_scheduler(bot: "OthmanBot") -> None:

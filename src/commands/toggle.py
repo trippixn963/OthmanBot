@@ -19,7 +19,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DEVELOPER_ID, SYRIA_GUILD_ID, TOGGLE_CHANNEL_IDS, CONTENT_PREVIEW_LENGTH
+from src.core.config import DEVELOPER_ID, SYRIA_GUILD_ID, TOGGLE_CHANNEL_IDS, CONTENT_PREVIEW_LENGTH, EmbedColors
 from src.core.backup import create_backup
 
 if TYPE_CHECKING:
@@ -80,7 +80,7 @@ class ToggleCog(commands.Cog):
             embed = discord.Embed(
                 title="Access Denied",
                 description="This command is restricted to the bot developer.",
-                color=discord.Color.red()
+                color=EmbedColors.BAN
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -102,7 +102,7 @@ class ToggleCog(commands.Cog):
                 embed = discord.Embed(
                     title="Already Disabled",
                     description="Bot is already turned off.",
-                    color=discord.Color.orange()
+                    color=EmbedColors.WARNING
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
@@ -115,7 +115,7 @@ class ToggleCog(commands.Cog):
                 embed = discord.Embed(
                     title="Already Enabled",
                     description="Bot is already turned on.",
-                    color=discord.Color.orange()
+                    color=EmbedColors.WARNING
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
@@ -207,7 +207,7 @@ class ToggleCog(commands.Cog):
             embed = discord.Embed(
                 title="Bot Disabled",
                 description="Bot paused. Use `/toggle on` to resume.\nWebhook monitoring remains active.",
-                color=discord.Color.red()
+                color=EmbedColors.BAN
             )
             embed.add_field(name="Status", value="`Offline`", inline=True)
             embed.add_field(name="Channels", value=f"`{hidden_count} hidden`", inline=True)
@@ -241,7 +241,7 @@ class ToggleCog(commands.Cog):
             embed = discord.Embed(
                 title="Disable Failed",
                 description=f"Error during shutdown: {str(e)[:CONTENT_PREVIEW_LENGTH]}",
-                color=discord.Color.red()
+                color=EmbedColors.BAN
             )
             embed.add_field(
                 name="Steps Completed",
@@ -327,7 +327,7 @@ class ToggleCog(commands.Cog):
             embed = discord.Embed(
                 title="Bot Enabled",
                 description="Full startup sequence completed successfully.",
-                color=discord.Color.green()
+                color=EmbedColors.SUCCESS
             )
             embed.add_field(name="Status", value="`Online`", inline=True)
             embed.add_field(name="Channels", value=f"`{unhidden_count} visible`", inline=True)
@@ -361,7 +361,7 @@ class ToggleCog(commands.Cog):
             embed = discord.Embed(
                 title="Enable Failed",
                 description=f"Error during enable: {str(e)[:CONTENT_PREVIEW_LENGTH]}",
-                color=discord.Color.red()
+                color=EmbedColors.BAN
             )
             embed.add_field(
                 name="Steps Completed",

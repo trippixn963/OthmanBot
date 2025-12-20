@@ -53,7 +53,6 @@ OPTIONAL_ENV_VARS: dict[str, str] = {
     "OPENAI_API_KEY": "AI-powered news summaries and content generation",
     "NEWS_CHANNEL_ID": "News posting channel",
     "SOCCER_CHANNEL_ID": "Soccer news channel",
-    "GAMING_CHANNEL_ID": "Gaming news channel",
     "GENERAL_CHANNEL_ID": "General announcements channel",
     "SYRIA_GUILD_ID": "Main Discord server ID",
     "MODS_GUILD_ID": "Moderators Discord server ID (optional)",
@@ -98,7 +97,7 @@ def validate_config() -> ConfigValidationResult:
             result.missing_optional.append(var)
 
     # Validate channel ID formats (should be numeric)
-    channel_vars = ["NEWS_CHANNEL_ID", "SOCCER_CHANNEL_ID", "GAMING_CHANNEL_ID", "GENERAL_CHANNEL_ID"]
+    channel_vars = ["NEWS_CHANNEL_ID", "SOCCER_CHANNEL_ID", "GENERAL_CHANNEL_ID"]
     for var in channel_vars:
         value = os.getenv(var)
         if value and not value.isdigit():
@@ -252,27 +251,37 @@ CACHE_CLEANUP_RATIO: float = 0.8  # Remove 20% when cache is full
 import discord
 
 class EmbedColors:
-    """Standardized color palette for Discord embeds."""
+    """
+    Standardized color palette for Discord embeds.
+
+    Matches TahaBot color scheme for consistency across all bots.
+    """
+    # Base colors (TahaBot color scheme)
+    GREEN = discord.Color.from_rgb(31, 94, 46)    # #1F5E2E - Primary success
+    GOLD = discord.Color.from_rgb(230, 184, 74)   # #E6B84A - Warnings/errors
+    RED = discord.Color.from_rgb(180, 50, 50)     # #B43232 - Critical/denied
+
     # Action colors
-    BAN = discord.Color.red()           # 🚫 Bans, disallows, denials
-    UNBAN = discord.Color.green()       # ✅ Unbans, allows, approvals
-    CLOSE = discord.Color.orange()      # 🔒 Thread closures
-    REOPEN = discord.Color.teal()       # 🔓 Thread reopens
-    EXPIRED = discord.Color.blue()      # ⏰ Auto-expiry (system action)
+    BAN = RED                           # 🚫 Bans, disallows, denials
+    UNBAN = GREEN                       # ✅ Unbans, allows, approvals
+    CLOSE = GOLD                        # 🔒 Thread closures
+    REOPEN = GREEN                      # 🔓 Thread reopens
+    EXPIRED = GOLD                      # ⏰ Auto-expiry (system action)
 
     # Appeal colors
-    APPEAL_PENDING = discord.Color.purple()   # 📝 Appeal submitted
-    APPEAL_APPROVED = discord.Color.green()   # ✅ Appeal approved
-    APPEAL_DENIED = discord.Color.red()       # ❌ Appeal denied
+    APPEAL_PENDING = GOLD                     # 📝 Appeal submitted
+    APPEAL_APPROVED = GREEN                   # ✅ Appeal approved
+    APPEAL_DENIED = RED                       # ❌ Appeal denied
 
     # Informational colors
-    INFO = discord.Color.blue()         # 📋 Profiles, details, stats
-    WARNING = discord.Color.gold()      # ⚠️ Alerts, repeat offenders
-    SUCCESS = discord.Color.green()     # General success
+    INFO = GREEN                        # 📋 Profiles, details, stats
+    WARNING = GOLD                      # ⚠️ Alerts, repeat offenders
+    SUCCESS = GREEN                     # General success
+    ERROR = GOLD                        # Error messages
 
     # Special colors
-    REJOIN_CLEAN = discord.Color.gold()     # 🔄 User rejoined (no issues)
-    REJOIN_WARNING = discord.Color.red()    # 🚨 User rejoined (still restricted)
+    REJOIN_CLEAN = GOLD                     # 🔄 User rejoined (no issues)
+    REJOIN_WARNING = RED                    # 🚨 User rejoined (still restricted)
 
 
 class EmbedIcons:
@@ -290,10 +299,11 @@ class EmbedIcons:
     LEAVE = "🚪"
     REJOIN = "🔄"
     ALERT = "🚨"
+    PARTICIPATE = "✅"  # Checkmark for participation access control
 
 
 # Standard footer text
-EMBED_FOOTER_TEXT = "Developed By: حَـــــنَّـــــا"
+EMBED_FOOTER_TEXT = "trippixn.com/othman"
 
 # Standard "no value" placeholder
 EMBED_NO_VALUE = "_None provided_"
@@ -475,11 +485,6 @@ def load_soccer_channel_id() -> Optional[int]:
     return load_channel_id("SOCCER_CHANNEL_ID", "soccer")
 
 
-def load_gaming_channel_id() -> Optional[int]:
-    """Load gaming channel ID from GAMING_CHANNEL_ID."""
-    return load_channel_id("GAMING_CHANNEL_ID", "gaming")
-
-
 def load_general_channel_id() -> Optional[int]:
     """Load general channel ID from GENERAL_CHANNEL_ID."""
     return load_channel_id("GENERAL_CHANNEL_ID", "general")
@@ -624,7 +629,6 @@ __all__ = [
     "load_channel_id",
     "load_news_channel_id",
     "load_soccer_channel_id",
-    "load_gaming_channel_id",
     "load_general_channel_id",
     # Role IDs
     "DEBATES_MANAGEMENT_ROLE_ID",

@@ -12,6 +12,7 @@ import asyncio
 from typing import TYPE_CHECKING, List, Tuple, Any
 
 from src.core.logger import logger
+from src.core.presence import stop_promo_scheduler
 from src.services.webhook_alerts import get_alert_service
 
 if TYPE_CHECKING:
@@ -90,13 +91,12 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
             ("Error", str(e)),
         ])
 
-    # Stop hourly alerts and send shutdown alert to webhook
+    # Stop hourly alerts (shutdown alert not needed - crash alerts are sufficient)
     try:
         alert_service = get_alert_service()
         alert_service.stop_hourly_alerts()
-        await alert_service.send_shutdown_alert()
     except Exception as e:
-        logger.debug("Shutdown Alert Failed", [
+        logger.debug("Failed To Stop Hourly Alerts", [
             ("Error", str(e)),
         ])
 
@@ -109,10 +109,11 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
                 task.cancel()
                 cleanup_tasks.append((f"Background Task ({task.get_name()})", _cancel_task(task)))
 
-    # 2. Stop presence update loop
+    # 2. Stop presence update loop and promo scheduler
     if bot.presence_task and not bot.presence_task.done():
         bot.presence_task.cancel()
         cleanup_tasks.append(("Presence Task", _cancel_task(bot.presence_task)))
+    cleanup_tasks.append(("Promo Scheduler", stop_promo_scheduler()))
 
     # 3. Stop content rotation scheduler
     if bot.content_rotation_scheduler:
@@ -127,11 +128,7 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
     if bot.soccer_scraper:
         cleanup_tasks.append(("Soccer Scraper", bot.soccer_scraper.__aexit__(None, None, None)))
 
-    # 6. Close gaming scraper session
-    if bot.gaming_scraper:
-        cleanup_tasks.append(("Gaming Scraper", bot.gaming_scraper.__aexit__(None, None, None)))
-
-    # 7. Stop debates scheduler
+    # 6. Stop debates scheduler
     if hasattr(bot, 'debates_scheduler') and bot.debates_scheduler:
         if hasattr(bot.debates_scheduler, 'is_running') and bot.debates_scheduler.is_running:
             cleanup_tasks.append(("Debates Scheduler", bot.debates_scheduler.stop()))
@@ -140,49 +137,33 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
     if hasattr(bot, 'hot_tag_manager') and bot.hot_tag_manager:
         cleanup_tasks.append(("Hot Tag Manager", bot.hot_tag_manager.stop()))
 
-    # 9. Stop leaderboard manager
-    if hasattr(bot, 'leaderboard_manager') and bot.leaderboard_manager:
-        if hasattr(bot.leaderboard_manager, 'is_running') and bot.leaderboard_manager.is_running:
-            cleanup_tasks.append(("Leaderboard Manager", bot.leaderboard_manager.stop()))
-
-    # 10. Stop karma reconciliation scheduler
+    # 9. Stop karma reconciliation scheduler
     if hasattr(bot, 'karma_reconciliation_scheduler') and bot.karma_reconciliation_scheduler:
         if hasattr(bot.karma_reconciliation_scheduler, 'is_running') and bot.karma_reconciliation_scheduler.is_running:
             cleanup_tasks.append(("Karma Reconciliation Scheduler", bot.karma_reconciliation_scheduler.stop()))
 
-    # 11. Stop numbering reconciliation scheduler
+    # 10. Stop numbering reconciliation scheduler
     if hasattr(bot, 'numbering_reconciliation_scheduler') and bot.numbering_reconciliation_scheduler:
         if hasattr(bot.numbering_reconciliation_scheduler, 'is_running') and bot.numbering_reconciliation_scheduler.is_running:
             cleanup_tasks.append(("Numbering Reconciliation Scheduler", bot.numbering_reconciliation_scheduler.stop()))
 
-    # 12. Stop stats reconciliation scheduler
-    if hasattr(bot, 'stats_reconciliation_scheduler') and bot.stats_reconciliation_scheduler:
-        if hasattr(bot.stats_reconciliation_scheduler, 'is_running') and bot.stats_reconciliation_scheduler.is_running:
-            cleanup_tasks.append(("Stats Reconciliation Scheduler", bot.stats_reconciliation_scheduler.stop()))
-
-    # 13. Stop backup scheduler
+    # 11. Stop backup scheduler
     if hasattr(bot, 'backup_scheduler') and bot.backup_scheduler:
         if hasattr(bot.backup_scheduler, 'is_running') and bot.backup_scheduler.is_running:
             cleanup_tasks.append(("Backup Scheduler", bot.backup_scheduler.stop()))
 
-    # 14. Close database connection
+    # 12. Close database connection
     if hasattr(bot, 'debates_service') and bot.debates_service:
         if hasattr(bot.debates_service, 'db') and bot.debates_service.db:
             cleanup_tasks.append(("Debates Database", _close_database(bot.debates_service.db)))
 
-    # 15. Stop health check HTTP server
+    # 13. Stop health check HTTP server
     if hasattr(bot, 'health_server') and bot.health_server:
         cleanup_tasks.append(("Health Check Server", bot.health_server.stop()))
 
-    # 16. Close interaction logger session
+    # 14. Close interaction logger session
     if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
         cleanup_tasks.append(("Interaction Logger", bot.interaction_logger.close()))
-
-    # 17. Stop daily stats scheduler
-    if hasattr(bot, 'daily_stats') and bot.daily_stats:
-        if hasattr(bot.daily_stats, '_scheduler_task') and bot.daily_stats._scheduler_task:
-            bot.daily_stats._scheduler_task.cancel()
-            cleanup_tasks.append(("Daily Stats Scheduler", _cancel_task(bot.daily_stats._scheduler_task)))
 
     # Execute all cleanup tasks with timeout
     if cleanup_tasks:

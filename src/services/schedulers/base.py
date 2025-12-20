@@ -2,7 +2,7 @@
 Othman Discord Bot - Base Scheduler Service
 ============================================
 
-Base class for all content schedulers (news, soccer, gaming).
+Base class for all content schedulers (news, soccer).
 
 Features:
 - Hourly scheduling at configurable minute offset
@@ -46,7 +46,7 @@ class BaseScheduler:
         Args:
             post_callback: Async function to call when posting
             state_filename: JSON file for state persistence (e.g., "scheduler_state.json")
-            content_type: Type of content for logging (e.g., "news", "soccer", "gaming")
+            content_type: Type of content for logging (e.g., "news", "soccer")
             log_emoji: Emoji for log messages (e.g., "📰", "⚽", "🎮")
             post_minute: Minute of each hour to post (0, 20, 40)
             error_retry_seconds: Seconds to wait before retry on error

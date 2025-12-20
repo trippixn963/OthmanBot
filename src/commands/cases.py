@@ -18,8 +18,8 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DISCORD_AUTOCOMPLETE_LIMIT, CASE_LOG_FORUM_ID, has_debates_management_role
-from src.utils import get_developer_avatar
+from src.core.config import DISCORD_AUTOCOMPLETE_LIMIT, CASE_LOG_FORUM_ID, has_debates_management_role, EmbedColors
+from src.utils.footer import set_footer
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -186,7 +186,7 @@ class CasesCog(commands.Cog):
         embed = discord.Embed(
             title=f"Case [{case['case_id']:04d}]",
             description=f"Moderation case for **{display_name}**",
-            color=discord.Color.blue()
+            color=EmbedColors.INFO
         )
 
         if avatar_url:
@@ -220,8 +220,7 @@ class CasesCog(commands.Cog):
                 inline=True
             )
 
-        developer_avatar_url = await get_developer_avatar(self.bot)
-        embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
+        set_footer(embed)
 
         await interaction.followup.send(embed=embed)
 

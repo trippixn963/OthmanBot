@@ -62,6 +62,7 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int | None = 7) -> dict:
         "votes_added": 0,
         "votes_removed": 0,
         "reactions_fixed": 0,
+        "self_reactions_removed": 0,
         "errors": 0,
     }
 
@@ -170,6 +171,7 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int | None = 7) -> dict:
             ("Added", f"+{stats['votes_added']}"),
             ("Removed", f"-{stats['votes_removed']}"),
             ("Reactions Fixed", str(stats['reactions_fixed'])),
+            ("Self-Reactions Removed", str(stats['self_reactions_removed'])),
         ])
 
     except Exception as e:
@@ -329,6 +331,8 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
     """
     Reconcile karma for a single thread.
 
+    Also removes self-reactions (users who reacted to their own message).
+
     Args:
         bot: The OthmanBot instance
         thread: Discord thread to reconcile
@@ -350,13 +354,49 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
 
         for reaction in message.reactions:
             emoji_str = str(reaction.emoji)
-            if emoji_str == "\u2b06\ufe0f":  # ⬆️
+            if emoji_str == UPVOTE_EMOJI:
                 async for user in reaction.users():
-                    if not user.bot and user.id != author_id:
+                    if user.bot:
+                        continue
+                    # Check for self-reaction and remove it
+                    if user.id == author_id:
+                        try:
+                            await reaction.remove(user)
+                            stats["self_reactions_removed"] += 1
+                            logger.info("Removed Self-Reaction (Reconciliation)", [
+                                ("User", f"{user.name} ({user.id})"),
+                                ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+                                ("Message ID", str(message.id)),
+                                ("Emoji", "⬆️"),
+                            ])
+                            await asyncio.sleep(REACTION_DELAY)
+                        except discord.HTTPException as e:
+                            logger.warning("Failed To Remove Self-Reaction", [
+                                ("Error", str(e)),
+                            ])
+                    else:
                         actual_upvoters.add(user.id)
-            elif emoji_str == "\u2b07\ufe0f":  # ⬇️
+            elif emoji_str == DOWNVOTE_EMOJI:
                 async for user in reaction.users():
-                    if not user.bot and user.id != author_id:
+                    if user.bot:
+                        continue
+                    # Check for self-reaction and remove it
+                    if user.id == author_id:
+                        try:
+                            await reaction.remove(user)
+                            stats["self_reactions_removed"] += 1
+                            logger.info("Removed Self-Reaction (Reconciliation)", [
+                                ("User", f"{user.name} ({user.id})"),
+                                ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+                                ("Message ID", str(message.id)),
+                                ("Emoji", "⬇️"),
+                            ])
+                            await asyncio.sleep(REACTION_DELAY)
+                        except discord.HTTPException as e:
+                            logger.warning("Failed To Remove Self-Reaction", [
+                                ("Error", str(e)),
+                            ])
+                    else:
                         actual_downvoters.add(user.id)
 
         # Get stored votes from database

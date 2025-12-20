@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, List, Optional, Union
 import discord
 
 from src.core.logger import logger
-from src.core.config import CASE_LOG_FORUM_ID, NY_TZ
+from src.core.config import CASE_LOG_FORUM_ID, NY_TZ, EmbedColors
 
 # Auto-archive after 7 days of inactivity
 ARCHIVE_DURATION = discord.utils.MISSING
@@ -278,7 +278,7 @@ Severe/Habitual          →  Permanent
                 if ban_count >= 3 and not is_permanent:
                     escalation_embed = discord.Embed(
                         title="⚠️ Repeat Offender Alert",
-                        color=discord.Color.orange(),
+                        color=EmbedColors.CLOSE,
                         description=f"**{user.display_name}** has been disallowed **{ban_count} times**."
                     )
                     escalation_embed.add_field(
@@ -514,7 +514,7 @@ Severe/Habitual          →  Permanent
         # Build detailed user info embed
         user_embed = discord.Embed(
             title="📋 User Profile",
-            color=discord.Color.blue()
+            color=EmbedColors.INFO
         )
         user_embed.set_thumbnail(url=user.display_avatar.url)
         user_embed.add_field(name="Username", value=f"{user.name}", inline=True)
@@ -634,7 +634,7 @@ Severe/Habitual          →  Permanent
 
         embed = discord.Embed(
             title=title,
-            color=discord.Color.red()
+            color=EmbedColors.BAN
         )
         embed.set_thumbnail(url=user.display_avatar.url)
         embed.add_field(name="Banned By", value=f"{banned_by.mention}", inline=True)
@@ -674,7 +674,7 @@ Severe/Habitual          →  Permanent
         """
         embed = discord.Embed(
             title="✅ User Unbanned",
-            color=discord.Color.green()
+            color=EmbedColors.UNBAN
         )
         if user_avatar_url:
             embed.set_thumbnail(url=user_avatar_url)
@@ -710,7 +710,7 @@ Severe/Habitual          →  Permanent
         """
         embed = discord.Embed(
             title="⏰ Ban Expired (Auto-Unban)",
-            color=discord.Color.blue()
+            color=EmbedColors.INFO
         )
         if user_avatar_url:
             embed.set_thumbnail(url=user_avatar_url)
@@ -823,7 +823,7 @@ Severe/Habitual          →  Permanent
             if case_thread:
                 embed = discord.Embed(
                     title="🚪 User Left Server",
-                    color=discord.Color.orange(),
+                    color=EmbedColors.CLOSE,
                     description=f"**{user_name}** has left the server"
                 )
                 if user_avatar_url:
@@ -886,10 +886,10 @@ Severe/Habitual          →  Permanent
 
                 # Choose embed color based on disallow status
                 if is_still_disallowed:
-                    embed_color = discord.Color.red()  # Red - still disallowed
+                    embed_color = EmbedColors.REJOIN_WARNING  # Red - still disallowed
                     title = "🚨 Disallowed User Rejoined Server"
                 else:
-                    embed_color = discord.Color.gold()  # Gold - normal rejoin
+                    embed_color = EmbedColors.REJOIN_CLEAN  # Gold - normal rejoin
                     title = "🔄 User Rejoined Server"
 
                 embed = discord.Embed(
@@ -1056,7 +1056,7 @@ Severe/Habitual          →  Permanent
         # Build user info embed
         user_embed = discord.Embed(
             title="📋 User Profile",
-            color=discord.Color.blue()
+            color=EmbedColors.INFO
         )
         user_embed.set_thumbnail(url=owner.display_avatar.url)
         user_embed.add_field(name="Username", value=f"{owner.name}", inline=True)
@@ -1129,7 +1129,7 @@ Severe/Habitual          →  Permanent
         """
         embed = discord.Embed(
             title="🔒 Debate Closed",
-            color=discord.Color.orange()
+            color=EmbedColors.CLOSE
         )
         embed.set_thumbnail(url=owner.display_avatar.url)
         embed.add_field(name="Closed By", value=f"{closed_by.mention}", inline=True)
@@ -1190,7 +1190,7 @@ Severe/Habitual          →  Permanent
             if case_thread:
                 embed = discord.Embed(
                     title="🔓 Debate Reopened",
-                    color=discord.Color.green()
+                    color=EmbedColors.UNBAN
                 )
                 embed.set_thumbnail(url=owner.display_avatar.url)
                 embed.add_field(name="Reopened By", value=f"{reopened_by.mention}", inline=True)

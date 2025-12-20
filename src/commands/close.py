@@ -21,8 +21,9 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, NY_TZ, has_debates_management_role, EmbedColors, EmbedIcons, EMBED_FOOTER_TEXT
-from src.utils import edit_thread_with_retry, get_developer_avatar, get_ordinal
+from src.core.config import DEBATES_FORUM_ID, NY_TZ, has_debates_management_role, EmbedColors, EmbedIcons
+from src.utils import edit_thread_with_retry, get_ordinal
+from src.utils.footer import set_footer
 from src.views.appeals import AppealButtonView
 
 if TYPE_CHECKING:
@@ -142,8 +143,7 @@ class CloseCog(commands.Cog):
         embed.add_field(name="Time", value=f"<t:{int(now.timestamp())}:f>", inline=True)
         embed.add_field(name="Reason", value=reason_display, inline=False)
 
-        developer_avatar_url = await get_developer_avatar(self.bot)
-        embed.set_footer(text=EMBED_FOOTER_TEXT, icon_url=developer_avatar_url)
+        set_footer(embed)
 
         # Get the debate owner from the starter message before sending response
         # We need owner_id for the appeal button
@@ -334,9 +334,6 @@ class CloseCog(commands.Cog):
             True if DM sent successfully, False otherwise
         """
         try:
-            # Get developer avatar for footer
-            developer_avatar_url = await get_developer_avatar(self.bot)
-
             now = datetime.now(NY_TZ)
             embed = discord.Embed(
                 title=f"{EmbedIcons.CLOSE} Your Debate Thread Was Closed",
@@ -439,10 +436,7 @@ class CloseCog(commands.Cog):
                 inline=False,
             )
 
-            embed.set_footer(
-                text=EMBED_FOOTER_TEXT,
-                icon_url=developer_avatar_url,
-            )
+            set_footer(embed)
 
             # Create appeal button view
             appeal_view = AppealButtonView(

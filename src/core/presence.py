@@ -4,6 +4,7 @@ Othman Discord Bot - Presence Module
 
 Bot presence update logic with rotating status display.
 Cycles through: news countdown, active debates, votes today.
+Includes hourly promotional presence for trippixn.com/othman.
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
@@ -12,6 +13,7 @@ Server: discord.gg/syria
 import asyncio
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import discord
 
@@ -22,8 +24,17 @@ if TYPE_CHECKING:
     from src.bot import OthmanBot
 
 
+# Timezone for promo scheduling
+EST = ZoneInfo("America/New_York")
+
+# Promotional presence settings
+PROMO_TEXT = "🌐 trippixn.com/othman"
+PROMO_DURATION_MINUTES = 10
+
 # Presence rotation state
 _presence_index = 0
+_promo_active = False
+_promo_task: Optional[asyncio.Task] = None
 
 
 # =============================================================================
@@ -70,8 +81,15 @@ async def update_presence(bot: "OthmanBot", status_text: Optional[str] = None) -
     1. News/content post countdown
     2. Active debates count
     3. Votes today count
+
+    Skips updates during promotional presence window.
     """
-    global _presence_index
+    global _presence_index, _promo_active
+
+    # Skip regular updates during promo window
+    if _promo_active:
+        return
+
     now = datetime.now()
 
     # If no custom status, rotate through statuses
@@ -140,7 +158,7 @@ def _get_news_status(bot: "OthmanBot", now: datetime) -> str:
 
     if next_post_time:
         minutes_until = int((next_post_time - now).total_seconds() / 60)
-        emoji = "📰" if post_type == "news" else ("⚽" if post_type == "soccer" else "🎮")
+        emoji = "📰" if post_type == "news" else "⚽"
 
         if minutes_until <= 0:
             return f"{emoji} Posting now..."
@@ -177,7 +195,88 @@ async def _get_votes_status(bot: "OthmanBot") -> str:
 
 
 # =============================================================================
+# Promotional Presence
+# =============================================================================
+
+async def start_promo_scheduler(bot: "OthmanBot") -> None:
+    """
+    Start the hourly promotional presence scheduler.
+
+    DESIGN: Shows "trippixn.com/othman" for 10 minutes at the top of every hour
+    then resumes normal rotating presence.
+    """
+    global _promo_task
+    _promo_task = asyncio.create_task(_promo_loop(bot))
+    logger.info("📢 Promo Presence Scheduler Started", [
+        ("Schedule", "Every hour on the hour"),
+        ("Duration", f"{PROMO_DURATION_MINUTES} minutes"),
+        ("Text", PROMO_TEXT),
+    ])
+
+
+async def stop_promo_scheduler() -> None:
+    """Stop the promotional presence scheduler."""
+    global _promo_task
+    if _promo_task:
+        _promo_task.cancel()
+        try:
+            await _promo_task
+        except asyncio.CancelledError:
+            pass
+        _promo_task = None
+
+
+async def _promo_loop(bot: "OthmanBot") -> None:
+    """Background loop that triggers promo presence on the hour."""
+    global _promo_active
+
+    while True:
+        try:
+            now = datetime.now(EST)
+            # Calculate seconds until next hour
+            minutes_until_hour = 60 - now.minute
+            seconds_until_hour = minutes_until_hour * 60 - now.second
+
+            # Wait until next hour
+            await asyncio.sleep(seconds_until_hour)
+
+            # Show promo presence
+            _promo_active = True
+            activity = discord.Activity(
+                type=discord.ActivityType.watching,
+                name=PROMO_TEXT
+            )
+            await bot.change_presence(activity=activity)
+
+            promo_time = datetime.now(EST)
+            logger.info("📢 Promo Presence Activated", [
+                ("Text", PROMO_TEXT),
+                ("Duration", f"{PROMO_DURATION_MINUTES} minutes"),
+                ("Time", promo_time.strftime("%I:%M %p EST")),
+            ])
+
+            # Wait for promo duration
+            await asyncio.sleep(PROMO_DURATION_MINUTES * 60)
+
+            # Restore normal presence
+            _promo_active = False
+            await update_presence(bot)
+
+            logger.info("📢 Promo Presence Ended - Normal Presence Restored")
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            _promo_active = False
+            logger.warning("Promo Presence Loop Error", [
+                ("Error", str(e)),
+                ("Action", "Continuing loop"),
+            ])
+            await asyncio.sleep(60)
+
+
+# =============================================================================
 # Module Export
 # =============================================================================
 
-__all__ = ["presence_update_loop", "update_presence"]
+__all__ = ["presence_update_loop", "update_presence", "start_promo_scheduler", "stop_promo_scheduler"]

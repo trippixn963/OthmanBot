@@ -42,6 +42,7 @@ from src.core.config import (
     ANALYTICS_CACHE_CLEANUP_AGE,
     DISCORD_API_DELAY,
     REACTION_DELAY,
+    EmbedIcons,
 )
 from src.services.debates.analytics import (
     calculate_debate_analytics,
@@ -56,7 +57,7 @@ from src.services.debates.tags import detect_debate_tags
 
 UPVOTE_EMOJI = "\u2b06\ufe0f"  # ⬆️
 DOWNVOTE_EMOJI = "\u2b07\ufe0f"  # ⬇️
-PARTICIPATE_EMOJI = "✅"  # Checkmark for participation access control
+PARTICIPATE_EMOJI = EmbedIcons.PARTICIPATE  # Checkmark for participation access control
 
 DEBATE_MANAGEMENT_ROLE_ID = MODERATOR_ROLE_ID  # Debate Management role - can post without reacting
 

@@ -27,14 +27,16 @@ from src.core.config import (
     LOG_TITLE_PREVIEW_LENGTH,
     DISCORD_THREAD_NAME_LIMIT,
     has_debates_management_role,
+    EmbedIcons,
 )
 from src.utils import (
     edit_thread_with_retry,
     send_message_with_retry,
     add_reactions_with_delay,
     delete_message_safe,
+    is_english_only,
 )
-from src.handlers.debates import get_next_debate_number, is_english_only, PARTICIPATE_EMOJI
+from src.handlers.debates import get_next_debate_number
 from src.services.debates.tags import detect_debate_tags
 from src.services.debates.analytics import calculate_debate_analytics, generate_analytics_embed
 
@@ -315,7 +317,7 @@ class RenameCog(commands.Cog):
 
                     if analytics_message:
                         # Add participation reaction for access control
-                        await add_reactions_with_delay(analytics_message, [PARTICIPATE_EMOJI])
+                        await add_reactions_with_delay(analytics_message, [EmbedIcons.PARTICIPATE])
 
                         # Pin the analytics message
                         await analytics_message.pin()
@@ -335,7 +337,7 @@ class RenameCog(commands.Cog):
                             ("Debate", f"#{debate_number}"),
                             ("Thread ID", str(thread.id)),
                             ("Message ID", str(analytics_message.id)),
-                            ("Participation Emoji", PARTICIPATE_EMOJI),
+                            ("Participation Emoji", EmbedIcons.PARTICIPATE),
                             ("Pinned", "Yes"),
                             ("Stored in DB", "Yes"),
                         ])

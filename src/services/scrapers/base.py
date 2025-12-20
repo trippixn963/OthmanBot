@@ -2,7 +2,7 @@
 Othman Discord Bot - Base Scraper Service
 ==========================================
 
-Base class with shared functionality for all scrapers (news, soccer, gaming).
+Base class with shared functionality for all scrapers (news, soccer).
 
 Features:
 - URL/article ID deduplication and persistence
@@ -16,10 +16,8 @@ Server: discord.gg/syria
 
 import os
 import re
-import json
 import asyncio
 import aiohttp
-from pathlib import Path
 from types import TracebackType
 from typing import Optional, Type
 from dataclasses import dataclass
@@ -27,6 +25,7 @@ from datetime import datetime
 from openai import OpenAI, APIError, RateLimitError, APIConnectionError, AuthenticationError
 
 from src.core.logger import logger
+from src.core.database import get_db
 from src.utils import AICache
 
 
@@ -51,7 +50,7 @@ class Article:
     """
     Base article dataclass with common fields for all content types.
 
-    Used by news, soccer, and gaming scrapers.
+    Used by news and soccer scrapers.
     """
     title: str
     url: str
@@ -67,7 +66,7 @@ class Article:
     video_url: Optional[str] = None  # News only
     category_tag_id: Optional[int] = None  # News forum tag
     team_tag: Optional[str] = None  # Soccer team tag
-    game_category: Optional[str] = None  # Gaming category
+    game_category: Optional[str] = None  # Reserved for future use
 
 
 # =============================================================================
@@ -78,14 +77,12 @@ class BaseScraper:
     """
     Base scraper class with shared functionality.
 
-    All scrapers (news, soccer, gaming) inherit from this class
+    All scrapers (news, soccer) inherit from this class
     to avoid code duplication.
     """
 
     def __init__(
         self,
-        cache_filename: str,
-        ai_cache_filename: str,
         content_type: str,
         log_emoji: str = "📰",
         session_headers: Optional[dict[str, str]] = None,
@@ -94,10 +91,8 @@ class BaseScraper:
         Initialize the base scraper.
 
         Args:
-            cache_filename: JSON file for posted article IDs (e.g., "data/posted_urls.json")
-            ai_cache_filename: JSON file for AI response cache (e.g., "data/news_ai_cache.json")
-            content_type: Type of content for logging (e.g., "news", "soccer", "gaming")
-            log_emoji: Emoji for log messages (e.g., "📰", "⚽", "🎮")
+            content_type: Type of content for logging (e.g., "news", "soccer")
+            log_emoji: Emoji for log messages (e.g., "📰", "⚽")
             session_headers: Optional custom headers for HTTP session
         """
         self.session: Optional[aiohttp.ClientSession] = None
@@ -105,23 +100,23 @@ class BaseScraper:
         self.log_emoji: str = log_emoji
         self.session_headers: Optional[dict[str, str]] = session_headers
 
-        # DESIGN: Track fetched URLs to avoid duplicate posts
-        # Stored as set for O(1) lookup performance
-        # PERSISTED to JSON file to survive bot restarts
-        self.fetched_urls: set[str] = set()
-        self.max_cached_urls: int = 1000
-        self.posted_urls_file: Path = Path(cache_filename)
-        self.posted_urls_file.parent.mkdir(exist_ok=True)
+        # DESIGN: Use unified database for posted URLs
+        self._db = get_db()
 
-        # Load previously posted URLs on startup
-        self._load_posted_urls()
+        # Load previously posted URLs into memory for O(1) lookup
+        self.fetched_urls: set[str] = self._db.get_posted_urls_set(content_type)
+        logger.tree("Loaded Posted Article IDs", [
+            ("Type", content_type.capitalize()),
+            ("Count", str(len(self.fetched_urls))),
+            ("Backend", "SQLite"),
+        ], emoji=log_emoji)
 
         # DESIGN: Initialize OpenAI client for title/summary generation
         api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
         self.openai_client: Optional[OpenAI] = OpenAI(api_key=api_key, timeout=30.0) if api_key else None
 
-        # DESIGN: Initialize AI response cache to reduce OpenAI API costs
-        self.ai_cache: AICache = AICache(ai_cache_filename)
+        # DESIGN: Initialize AI response cache (now SQLite-backed)
+        self.ai_cache: AICache = AICache(content_type)
 
     async def __aenter__(self) -> "BaseScraper":
         """Async context manager entry."""
@@ -173,80 +168,23 @@ class BaseScraper:
         # Fallback to full URL if no ID found
         return url
 
-    def _load_posted_urls(self) -> None:
-        """
-        Load previously posted article IDs from JSON file.
-
-        DESIGN: Convert all entries to article IDs for reliable deduplication
-        Backward compatible: converts old URL entries to article IDs
-        """
-        try:
-            if self.posted_urls_file.exists():
-                with open(self.posted_urls_file, "r", encoding="utf-8") as f:
-                    data: dict[str, list[str]] = json.load(f)
-                    url_list: list[str] = data.get("posted_urls", [])
-                    self.fetched_urls = set(self._extract_article_id(url) for url in url_list)
-                    logger.tree("Loaded Posted Article IDs", [
-                        ("Type", self.content_type.capitalize()),
-                        ("Count", str(len(self.fetched_urls))),
-                    ], emoji=self.log_emoji)
-            else:
-                logger.tree("No Cache Found", [
-                    ("Type", self.content_type.capitalize()),
-                    ("Action", "Starting fresh"),
-                ], emoji=self.log_emoji)
-        except (json.JSONDecodeError, IOError, OSError) as e:
-            logger.tree("Failed to Load Posted Article IDs", [
-                ("Type", self.content_type.capitalize()),
-                ("Error", str(e)),
-            ], emoji="⚠️")
-            self.fetched_urls = set()
-
-    def _save_posted_urls(self) -> None:
-        """
-        Save posted article IDs to JSON file.
-
-        DESIGN: Persist article IDs to disk after each post
-        Saves ALL article IDs to prevent losing recently posted IDs
-        """
-        try:
-            # Save ALL IDs sorted for consistency
-            ids_to_save: list[str] = sorted(list(self.fetched_urls))
-
-            with open(self.posted_urls_file, "w", encoding="utf-8") as f:
-                json.dump({"posted_urls": ids_to_save}, f, indent=2, ensure_ascii=False)
-
-            logger.info("💾 Saved Posted Article IDs", [
-                ("Type", self.content_type.capitalize()),
-                ("Count", str(len(ids_to_save))),
-            ])
-        except (IOError, OSError) as e:
-            logger.tree("Failed to Save Posted Article IDs", [
-                ("Type", self.content_type.capitalize()),
-                ("Error", str(e)),
-            ], emoji="⚠️")
-
     def add_posted_url(self, url: str) -> None:
         """
-        Add a URL to the posted set and save to disk.
+        Add a URL to the posted set and save to database.
 
         Args:
             url: Article URL or ID to mark as posted
         """
         article_id: str = self._extract_article_id(url)
+
+        # Add to in-memory set for O(1) lookup
         self.fetched_urls.add(article_id)
 
-        # Enforce max cache size to prevent unbounded growth
-        if len(self.fetched_urls) > self.max_cached_urls:
-            # Keep only the most recent entries (arbitrary order, but consistent)
-            sorted_ids = sorted(list(self.fetched_urls))
-            self.fetched_urls = set(sorted_ids[-self.max_cached_urls:])
-            logger.tree("Trimmed Posted URLs Cache", [
-                ("Type", self.content_type.capitalize()),
-                ("New Size", str(len(self.fetched_urls))),
-            ], emoji=self.log_emoji)
+        # Persist to database
+        self._db.mark_url_posted(self.content_type, article_id)
 
-        self._save_posted_urls()
+        # Cleanup old entries if needed
+        self._db.cleanup_posted_urls(self.content_type)
 
     def is_already_posted(self, url: str) -> bool:
         """

@@ -17,9 +17,10 @@ from typing import TYPE_CHECKING, Optional, Union
 import discord
 
 from src.core.logger import logger
-from src.core.config import NY_TZ, EmbedColors, EmbedIcons, EMBED_FOOTER_TEXT, EMBED_NO_VALUE
+from src.core.config import NY_TZ, EmbedColors, EmbedIcons, EMBED_NO_VALUE
 from src.views.appeals import AppealButtonView
-from src.utils import get_ordinal, get_developer_avatar
+from src.utils import get_ordinal
+from src.utils.footer import set_footer
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -33,8 +34,8 @@ if TYPE_CHECKING:
 COLOR_BAN = EmbedColors.BAN
 COLOR_UNBAN = EmbedColors.UNBAN
 COLOR_EXPIRED = EmbedColors.EXPIRED
-COLOR_DM_SUCCESS = discord.Color.teal()
-COLOR_DM_FAILED = discord.Color.orange()
+COLOR_DM_SUCCESS = EmbedColors.SUCCESS
+COLOR_DM_FAILED = EmbedColors.ERROR
 
 
 # =============================================================================
@@ -103,9 +104,6 @@ class BanNotifier:
         ])
 
         try:
-            # Get developer avatar for footer
-            developer_avatar_url = await get_developer_avatar(self.bot)
-
             embed = discord.Embed(
                 title=f"{EmbedIcons.BAN} You Have Been Banned from Debates",
                 description=(
@@ -217,10 +215,7 @@ class BanNotifier:
             )
 
             # Footer with developer info
-            embed.set_footer(
-                text=EMBED_FOOTER_TEXT,
-                icon_url=developer_avatar_url
-            )
+            set_footer(embed)
 
             # Create appeal button view
             # Use user_id as action_id - when appeal is approved, all bans for this user are removed
@@ -349,9 +344,6 @@ class BanNotifier:
         ])
 
         try:
-            # Get developer avatar for footer
-            developer_avatar_url = await get_developer_avatar(self.bot)
-
             embed = discord.Embed(
                 title=f"{EmbedIcons.UNBAN} You Have Been Unbanned from Debates",
                 description=(
@@ -404,10 +396,7 @@ class BanNotifier:
             )
 
             # Footer with developer info
-            embed.set_footer(
-                text=EMBED_FOOTER_TEXT,
-                icon_url=developer_avatar_url
-            )
+            set_footer(embed)
 
             # Send DM
             await user.send(embed=embed)
@@ -545,9 +534,6 @@ class BanNotifier:
 
                 return False
 
-            # Get developer avatar for footer
-            developer_avatar_url = await get_developer_avatar(self.bot)
-
             embed = discord.Embed(
                 title=f"{EmbedIcons.EXPIRED} Your Debate Ban Has Expired",
                 description=(
@@ -633,10 +619,7 @@ class BanNotifier:
             )
 
             # Footer with developer info
-            embed.set_footer(
-                text=EMBED_FOOTER_TEXT,
-                icon_url=developer_avatar_url
-            )
+            set_footer(embed)
 
             # Send DM
             await user.send(embed=embed)

@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 import discord
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID
+from src.core.config import DEBATES_FORUM_ID, EmbedColors
+from src.utils.footer import set_footer
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -77,7 +78,7 @@ async def post_hot_debate(bot: "OthmanBot") -> None:
         embed = discord.Embed(
             title=f"🔥 {hot_debate.thread.name}",
             description="Join the hottest debate happening right now!",
-            color=discord.Color.orange(),
+            color=EmbedColors.WARNING,
             url=hot_debate.thread.jump_url
         )
 
@@ -85,6 +86,9 @@ async def post_hot_debate(bot: "OthmanBot") -> None:
         embed.add_field(name="💬 Replies", value=str(hot_debate.reply_count), inline=True)
         embed.add_field(name="Karma", value=karma_display, inline=True)
         embed.add_field(name="🔥 Hot Take By", value=contributor_text, inline=True)
+
+        # Add footer
+        set_footer(embed)
 
         # Create button to jump to debate
         view = discord.ui.View()
