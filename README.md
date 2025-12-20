@@ -2,18 +2,19 @@
 
 <div align="center">
 
-![OthmanBot PFP](images/PFP.gif)
+![OthmanBot Banner](images/PFP.gif)
 
-![Python](https://img.shields.io/badge/Python-3.12-blue.svg)
-![Discord.py](https://img.shields.io/badge/Discord.py-2.3.2+-green.svg)
-![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o--mini-orange.svg)
-![License](https://img.shields.io/badge/License-MIT-red.svg)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)
+![Discord.py](https://img.shields.io/badge/Discord.py-2.7.0+-5865F2?style=flat-square&logo=discord&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o--mini-412991?style=flat-square&logo=openai&logoColor=white)
+![License](https://img.shields.io/badge/License-Source%20Available-red?style=flat-square)
 
-**Automated multilingual news posting with AI-generated summaries + Debates karma system**
+**Automated News & Debates Bot for Discord**
 
-*Built for discord.gg/syria*
+*Built for [discord.gg/syria](https://discord.gg/syria)*
 
-[![Join Discord Server](https://img.shields.io/badge/Join%20Server-discord.gg/syria-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/syria)
+[![Join Server](https://img.shields.io/badge/Join%20Server-discord.gg/syria-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/syria)
+[![Dashboard](https://img.shields.io/badge/Dashboard-trippixn.com/othman-1F5E2E?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTMgOWwzLTMgMyAzIi8+PHBhdGggZD0iTTYgNnYxMiIvPjxwYXRoIGQ9Ik0xNSAyMWwzLTMgMy0zIi8+PHBhdGggZD0iTTE4IDE4VjYiLz48L3N2Zz4=&logoColor=white)](https://trippixn.com/othman)
 
 </div>
 
@@ -23,83 +24,60 @@
 
 OthmanBot automates content posting and community engagement for Discord servers. It posts hourly news updates with AI-generated bilingual summaries and manages a debate forum with karma voting.
 
-### Disclaimer
+**Live Stats Dashboard**: [trippixn.com/othman](https://trippixn.com/othman)
 
-This bot was custom-built for **discord.gg/syria** and is provided as-is for educational purposes. **No support will be provided.**
+> **Note**: This bot was custom-built for **discord.gg/syria** and is provided as-is for educational purposes. **No support will be provided.**
 
 ---
 
 ## Features
 
-### Content Automation
-- **100% Automated** - Zero commands needed, runs 24/7 autonomously
-- **Bilingual Summaries** - AI-generated Arabic and English summaries
-- **Multi-Content** - News, Soccer, Gaming on hourly rotation
-- **Forum Threads** - Auto-creates discussion threads with category tags
-
-### Debates System
-- **Karma Voting** - Reaction-based upvote/downvote with persistent tracking
-- **Auto-Tagging** - AI detects relevant topic tags for new debates
-- **Hot Tag Manager** - Dynamic "Hot" tag based on activity
-- **Quality Metrics** - Response time and participation diversity scoring
-- **Leaderboard** - Monthly/all-time rankings updated hourly
-- **Access Control** - Users must react to participate in debates
-
-### Moderation
-- **Case Logging** - All ban/unban actions tracked per-user in dedicated forum threads
-- **Appeal System** - Users can appeal disallows and thread closures via DM button
-- **Debate Bans** - Ban users from specific threads or all debates
-- **Thread Closure** - Close debates with reason, auto-DM to thread owner
-- **Auto-Unban** - Timed bans with automatic expiry
-- **Audit Trail** - All moderation actions logged for accountability
-- **Ban Evasion Detection** - Flags new accounts posting in debates
-- **Non-English Detection** - Auto-detects Arabic titles and notifies moderators
-
-### Monitoring & Reliability
-- **Daily/Weekly Stats** - Comprehensive activity reports via webhook
-- **Health Tracking** - Uptime monitoring with disconnect/reconnect logging
-- **Webhook Alerts** - Discord notifications for status and errors
-- **HTTP Health Endpoint** - External monitoring support
-- **Graceful Shutdown** - Proper cleanup of all services and connections
-
-### Robustness
-- **Rate Limit Handling** - Automatic retry with exponential backoff
-- **Database Migrations** - Automatic schema updates on startup
-- **WAL Mode** - SQLite Write-Ahead Logging for data integrity
-- **Connection Recovery** - Auto-reconnect on database/Discord disconnects
+| Feature | Description |
+|---------|-------------|
+| **Content Automation** | 100% automated, runs 24/7 autonomously |
+| **Bilingual Summaries** | AI-generated Arabic and English summaries |
+| **Multi-Content** | News and Soccer on hourly rotation |
+| **Forum Threads** | Auto-creates discussion threads with category tags |
+| **Karma Voting** | Reaction-based upvote/downvote with persistent tracking |
+| **Auto-Tagging** | AI detects relevant topic tags for new debates |
+| **Hot Tag Manager** | Dynamic "Hot" tag based on activity |
+| **Leaderboard** | Monthly/all-time rankings updated hourly |
+| **Case Logging** | All ban/unban actions tracked per-user |
+| **Appeal System** | Users can appeal disallows and closures via DM |
+| **Stats Dashboard** | Real-time activity stats at [trippixn.com/othman](https://trippixn.com/othman) |
 
 ---
 
-## Examples
+## Screenshots
 
 <div align="center">
-
-### News Post
-![News Example](images/News-Example.png)
-
-*AI-generated bilingual news summary with discussion thread*
-
-### Karma Stats
-![Karma Example](images/Karma-Example.png)
-
-*User karma statistics with monthly and all-time rankings*
-
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="images/News-Example.png" alt="News Post" width="350" height="245"><br>
+<b>News Post</b><br>
+<sub>AI-generated bilingual news summary with discussion thread</sub>
+</td>
+</tr>
+</table>
 </div>
 
 ---
 
-## Tech Stack
+## News Sources
 
-- **Python 3.12+** with asyncio
-- **Discord.py 2.3.2+** for Discord API
-- **OpenAI GPT-4o-mini** for AI summaries
-- **SQLite** with WAL mode for persistence
-- **aiohttp** for async HTTP requests
-- **feedparser** for RSS scraping
+<div align="center">
+<table>
+<tr>
+<td align="center"><img src="images/Enab-Baladi-Logo.jpg" width="100" height="100"><br><b>Enab Baladi</b><br><sub>Syrian News</sub></td>
+<td align="center"><img src="images/koora-logo.jpeg" width="100" height="100"><br><b>Koora</b><br><sub>Soccer News</sub></td>
+</tr>
+</table>
+</div>
 
 ---
 
-## Slash Commands
+## Commands
 
 | Command | Description |
 |---------|-------------|
@@ -114,72 +92,65 @@ This bot was custom-built for **discord.gg/syria** and is provided as-is for edu
 
 ---
 
+## Tech Stack
+
+- **Python 3.12+** - Async runtime
+- **Discord.py 2.7+** - Discord API wrapper
+- **OpenAI GPT-4o-mini** - AI summaries
+- **SQLite** - State persistence with WAL mode
+- **aiohttp** - Async HTTP client
+- **feedparser** - RSS scraping
+
+---
+
 ## Architecture
 
 ```
-src/
-├── bot.py                  # Main bot class and event routing
-├── core/                   # Config, logging, health, presence, backup
-├── commands/               # Slash commands
-│   ├── karma.py            # Karma stats lookup
-│   ├── disallow.py         # Ban user from debates
-│   ├── allow.py            # Unban user from debates
-│   ├── close.py            # Close debate thread
-│   ├── open.py             # Reopen closed thread
-│   ├── rename.py           # Rename debate thread
-│   └── cases.py            # Search moderation cases
-├── handlers/               # Discord event handlers
-│   ├── debates.py          # Karma voting, thread creation
-│   ├── reactions.py        # Announcement reactions
-│   ├── ready.py            # Bot startup initialization
-│   └── shutdown.py         # Graceful shutdown
-├── services/
-│   ├── debates/            # Debates system
-│   │   ├── database.py     # SQLite operations
-│   │   ├── analytics.py    # Thread analytics embeds
-│   │   ├── leaderboard.py  # Karma rankings
-│   │   ├── reconciliation.py # Karma sync
-│   │   └── tags.py         # AI topic tagging
-│   ├── scrapers/           # Content scrapers
-│   ├── schedulers/         # Content rotation
-│   ├── appeal_service.py   # Appeal submission/review
-│   ├── case_log.py         # Moderation case threads
-│   ├── ban_notifier.py     # DM notifications
-│   └── daily_stats.py      # Activity tracking
-├── posting/                # Content posting logic
-├── views/                  # Discord UI components
-│   └── appeals.py          # Appeal buttons/modals
-└── utils/                  # Helpers, retry, caching, translation
+OthmanBot/
+├── src/
+│   ├── core/           # Bot initialization, config, logging
+│   ├── services/       # Scrapers, schedulers, debates system
+│   ├── handlers/       # Event handlers (debates, reactions, ready)
+│   ├── commands/       # Slash commands (/karma, /disallow, /allow, etc.)
+│   ├── posting/        # Content posting logic
+│   ├── views/          # Discord UI components
+│   └── utils/          # Helpers, rate limiting, caching
+├── data/               # SQLite database, backups
+├── scripts/            # Deployment and maintenance scripts
+└── images/             # Bot assets and examples
 ```
 
 ---
 
 ## Database Schema
 
-- **votes** - Individual vote records with karma tracking
-- **debate_participation** - User activity per thread
-- **debate_bans** - Ban records with expiry
-- **ban_history** - Historical record of all bans
-- **closure_history** - Thread closure records with reopen tracking
-- **case_logs** - Moderation case tracking per user
-- **appeals** - User appeals for disallows and closures
-- **audit_log** - All database changes for accountability
-- **user_streaks** - Daily participation streaks
+| Table | Description |
+|-------|-------------|
+| `votes` | Individual vote records with karma tracking |
+| `debate_participation` | User activity per thread |
+| `debate_bans` | Ban records with expiry |
+| `ban_history` | Historical record of all bans |
+| `closure_history` | Thread closure records with reopen tracking |
+| `case_logs` | Moderation case tracking per user |
+| `appeals` | User appeals for disallows and closures |
+| `audit_log` | All database changes for accountability |
 
 ---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+**Source Available** - See [LICENSE](LICENSE) for details.
+
+This code is provided for **educational and viewing purposes only**. You may not run, redistribute, or create derivative works from this code.
 
 ---
 
 <div align="center">
 
-![Developer Avatar](images/AUTHOR.jpg)
+<img src="images/PFP.gif" alt="OthmanBot" width="100">
 
-**حَـــــنَّـــــا**
+**OthmanBot**
 
-*Built for discord.gg/syria*
+*Built with care for [discord.gg/syria](https://discord.gg/syria)*
 
 </div>
