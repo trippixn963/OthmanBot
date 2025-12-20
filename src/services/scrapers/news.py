@@ -297,7 +297,9 @@ class NewsScraper(BaseScraper):
 
         if date_tuple:
             try:
-                return datetime(*date_tuple[:6])
+                # Create datetime and make it timezone-aware (assume NY timezone for RSS feeds)
+                naive_dt = datetime(*date_tuple[:6])
+                return naive_dt.replace(tzinfo=NY_TZ)
             except (TypeError, ValueError):
                 pass
 
