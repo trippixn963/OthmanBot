@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from src.core.logger import logger
-from src.core.config import NEWS_FORUM_TAGS
+from src.core.config import NEWS_FORUM_TAGS, NY_TZ
 from src.services.scrapers.base import BaseScraper, Article
 
 
@@ -68,7 +68,7 @@ class NewsScraper(BaseScraper):
             List of Article objects (newest unposted first)
         """
         all_articles: list[Article] = []
-        cutoff_time: datetime = datetime.now() - timedelta(hours=hours_back)
+        cutoff_time: datetime = datetime.now(NY_TZ) - timedelta(hours=hours_back)
 
         for source_key, source_info in self.NEWS_SOURCES.items():
             try:
@@ -301,7 +301,7 @@ class NewsScraper(BaseScraper):
             except (TypeError, ValueError):
                 pass
 
-        return datetime.now()
+        return datetime.now(NY_TZ)
 
     async def _extract_image(self, entry: feedparser.FeedParserDict) -> Optional[str]:
         """Extract image URL from RSS entry."""

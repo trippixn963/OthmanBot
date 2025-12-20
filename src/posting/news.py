@@ -15,6 +15,7 @@ from typing import Optional, TYPE_CHECKING
 import discord
 
 from src.core.logger import logger
+from src.core.config import NY_TZ
 from src.core.presence import update_presence
 from src.posting.poster import download_image, download_video, cleanup_temp_file, build_forum_content
 from src.posting.announcements import send_general_announcement
@@ -173,7 +174,7 @@ async def post_article_to_forum(
         )
 
         # Format thread name
-        post_date = datetime.now().strftime("%m-%d-%y")
+        post_date = datetime.now(NY_TZ).strftime("%m-%d-%y")
         thread_name = f"📅 {post_date} | {article.title}"
         if len(thread_name) > 100:
             thread_name = f"📅 {post_date} | {article.title[:80]}..."

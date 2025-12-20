@@ -22,7 +22,7 @@ from typing import Optional, Callable, Any
 from enum import Enum
 
 from src.core.logger import logger
-from src.core.config import SCHEDULER_ERROR_RETRY, BOT_DISABLED_CHECK_INTERVAL
+from src.core.config import SCHEDULER_ERROR_RETRY, BOT_DISABLED_CHECK_INTERVAL, NY_TZ
 
 
 # =============================================================================
@@ -223,7 +223,7 @@ class ContentRotationScheduler:
                     continue
 
                 next_post_time: datetime = self._calculate_next_post_time()
-                wait_seconds: float = (next_post_time - datetime.now()).total_seconds()
+                wait_seconds: float = (next_post_time - datetime.now(NY_TZ)).total_seconds()
 
                 if wait_seconds > 0:
                     emoji = self.emojis[self.next_content_type]
@@ -356,7 +356,7 @@ class ContentRotationScheduler:
         Returns:
             datetime object for next post time
         """
-        now: datetime = datetime.now()
+        now: datetime = datetime.now(NY_TZ)
 
         # Always schedule for the next hour to prevent double-posting
         # when a post completes within the same minute it was scheduled
@@ -397,7 +397,7 @@ class ContentRotationScheduler:
                 next_post.strftime("%I:%M %p") if next_post else "N/A"
             ),
             "next_post_in_minutes": (
-                int((next_post - datetime.now()).total_seconds() / 60)
+                int((next_post - datetime.now(NY_TZ)).total_seconds() / 60)
                 if next_post
                 else None
             ),

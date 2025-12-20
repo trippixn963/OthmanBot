@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional, Callable, Any
 
 from src.core.logger import logger
-from src.core.config import SCHEDULER_ERROR_RETRY, BOT_DISABLED_CHECK_INTERVAL
+from src.core.config import SCHEDULER_ERROR_RETRY, BOT_DISABLED_CHECK_INTERVAL, NY_TZ
 
 
 # =============================================================================
@@ -161,7 +161,7 @@ class DebatesScheduler:
                     continue
 
                 next_post_time: datetime = self._calculate_next_post_time()
-                wait_seconds: float = (next_post_time - datetime.now()).total_seconds()
+                wait_seconds: float = (next_post_time - datetime.now(NY_TZ)).total_seconds()
 
                 if wait_seconds > 0:
                     logger.info("🔥 Next Hot Debate Post Scheduled", [
@@ -212,7 +212,7 @@ class DebatesScheduler:
         DESIGN: Posts at 00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00
         Finds the next scheduled hour from current time
         """
-        now: datetime = datetime.now()
+        now: datetime = datetime.now(NY_TZ)
         current_hour: int = now.hour
 
         # Find next post hour
@@ -264,7 +264,7 @@ class DebatesScheduler:
                 next_post.strftime("%I:%M %p") if next_post else "N/A"
             ),
             "next_post_in_minutes": (
-                int((next_post - datetime.now()).total_seconds() / 60)
+                int((next_post - datetime.now(NY_TZ)).total_seconds() / 60)
                 if next_post
                 else None
             ),

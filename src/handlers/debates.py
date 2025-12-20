@@ -32,6 +32,7 @@ from src.utils import (
 if TYPE_CHECKING:
     from src.bot import OthmanBot
 from src.core.config import (
+    NY_TZ,
     DEBATES_FORUM_ID,
     MODERATOR_ROLE_ID,
     DEVELOPER_ID,
@@ -119,11 +120,11 @@ class BanEvasionAlertCache:
         Args:
             user_id: Discord user ID that was flagged
         """
-        self._alerts[user_id] = datetime.now()
+        self._alerts[user_id] = datetime.now(NY_TZ)
 
     def _cleanup(self) -> None:
         """Remove expired entries from cache."""
-        now = datetime.now()
+        now = datetime.now(NY_TZ)
         expired = [
             user_id for user_id, alert_time in self._alerts.items()
             if now - alert_time > self._expiry
@@ -191,7 +192,7 @@ class AnalyticsThrottleCache:
             if last_update is None:
                 return True
 
-            elapsed = (datetime.now() - last_update).total_seconds()
+            elapsed = (datetime.now(NY_TZ) - last_update).total_seconds()
             if elapsed < self._cooldown:
                 logger.debug("⏳ Throttled Analytics Update", [
                     ("Thread ID", str(thread_id)),
@@ -209,7 +210,7 @@ class AnalyticsThrottleCache:
             thread_id: The thread ID that was updated
         """
         async with self._lock:
-            self._last_update[thread_id] = datetime.now()
+            self._last_update[thread_id] = datetime.now(NY_TZ)
             await self._cleanup_unlocked()
 
     async def _cleanup_unlocked(self) -> None:
@@ -217,7 +218,7 @@ class AnalyticsThrottleCache:
         Remove stale entries from cache. Must be called with lock held.
         Uses atomic dict replacement to avoid modification during iteration.
         """
-        now = datetime.now()
+        now = datetime.now(NY_TZ)
         stale_threshold = now - timedelta(seconds=self._cleanup_age)
 
         # Build new dict with only fresh entries (atomic replacement)

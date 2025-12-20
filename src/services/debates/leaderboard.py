@@ -167,7 +167,7 @@ class LeaderboardManager:
             return
 
         # Create initial content for current month
-        now = datetime.now()
+        now = datetime.now(NY_TZ)
         content = self._generate_month_content(now.year, now.month)
 
         try:
@@ -251,7 +251,7 @@ class LeaderboardManager:
             logger.warning("📊 Leaderboard Thread Not Found - Cannot Update")
             return
 
-        now = datetime.now()
+        now = datetime.now(NY_TZ)
         year, month = now.year, now.month
 
         # Check if we have a message for this month
@@ -402,7 +402,7 @@ class LeaderboardManager:
         lines.append("")
 
         # Footer with timestamp
-        now = datetime.now()
+        now = datetime.now(NY_TZ)
         lines.append(f"-# 🔄 Updates hourly • Last: {now.strftime('%I:%M %p')}")
 
         return "\n".join(lines)
