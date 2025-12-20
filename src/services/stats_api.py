@@ -927,6 +927,26 @@ class OthmanAPI:
             analytics = db.get_user_analytics(user_id)
             streak = db.get_user_streak(user_id)
 
+            # Check if user has any activity (exists in our system)
+            has_activity = (
+                karma.total_karma != 0 or
+                karma.upvotes_received != 0 or
+                karma.downvotes_received != 0 or
+                analytics.get("debates_participated", 0) > 0 or
+                analytics.get("total_messages", 0) > 0
+            )
+
+            # Try to fetch Discord user data
+            avatar_url, display_name = await self._fetch_user_data(user_id, f"User {user_id}")
+
+            # If user has no activity AND we couldn't get their Discord info, return 404
+            if not has_activity and display_name == f"User {user_id}":
+                return web.json_response(
+                    {"error": "User not found"},
+                    status=404,
+                    headers={"Access-Control-Allow-Origin": "*"}
+                )
+
             # New enhanced data
             rank_change = db.get_rank_change(user_id)
             karma_history = db.get_karma_history(user_id, days=7)
@@ -967,9 +987,6 @@ class OthmanAPI:
                             })
             else:
                 recent_debates = recent_debates_raw
-
-            # Fetch user avatar and display name
-            avatar_url, display_name = await self._fetch_user_data(user_id, f"User {user_id}")
 
             # Calculate approval rate
             total_votes = karma.upvotes_received + karma.downvotes_received
