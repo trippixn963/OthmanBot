@@ -105,12 +105,14 @@ class BanExpiryScheduler:
                     thread_id = ban['thread_id']
                     scope = f"thread {thread_id}" if thread_id else "all debates"
 
-                    # Try to get user display name
+                    # Fetch user once and cache for this loop iteration
+                    user = None
                     try:
                         user = await self.bot.fetch_user(user_id)
-                        display_name = f"{user.display_name} ({user_id})"
                     except Exception:
-                        display_name = f"User {user_id}"
+                        pass
+
+                    display_name = f"{user.display_name} ({user_id})" if user else f"User {user_id}"
 
                     logger.tree("Auto-Unban: Ban Expired", [
                         ("User", display_name),
@@ -121,15 +123,8 @@ class BanExpiryScheduler:
                     # Log to webhook if available
                     try:
                         if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
-                            # Try to get user info
-                            try:
-                                user = await self.bot.fetch_user(user_id)
-                                webhook_display_name = user.display_name if user else f"User {user_id}"
-                            except Exception:
-                                webhook_display_name = f"User {user_id}"
-
                             await self.bot.interaction_logger.log_ban_expired(
-                                user_id, scope, webhook_display_name,
+                                user_id, scope, user.display_name if user else f"User {user_id}",
                                 guild_id=SYRIA_GUILD_ID,
                                 thread_id=thread_id
                             )
@@ -142,17 +137,10 @@ class BanExpiryScheduler:
                     # Log to case system (for mods server forum)
                     try:
                         if hasattr(self.bot, 'case_log_service') and self.bot.case_log_service:
-                            # Get display name for case log
-                            try:
-                                user = await self.bot.fetch_user(user_id)
-                                case_display_name = user.display_name if user else f"User {user_id}"
-                            except Exception:
-                                case_display_name = f"User {user_id}"
-
                             await self.bot.case_log_service.log_ban_expired(
                                 user_id=user_id,
                                 scope=scope,
-                                display_name=case_display_name
+                                display_name=user.display_name if user else f"User {user_id}"
                             )
                     except Exception as e:
                         logger.warning("Failed to log auto-unban to case system", [
