@@ -799,10 +799,10 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
         if starter_message.author.bot:
             return
 
-        # Add upvote and downvote reactions to the original post (always, regardless of language)
-        # Use rate-limited helper to prevent 429 errors
+        # Add upvote reaction to the original post (always, regardless of language)
+        # Only upvote on original posts - downvote reserved for replies
         try:
-            await add_reactions_with_delay(starter_message, [UPVOTE_EMOJI, DOWNVOTE_EMOJI])
+            await starter_message.add_reaction(UPVOTE_EMOJI)
             logger.info("Vote Reactions Added to Debate Post", [
                 ("Author", f"{starter_message.author.name} ({starter_message.author.id})"),
                 ("Thread", f"{thread.name} ({thread.id})"),
