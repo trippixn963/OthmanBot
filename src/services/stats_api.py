@@ -301,7 +301,7 @@ class OthmanAPI:
                 avatar_url, display_name = result
 
             enriched.append({
-                "user_id": uid,
+                "user_id": str(uid),  # String to avoid JS precision loss
                 "name": display_name,
                 "karma": karma,
                 "avatar": avatar_url,
@@ -807,7 +807,7 @@ class OthmanAPI:
             for category, users in category_leaderboards.items():
                 if users:
                     # Different value keys for different categories
-                    value_key = "current_streak" if category == "streaks" else "message_count" if category == "active" else "debates_created"
+                    value_key = "current_streak" if category == "streaks" else "message_count" if category == "active" else "debate_count"
                     category_tuples = [
                         (u["user_id"], f"User {u['user_id']}", u.get(value_key, 0))
                         for u in users
@@ -996,7 +996,7 @@ class OthmanAPI:
             tier = self._get_tier(karma.total_karma)
 
             response_data = {
-                "user_id": user_id,
+                "user_id": str(user_id),  # String to avoid JS precision loss
                 "name": display_name,
                 "avatar": avatar_url,
                 "karma": karma.total_karma,
