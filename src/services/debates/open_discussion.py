@@ -291,6 +291,9 @@ class OpenDiscussionService:
             # Refresh the original post embed (ensures footer has developer avatar)
             await self._refresh_original_embed(thread)
 
+            # Clean up any existing system messages
+            await self._cleanup_system_messages(thread)
+
         except discord.HTTPException as e:
             logger.warning("Failed To Restore Open Discussion Thread Health", [
                 ("Thread ID", str(thread.id)),
@@ -361,6 +364,42 @@ class OpenDiscussionService:
             pass  # Starter message not found
         except discord.HTTPException as e:
             logger.debug("Could Not Refresh Open Discussion Embed", [
+                ("Error", str(e)),
+            ])
+
+    async def _cleanup_system_messages(self, thread: discord.Thread) -> None:
+        """
+        Delete existing system messages in the Open Discussion thread.
+
+        System messages include "changed the post title", pins, etc.
+
+        Args:
+            thread: The Open Discussion thread
+        """
+        deleted_count = 0
+        try:
+            # Fetch recent messages (system messages are usually recent)
+            async for message in thread.history(limit=50):
+                # Skip the original post (starter message)
+                if message.id == thread.id:
+                    continue
+
+                # Delete non-default message types (system messages)
+                if message.type != discord.MessageType.default:
+                    try:
+                        await message.delete()
+                        deleted_count += 1
+                    except discord.HTTPException:
+                        pass
+
+            if deleted_count > 0:
+                logger.info("Open Discussion System Messages Cleaned", [
+                    ("Thread ID", str(thread.id)),
+                    ("Deleted", str(deleted_count)),
+                ])
+
+        except discord.HTTPException as e:
+            logger.debug("Could Not Cleanup System Messages", [
                 ("Error", str(e)),
             ])
 
