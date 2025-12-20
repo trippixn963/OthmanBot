@@ -1532,6 +1532,36 @@ class InteractionLogger:
 
         await self._send_log(embed)
 
+    async def log_open_discussion_blocked(
+        self,
+        user: discord.User,
+        thread_name: str,
+        guild_id: Optional[int] = None,
+        thread_id: Optional[int] = None
+    ) -> None:
+        """Log when a user's message is deleted in Open Discussion for not acknowledging rules."""
+        now_est = datetime.now(NY_TZ)
+        time_str = now_est.strftime("%I:%M %p EST")
+
+        embed = discord.Embed(
+            title="💬 Open Discussion Access Blocked",
+            color=COLOR_ACCESS,
+        )
+        embed.set_thumbnail(url=user.display_avatar.url)
+        embed.add_field(name="User", value=f"{user.mention} `[{user.id}]`", inline=True)
+        embed.add_field(name="Time", value=f"`{time_str}`", inline=True)
+
+        # Thread link if available
+        if guild_id and thread_id:
+            thread_link = f"https://discord.com/channels/{guild_id}/{thread_id}"
+            embed.add_field(name="Thread", value=f"[{thread_name}]({thread_link})", inline=True)
+        else:
+            embed.add_field(name="Thread", value=f"`{thread_name}`", inline=True)
+
+        embed.add_field(name="Reason", value="`Has not acknowledged rules`", inline=False)
+
+        await self._send_log(embed)
+
     async def log_appeal_reviewed(
         self,
         appeal_id: int,
