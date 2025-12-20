@@ -95,7 +95,7 @@ class DebatesDatabase:
     Thread-safe via a threading lock for all operations.
     """
 
-    def __init__(self, db_path: str = "data/debates.db") -> None:
+    def __init__(self, db_path: str = "data/othman.db") -> None:
         """
         Initialize database with persistent connection.
 

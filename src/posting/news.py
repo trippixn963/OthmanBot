@@ -16,7 +16,7 @@ import discord
 
 from src.core.logger import logger
 from src.core.presence import update_presence
-from src.posting.poster import download_image, download_video, cleanup_temp_file
+from src.posting.poster import download_image, download_video, cleanup_temp_file, build_forum_content
 from src.posting.announcements import send_general_announcement
 from src.services import Article as NewsArticle
 from src.utils.retry import exponential_backoff
@@ -163,7 +163,14 @@ async def post_article_to_forum(
 
     try:
         # Build message content
-        message_content = _build_forum_content(article)
+        message_content = build_forum_content(
+            source=article.source,
+            source_emoji=article.source_emoji,
+            url=article.url,
+            published_date=article.published_date,
+            arabic_summary=article.arabic_summary,
+            english_summary=article.english_summary,
+        )
 
         # Format thread name
         post_date = datetime.now().strftime("%m-%d-%y")
@@ -196,13 +203,11 @@ async def post_article_to_forum(
         )
         thread = thread_with_msg.thread
 
-        # Mark as posted
+        # Mark as posted (saves to database)
         if bot.news_scraper:
-            article_id = bot.news_scraper._extract_article_id(article.url)
-            bot.news_scraper.fetched_urls.add(article_id)
-            bot.news_scraper._save_posted_urls()
+            bot.news_scraper.add_posted_url(article.url)
             logger.info("📰 Marked Article As Posted", [
-                ("Article ID", article_id),
+                ("Article ID", bot.news_scraper._extract_article_id(article.url)),
             ])
 
         logger.info("📰 Posted Forum Thread", [
@@ -239,127 +244,6 @@ async def post_article_to_forum(
     finally:
         cleanup_temp_file(temp_image_path)
         cleanup_temp_file(temp_video_path)
-
-
-# =============================================================================
-# Content Building
-# =============================================================================
-
-def _truncate_at_sentence(text: str, max_length: int) -> str:
-    """
-    Truncate text at a sentence boundary, not mid-word.
-
-    Args:
-        text: Text to truncate
-        max_length: Maximum allowed length
-
-    Returns:
-        Text truncated at the last complete sentence within max_length
-    """
-    original_length = len(text)
-    if original_length <= max_length:
-        return text
-
-    truncated = text[:max_length]
-
-    # Find last sentence boundary (. ! ? and Arabic ؟)
-    last_period = -1
-    for i in range(len(truncated) - 1, -1, -1):
-        if truncated[i] in '.!?؟':
-            last_period = i
-            break
-
-    if last_period > max_length // 2:
-        result = truncated[:last_period + 1]
-        logger.debug("✂️ News Truncated At Sentence", [
-            ("Original", str(original_length)),
-            ("New", str(len(result))),
-            ("Method", "sentence"),
-        ])
-        return result
-
-    # Fallback: truncate at last space
-    last_space = truncated.rfind(' ')
-    if last_space > max_length // 2:
-        result = truncated[:last_space] + "..."
-        logger.debug("✂️ News Truncated At Word", [
-            ("Original", str(original_length)),
-            ("New", str(len(result))),
-            ("Method", "word"),
-        ])
-        return result
-
-    result = truncated[:max_length - 3] + "..."
-    logger.warning("✂️ News Truncated Mid-Text", [
-        ("Original", str(original_length)),
-        ("New", str(len(result))),
-        ("Method", "hard cut"),
-    ])
-    return result
-
-
-def _build_forum_content(article: NewsArticle) -> str:
-    """
-    Build forum post content with bilingual summaries.
-
-    Args:
-        article: NewsArticle to format
-
-    Returns:
-        Formatted message content
-
-    DESIGN: Build footer first to calculate remaining space for summaries
-    Ensures URL is never truncated (breaks "Read Full Article" link)
-    Key quote at top for engagement, then Arabic/English summaries
-    """
-    # Build footer first to calculate space
-    published_date_str = article.published_date.strftime("%B %d, %Y") if article.published_date else "N/A"
-
-    footer = ""
-    footer += f"📰 **Source:** {article.source_emoji} {article.source} • 🔗 **[Read Full Article](<{article.url}>)**\n"
-    footer += f"📅 **Published:** {published_date_str}\n\n"
-    footer += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
-    footer += "The content is sourced from various news outlets and summarized using AI.\n\n"
-    footer += "-# Bot developed by حَـــــنَّـــــا."
-
-    # Calculate space for summaries (Discord limit 2000, minus footer and formatting overhead)
-    max_summary_space = 2000 - len(footer) - 400
-
-    # Truncate if needed - add null checks
-    arabic_summary = article.arabic_summary or "الملخص غير متوفر"
-    english_summary = article.english_summary or "Summary not available"
-
-    combined_length = len(arabic_summary) + len(english_summary)
-    if combined_length > max_summary_space:
-        max_each = max_summary_space // 2
-        if len(arabic_summary) > max_each:
-            arabic_summary = _truncate_at_sentence(arabic_summary, max_each)
-        if len(english_summary) > max_each:
-            english_summary = _truncate_at_sentence(english_summary, max_each)
-
-    # Build content
-    message_content = ""
-
-    # Key quote
-    first_sentence = english_summary.split('.')[0].strip()
-    if len(first_sentence) > 250:
-        first_sentence = _truncate_at_sentence(first_sentence, 247)
-    else:
-        first_sentence = first_sentence + '.'
-
-    if len(first_sentence) > 20:
-        message_content += f"> 💬 *\"{first_sentence}\"*\n\n"
-        message_content += "─────────────\n\n"
-
-    # Summaries
-    message_content += f"🇸🇾 **Arabic Summary**\n{arabic_summary}\n\n"
-    message_content += "─────────────\n\n"
-    message_content += f"🇬🇧 **English Translation**\n{english_summary}\n\n"
-    message_content += "─────────────\n\n"
-
-    message_content += footer
-
-    return message_content
 
 
 # =============================================================================

@@ -71,8 +71,6 @@ class SoccerScraper(BaseScraper):
     def __init__(self) -> None:
         """Initialize the soccer scraper."""
         super().__init__(
-            cache_filename="data/posted_soccer_urls.json",
-            ai_cache_filename="data/soccer_ai_cache.json",
             content_type="soccer",
             log_emoji="⚽",
         )

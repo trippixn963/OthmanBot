@@ -18,7 +18,8 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.utils import get_developer_avatar
+from src.core.config import EmbedColors
+from src.utils.footer import set_footer
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -81,7 +82,7 @@ class KarmaCog(commands.Cog):
 
         embed = discord.Embed(
             title=f"Karma for {target.display_name}",
-            color=discord.Color.blue()
+            color=EmbedColors.INFO
         )
         embed.set_thumbnail(url=target.display_avatar.url)
 
@@ -143,8 +144,7 @@ class KarmaCog(commands.Cog):
         # Empty field for alignment
         embed.add_field(name="\u200b", value="\u200b", inline=True)
 
-        developer_avatar_url = await get_developer_avatar(self.bot)
-        embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
+        set_footer(embed)
 
         logger.success("/karma Command Completed", [
             ("Requested By", f"{interaction.user.name} ({interaction.user.id})"),

@@ -34,13 +34,12 @@ The bot follows a layered architecture with clear separation of concerns:
                     │     POSTING       │
                     │ - news.py         │
                     │ - soccer.py       │
-                    │ - gaming.py       │
                     │ - debates.py      │
                     └───────────────────┘
 
 KEY DESIGN DECISIONS:
 =====================
-1. CONTENT ROTATION: Posts rotate hourly (news → soccer → gaming)
+1. CONTENT ROTATION: Posts rotate hourly (news → soccer)
    to spread API costs and provide variety
 
 2. KARMA SYSTEM: Reddit-style upvote/downvote with ⬆️/⬇️ reactions
@@ -69,9 +68,8 @@ KEY DESIGN DECISIONS:
    - Background tasks cancelled
 
 Features:
-- Fully automated hourly news posting (news, soccer, gaming)
+- Fully automated hourly news posting (news, soccer)
 - Hot debates forum with karma tracking
-- Leaderboard with monthly/all-time stats
 - Moderation tools (disallow, close, rename)
 - Appeal system with persistent buttons
 - Case logging to moderator forum
@@ -93,7 +91,6 @@ from src.core.logger import logger
 from src.core.config import (
     load_news_channel_id,
     load_soccer_channel_id,
-    load_gaming_channel_id,
     load_general_channel_id,
 )
 from src.handlers.ready import on_ready_handler
@@ -111,7 +108,6 @@ from src.handlers.debates import (
 from src.services.debates import DebatesService
 from src.services.webhook_alerts import get_alert_service
 from src.services.interaction_logger import InteractionLogger
-from src.services.daily_stats import DailyStatsService
 from src.services.case_log import CaseLogService
 from src.services.ban_notifier import BanNotifier
 from src.services.appeal_service import AppealService
@@ -148,7 +144,6 @@ class OthmanBot(commands.Bot):
     1. setup_hook (before on_ready):
        - Debates service (karma, database)
        - Interaction logger (webhook logging)
-       - Daily stats service
        - Case log service (moderator forum threads)
        - Ban notifier service (DM notifications)
        - Appeal service (appeal submission/review)
@@ -156,11 +151,10 @@ class OthmanBot(commands.Bot):
        - Command cog loading
 
     2. on_ready:
-       - Content scrapers (news, soccer, gaming)
+       - Content scrapers (news, soccer)
        - Content rotation scheduler (hourly posts)
        - Hot tag manager
        - Karma reconciliation (startup + nightly)
-       - Leaderboard manager
        - Backup scheduler
        - Health check server
        - Numbering scheduler
@@ -169,7 +163,7 @@ class OthmanBot(commands.Bot):
     INTENTS REQUIRED:
     - guilds: Access server info
     - reactions: Track upvotes/downvotes
-    - members: Track user join/leave for leaderboard
+    - members: Track user join/leave
     - message_content: Read debate messages for karma tracking
     """
 
@@ -202,7 +196,6 @@ class OthmanBot(commands.Bot):
         # =================================================================
         self.news_channel_id: Optional[int] = load_news_channel_id()
         self.soccer_channel_id: Optional[int] = load_soccer_channel_id()
-        self.gaming_channel_id: Optional[int] = load_gaming_channel_id()
 
         # =================================================================
         # Announcement Tracking
@@ -218,7 +211,6 @@ class OthmanBot(commands.Bot):
         # =================================================================
         self.news_scraper = None      # NewsScraper - fetches Middle East news
         self.soccer_scraper = None    # SoccerScraper - fetches Kooora soccer news
-        self.gaming_scraper = None    # GamingScraper - fetches gaming news
         self.content_rotation_scheduler = None  # Rotates content hourly
         self.debates_service = None   # Karma tracking and debate management
 
@@ -253,12 +245,6 @@ class OthmanBot(commands.Bot):
         # DESIGN: Logs commands, debates, karma to Discord webhook
         # =================================================================
         self.interaction_logger: Optional[InteractionLogger] = None
-
-        # =================================================================
-        # Daily Stats Service
-        # DESIGN: Tracks daily activity and sends summaries at midnight EST
-        # =================================================================
-        self.daily_stats: Optional[DailyStatsService] = None
 
         # =================================================================
         # Case Log Service
@@ -298,10 +284,6 @@ class OthmanBot(commands.Bot):
 
         # Initialize interaction logger
         self.interaction_logger = InteractionLogger(self)
-
-        # Initialize daily stats service
-        self.daily_stats = DailyStatsService()
-        self.daily_stats.bot = self
 
         # Initialize case log service (for ban/unban logging to mods server)
         self.case_log_service = CaseLogService(self)
@@ -405,21 +387,8 @@ class OthmanBot(commands.Bot):
             return
         await on_member_join_handler(self, member)
 
-    async def on_disconnect(self) -> None:
-        """Event handler for bot disconnecting from Discord.
-
-        DESIGN: Tracks disconnections for uptime monitoring
-        """
-        if self.daily_stats:
-            self.daily_stats.record_disconnect(reason="Discord disconnect")
-
     async def on_resumed(self) -> None:
-        """Event handler for bot resuming connection after disconnect.
-
-        DESIGN: Tracks reconnections to calculate downtime
-        """
-        if self.daily_stats:
-            self.daily_stats.record_reconnect()
+        """Event handler for bot resuming connection after disconnect."""
         logger.info("Bot Connection Resumed")
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
@@ -469,18 +438,31 @@ class OthmanBot(commands.Bot):
             return
 
         try:
+            # Try cache first, then fetch from API
             channel = self.get_channel(STATUS_CHANNEL_ID)
             if not channel:
-                logger.debug("Status Channel Not Found", [
-                    ("Channel ID", str(STATUS_CHANNEL_ID)),
-                ])
-                return
+                try:
+                    channel = await self.fetch_channel(STATUS_CHANNEL_ID)
+                except discord.NotFound:
+                    logger.warning("Status Channel Not Found", [
+                        ("Channel ID", str(STATUS_CHANNEL_ID)),
+                    ])
+                    return
+                except discord.Forbidden:
+                    logger.warning("Status Channel Access Denied", [
+                        ("Channel ID", str(STATUS_CHANNEL_ID)),
+                    ])
+                    return
 
             new_name = "🟢・status" if online else "🔴・status"
             await channel.edit(name=new_name)
             logger.info("Status Channel Updated", [
                 ("Status", "Online" if online else "Offline"),
                 ("Channel", new_name),
+            ])
+        except discord.Forbidden as e:
+            logger.warning("Failed To Update Status Channel (Permissions)", [
+                ("Error", str(e)),
             ])
         except Exception as e:
             logger.warning("Failed To Update Status Channel", [

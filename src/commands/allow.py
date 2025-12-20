@@ -18,8 +18,8 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DISCORD_AUTOCOMPLETE_LIMIT, has_debates_management_role
-from src.utils import get_developer_avatar
+from src.core.config import DISCORD_AUTOCOMPLETE_LIMIT, has_debates_management_role, EmbedColors
+from src.utils.footer import set_footer
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -268,7 +268,7 @@ class AllowCog(commands.Cog):
                     f"**{user_mention}** has been unbanned from {scope}.\n\n"
                     f"They can now post messages there again."
                 ),
-                color=discord.Color.green()
+                color=EmbedColors.UNBAN
             )
             # Only set thumbnail if member is still in server
             if member:
@@ -276,8 +276,7 @@ class AllowCog(commands.Cog):
             embed.add_field(name="Unbanned By", value=interaction.user.mention, inline=True)
             embed.add_field(name="Scope", value=scope.title(), inline=True)
 
-            developer_avatar_url = await get_developer_avatar(self.bot)
-            embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
+            set_footer(embed)
 
             followup_msg = await interaction.followup.send(embed=embed, wait=True)
 

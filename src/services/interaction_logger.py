@@ -387,7 +387,6 @@ class InteractionLogger:
         emoji_map = {
             "news": "📰",
             "soccer": "⚽",
-            "gaming": "🎮",
         }
         emoji = emoji_map.get(content_type, "📄")
 

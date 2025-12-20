@@ -15,17 +15,18 @@ from pathlib import Path
 from typing import Optional
 
 from src.core.logger import logger
-from src.core.config import NY_TZ, BACKUP_ERROR_RETRY_INTERVAL
-
+from src.core.config import NY_TZ
 
 # =============================================================================
 # Constants
 # =============================================================================
 
 BACKUP_DIR = Path("data/backups")
-DATABASE_PATH = Path("data/debates.db")
+DATABASE_PATH = Path("data/othman.db")
 BACKUP_RETENTION_DAYS = 7
-BACKUP_HOUR_EST = 3  # 3:00 AM EST
+BACKUP_HOUR_EST = 0  # Midnight EST (same as TahaBot)
+KB_DIVISOR = 1024
+SECONDS_PER_HOUR = 3600
 
 
 # =============================================================================
@@ -37,7 +38,7 @@ def create_backup() -> Optional[Path]:
     Create a backup of the SQLite database.
 
     Uses shutil.copy2 to preserve metadata.
-    Names backup with timestamp: debates_YYYY-MM-DD_HH-MM-SS.db
+    Names backup with timestamp: othman_YYYY-MM-DD_HH-MM-SS.db
 
     Returns:
         Path to backup file, or None if backup failed
@@ -52,9 +53,9 @@ def create_backup() -> Optional[Path]:
     # Ensure backup directory exists
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Generate backup filename with timestamp (timezone-aware)
+    # Generate backup filename with timestamp
     timestamp = datetime.now(NY_TZ).strftime("%Y-%m-%d_%H-%M-%S")
-    backup_filename = f"debates_{timestamp}.db"
+    backup_filename = f"othman_{timestamp}.db"
     backup_path = BACKUP_DIR / backup_filename
 
     try:
@@ -62,12 +63,11 @@ def create_backup() -> Optional[Path]:
         shutil.copy2(DATABASE_PATH, backup_path)
 
         # Get file sizes for logging
-        original_size = DATABASE_PATH.stat().st_size
         backup_size = backup_path.stat().st_size
 
         logger.tree("Database Backup Created", [
             ("Backup", backup_filename),
-            ("Size", f"{backup_size / 1024:.1f} KB"),
+            ("Size", f"{backup_size / KB_DIVISOR:.1f} KB"),
             ("Location", str(BACKUP_DIR)),
         ], emoji="💾")
 
@@ -91,24 +91,56 @@ def cleanup_old_backups() -> int:
     if not BACKUP_DIR.exists():
         return 0
 
-    cutoff_date = datetime.now() - timedelta(days=BACKUP_RETENTION_DAYS)
+    cutoff_date = datetime.now(NY_TZ) - timedelta(days=BACKUP_RETENTION_DAYS)
     removed_count = 0
 
-    for backup_file in BACKUP_DIR.glob("debates_*.db"):
+    for backup_file in BACKUP_DIR.glob("othman_*.db"):
         try:
-            # Extract date from filename: debates_YYYY-MM-DD_HH-MM-SS.db
-            date_str = backup_file.stem.replace("debates_", "").split("_")[0]
+            # Extract date from filename: othman_YYYY-MM-DD_HH-MM-SS.db
+            # More robust parsing with regex validation
+            filename = backup_file.stem  # othman_YYYY-MM-DD_HH-MM-SS
+            parts = filename.split("_")
+
+            # Validate format: should have at least 3 parts (othman, date, time)
+            if len(parts) < 2 or parts[0] != "othman":
+                logger.debug("Skipping Non-Standard Backup File", [
+                    ("File", backup_file.name),
+                    ("Reason", "Invalid filename format"),
+                ])
+                continue
+
+            date_str = parts[1]  # YYYY-MM-DD
+
+            # Validate date format
+            if len(date_str) != 10 or date_str.count("-") != 2:
+                logger.debug("Skipping Backup With Invalid Date", [
+                    ("File", backup_file.name),
+                    ("Date String", date_str),
+                ])
+                continue
+
             file_date = datetime.strptime(date_str, "%Y-%m-%d")
+            file_date = file_date.replace(tzinfo=NY_TZ)
 
             if file_date < cutoff_date:
                 backup_file.unlink()
                 removed_count += 1
                 logger.debug("Removed Old Backup", [
                     ("File", backup_file.name),
+                    ("Age", f">{BACKUP_RETENTION_DAYS} days"),
                 ])
 
-        except (ValueError, IndexError):
-            # Skip files with unexpected naming
+        except ValueError as e:
+            logger.debug("Skipping Backup Parse Error", [
+                ("File", backup_file.name),
+                ("Error", str(e)),
+            ])
+            continue
+        except OSError as e:
+            logger.warning("Failed To Remove Backup", [
+                ("File", backup_file.name),
+                ("Error", str(e)),
+            ])
             continue
 
     if removed_count > 0:
@@ -131,14 +163,14 @@ def list_backups() -> list[dict]:
         return []
 
     backups = []
-    for backup_file in sorted(BACKUP_DIR.glob("debates_*.db"), reverse=True):
+    for backup_file in sorted(BACKUP_DIR.glob("othman_*.db"), reverse=True):
         try:
             stat = backup_file.stat()
             backups.append({
                 "path": backup_file,
                 "name": backup_file.name,
-                "size_kb": stat.st_size / 1024,
-                "created": datetime.fromtimestamp(stat.st_mtime),
+                "size_kb": stat.st_size / KB_DIVISOR,
+                "created": datetime.fromtimestamp(stat.st_mtime, tz=NY_TZ),
             })
         except OSError:
             continue
@@ -165,30 +197,32 @@ class BackupScheduler:
     """
     Schedules daily database backups at a specific time.
 
-    DESIGN: Runs backup at 3:00 AM EST daily
-    Also cleans up old backups after each backup
+    DESIGN: Runs backup at midnight EST daily.
+    Also cleans up old backups after each backup.
     """
 
     def __init__(self) -> None:
         self._task: Optional[asyncio.Task] = None
         self._running = False
 
-    async def start(self, run_immediately: bool = False) -> None:
+    async def start(self, run_immediately: bool = True) -> None:
         """
         Start the backup scheduler.
 
         Args:
-            run_immediately: If True, create a backup immediately on start (default: False)
+            run_immediately: If True, create a backup if none exists for today
         """
         if self._running:
             return
 
         self._running = True
 
-        # Run immediate backup on startup (disabled by default to avoid clutter)
-        if run_immediately:
+        # Only backup on startup if no backup exists for today
+        if run_immediately and not self._has_backup_today():
             await asyncio.to_thread(create_backup)
-            await asyncio.to_thread(cleanup_old_backups)
+
+        # Always cleanup old backups on startup
+        await asyncio.to_thread(cleanup_old_backups)
 
         # Start the scheduler loop
         self._task = asyncio.create_task(self._scheduler_loop())
@@ -231,8 +265,8 @@ class BackupScheduler:
                 logger.error("Backup Scheduler Error", [
                     ("Error", str(e)),
                 ])
-                # Wait before retrying on error
-                await asyncio.sleep(BACKUP_ERROR_RETRY_INTERVAL)
+                # Wait 1 hour before retrying on error
+                await asyncio.sleep(SECONDS_PER_HOUR)
 
     def _seconds_until_next_backup(self) -> float:
         """Calculate seconds until next scheduled backup time."""
@@ -244,6 +278,16 @@ class BackupScheduler:
             target += timedelta(days=1)
 
         return (target - now).total_seconds()
+
+    def _has_backup_today(self) -> bool:
+        """Check if a backup already exists for today."""
+        if not BACKUP_DIR.exists():
+            return False
+
+        today = datetime.now(NY_TZ).strftime("%Y-%m-%d")
+        for backup_file in BACKUP_DIR.glob(f"othman_{today}_*.db"):
+            return True
+        return False
 
 
 # =============================================================================

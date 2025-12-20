@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     from src.services.debates.database import DebatesDatabase
 
 from src.core.logger import logger
-from src.core.config import NY_TZ, LOG_TITLE_PREVIEW_LENGTH
-from src.utils import get_developer_avatar
+from src.core.config import NY_TZ, LOG_TITLE_PREVIEW_LENGTH, EmbedColors
+from src.utils.footer import set_footer
 
 import math
 
@@ -348,7 +348,7 @@ async def generate_analytics_embed(bot: "OthmanBot", analytics: DebateAnalytics)
         Discord embed with formatted statistics using fields for cleaner layout
     """
     embed = discord.Embed(
-        color=discord.Color.orange(),
+        color=EmbedColors.INFO,
     )
 
     # Format created_at as relative time using Discord's timestamp format
@@ -405,8 +405,7 @@ async def generate_analytics_embed(bot: "OthmanBot", analytics: DebateAnalytics)
     embed.add_field(name="📜 Rules", value=rules, inline=True)
 
     # Add standard footer
-    developer_avatar_url = await get_developer_avatar(bot)
-    embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
+    set_footer(embed)
 
     return embed
 

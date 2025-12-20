@@ -13,14 +13,14 @@ from typing import TYPE_CHECKING
 import discord
 
 from src.core.logger import logger
-from src.core.config import TEASER_LENGTH
-from src.utils import get_developer_avatar, truncate
+from src.core.config import TEASER_LENGTH, EmbedColors
+from src.utils import truncate
+from src.utils.footer import set_footer
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
     from src.services import Article as NewsArticle
     from src.services import Article as SoccerArticle
-    from src.services import GamingArticle
 
 
 # =============================================================================
@@ -57,12 +57,11 @@ async def send_general_announcement(
         embed = discord.Embed(
             title=article.title,
             description=teaser,
-            color=discord.Color.blue(),
+            color=EmbedColors.INFO,
         )
 
         # Developer footer
-        developer_avatar_url = await get_developer_avatar(bot)
-        embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
+        set_footer(embed)
 
         # Create button
         view = discord.ui.View()
@@ -119,11 +118,10 @@ async def send_soccer_announcement(
         embed = discord.Embed(
             title=article.title,
             description=teaser,
-            color=discord.Color.green(),
+            color=EmbedColors.SUCCESS,
         )
 
-        developer_avatar_url = await get_developer_avatar(bot)
-        embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
+        set_footer(embed)
 
         view = discord.ui.View()
         button = discord.ui.Button(
@@ -146,69 +144,10 @@ async def send_soccer_announcement(
 
 
 # =============================================================================
-# Gaming Announcement
-# =============================================================================
-
-async def send_gaming_announcement(
-    bot: "OthmanBot",
-    thread: discord.Thread,
-    article: "GamingArticle"
-) -> None:
-    """
-    Send gaming announcement embed to general chat channel.
-
-    Args:
-        bot: The OthmanBot instance
-        thread: Forum thread that was created
-        article: GamingArticle that was posted
-
-    DESIGN: Identical format to news/soccer announcements for consistency
-    Uses purple color to distinguish from news (blue) and soccer (green)
-    Tracks message ID for reaction blocking
-    """
-    general_channel = bot.get_channel(bot.general_channel_id)
-    if not general_channel or not isinstance(general_channel, discord.TextChannel):
-        logger.warning("📣 General Channel Not Found Or Invalid (Gaming)")
-        return
-
-    try:
-        teaser = truncate(article.english_summary, TEASER_LENGTH)
-
-        embed = discord.Embed(
-            title=article.title,
-            description=teaser,
-            color=discord.Color.purple(),
-        )
-
-        developer_avatar_url = await get_developer_avatar(bot)
-        embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
-
-        view = discord.ui.View()
-        button = discord.ui.Button(
-            label="🎮 Read Full Article",
-            style=discord.ButtonStyle.link,
-            url=thread.jump_url
-        )
-        view.add_item(button)
-
-        message = await general_channel.send(embed=embed, view=view)
-        bot.announcement_messages.add(message.id)
-        logger.info("📣 Sent Gaming Announcement", [
-            ("Title", article.title[:50]),
-        ])
-
-    except discord.HTTPException as e:
-        logger.error("📣 Failed To Send Gaming Announcement", [
-            ("Error", str(e)),
-        ])
-
-
-# =============================================================================
 # Module Export
 # =============================================================================
 
 __all__ = [
     "send_general_announcement",
     "send_soccer_announcement",
-    "send_gaming_announcement",
 ]

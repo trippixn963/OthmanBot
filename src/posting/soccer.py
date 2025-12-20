@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import discord
 
 from src.core.logger import logger
-from src.posting.poster import download_image, cleanup_temp_file
+from src.posting.poster import download_image, cleanup_temp_file, build_forum_content
 from src.posting.announcements import send_soccer_announcement
 from src.services import Article as SoccerArticle
 from src.core.config import SOCCER_TEAM_TAG_IDS
@@ -130,7 +130,14 @@ async def post_soccer_article_to_forum(
 
     try:
         # Build message content
-        message_content = _build_forum_content(article)
+        message_content = build_forum_content(
+            source=article.source,
+            source_emoji=article.source_emoji,
+            url=article.url,
+            published_date=article.published_date,
+            arabic_summary=article.arabic_summary,
+            english_summary=article.english_summary,
+        )
 
         # Format thread name
         post_date = datetime.now().strftime("%m-%d-%y")
@@ -159,12 +166,10 @@ async def post_soccer_article_to_forum(
             applied_tags=applied_tags,
         )
 
-        # Mark as posted
-        article_id = bot.soccer_scraper._extract_article_id(article.url)
-        bot.soccer_scraper.fetched_urls.add(article_id)
-        bot.soccer_scraper._save_posted_urls()
+        # Mark as posted (saves to database)
+        bot.soccer_scraper.add_posted_url(article.url)
         logger.info("⚽ Marked Soccer Article As Posted", [
-            ("Article ID", article_id),
+            ("Article ID", bot.soccer_scraper._extract_article_id(article.url)),
         ])
         logger.info("⚽ Posted Soccer Forum Thread", [
             ("Title", article.title[:50]),
@@ -196,69 +201,6 @@ async def post_soccer_article_to_forum(
             logger.debug("Webhook alert failed", [("Error", str(webhook_err))])
     finally:
         cleanup_temp_file(temp_image_path)
-
-
-# =============================================================================
-# Content Building
-# =============================================================================
-
-def _build_forum_content(article: SoccerArticle) -> str:
-    """
-    Build forum post content with bilingual summaries.
-
-    Args:
-        article: SoccerArticle to format
-
-    Returns:
-        Formatted message content
-
-    DESIGN: Build footer first to calculate remaining space for summaries
-    Ensures URL is never truncated (breaks "Read Full Article" link)
-    Key quote at top for engagement, then Arabic/English summaries
-    """
-    published_date_str = article.published_date.strftime("%B %d, %Y") if article.published_date else "N/A"
-
-    footer = ""
-    footer += f"📰 **Source:** {article.source_emoji} {article.source} • 🔗 **[Read Full Article](<{article.url}>)**\n"
-    footer += f"📅 **Published:** {published_date_str}\n\n"
-    footer += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
-    footer += "The content is sourced from various news outlets and summarized using AI.\n\n"
-    footer += "-# Bot developed by حَـــــنَّـــــا."
-
-    max_summary_space = 2000 - len(footer) - 400
-
-    # Add null checks
-    arabic_summary = article.arabic_summary or "الملخص غير متوفر"
-    english_summary = article.english_summary or "Summary not available"
-
-    combined_length = len(arabic_summary) + len(english_summary)
-    if combined_length > max_summary_space:
-        max_each = max_summary_space // 2
-        if len(arabic_summary) > max_each:
-            arabic_summary = arabic_summary[:max_each-3] + "..."
-        if len(english_summary) > max_each:
-            english_summary = english_summary[:max_each-3] + "..."
-
-    message_content = ""
-
-    first_sentence = english_summary.split('.')[0].strip()
-    if len(first_sentence) > 250:
-        first_sentence = first_sentence[:247].strip() + '...'
-    else:
-        first_sentence = first_sentence + '.'
-
-    if len(first_sentence) > 20:
-        message_content += f"> 💬 *\"{first_sentence}\"*\n\n"
-        message_content += "─────────────\n\n"
-
-    message_content += f"🇸🇾 **Arabic Summary**\n{arabic_summary}\n\n"
-    message_content += "─────────────\n\n"
-    message_content += f"🇬🇧 **English Translation**\n{english_summary}\n\n"
-    message_content += "─────────────\n\n"
-
-    message_content += footer
-
-    return message_content
 
 
 # =============================================================================

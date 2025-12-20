@@ -57,7 +57,7 @@ async def download_media(
 
     Args:
         url: URL to download from
-        prefix: Filename prefix (e.g., "article", "soccer", "gaming")
+        prefix: Filename prefix (e.g., "article", "soccer")
         url_hash: Hash for unique filename
         allowed_extensions: List of allowed file extensions
         timeout: Request timeout in seconds
@@ -313,6 +313,118 @@ def cleanup_old_temp_files() -> int:
 
 
 # =============================================================================
+# Content Building Utilities
+# =============================================================================
+
+def truncate_at_sentence(text: str, max_length: int) -> str:
+    """
+    Truncate text at a sentence boundary, not mid-word.
+
+    Args:
+        text: Text to truncate
+        max_length: Maximum allowed length
+
+    Returns:
+        Text truncated at the last complete sentence within max_length
+    """
+    if len(text) <= max_length:
+        return text
+
+    truncated = text[:max_length]
+
+    # Find last sentence boundary (. ! ? and Arabic ؟)
+    last_period = -1
+    for i in range(len(truncated) - 1, -1, -1):
+        if truncated[i] in '.!?؟':
+            last_period = i
+            break
+
+    if last_period > max_length // 2:
+        return truncated[:last_period + 1]
+
+    # Fallback: truncate at last space
+    last_space = truncated.rfind(' ')
+    if last_space > max_length // 2:
+        return truncated[:last_space] + "..."
+
+    return truncated[:max_length - 3] + "..."
+
+
+def build_forum_content(
+    source: str,
+    source_emoji: str,
+    url: str,
+    published_date,
+    arabic_summary: str,
+    english_summary: str,
+) -> str:
+    """
+    Build forum post content with bilingual summaries.
+
+    Args:
+        source: News source name
+        source_emoji: Emoji for source
+        url: Article URL
+        published_date: Article published date
+        arabic_summary: Arabic summary text
+        english_summary: English summary text
+
+    Returns:
+        Formatted message content for forum post
+
+    DESIGN: Build footer first to calculate remaining space for summaries
+    Ensures URL is never truncated (breaks "Read Full Article" link)
+    Key quote at top for engagement, then Arabic/English summaries
+    """
+    published_date_str = published_date.strftime("%B %d, %Y") if published_date else "N/A"
+
+    footer = ""
+    footer += f"📰 **Source:** {source_emoji} {source} • 🔗 **[Read Full Article](<{url}>)**\n"
+    footer += f"📅 **Published:** {published_date_str}\n\n"
+    footer += "-# ⚠️ This news article was automatically generated and posted by an automated bot. "
+    footer += "The content is sourced from various news outlets and summarized using AI.\n\n"
+    footer += "-# Bot developed by حَـــــنَّـــــا."
+
+    # Calculate space for summaries (Discord limit 2000, minus footer and formatting overhead)
+    max_summary_space = 2000 - len(footer) - 400
+
+    # Add null checks
+    arabic = arabic_summary or "الملخص غير متوفر"
+    english = english_summary or "Summary not available"
+
+    combined_length = len(arabic) + len(english)
+    if combined_length > max_summary_space:
+        max_each = max_summary_space // 2
+        if len(arabic) > max_each:
+            arabic = truncate_at_sentence(arabic, max_each)
+        if len(english) > max_each:
+            english = truncate_at_sentence(english, max_each)
+
+    message_content = ""
+
+    # Key quote
+    first_sentence = english.split('.')[0].strip()
+    if len(first_sentence) > 250:
+        first_sentence = truncate_at_sentence(first_sentence, 247)
+    else:
+        first_sentence = first_sentence + '.'
+
+    if len(first_sentence) > 20:
+        message_content += f"> 💬 *\"{first_sentence}\"*\n\n"
+        message_content += "─────────────\n\n"
+
+    # Summaries
+    message_content += f"🇸🇾 **Arabic Summary**\n{arabic}\n\n"
+    message_content += "─────────────\n\n"
+    message_content += f"🇬🇧 **English Translation**\n{english}\n\n"
+    message_content += "─────────────\n\n"
+
+    message_content += footer
+
+    return message_content
+
+
+# =============================================================================
 # Module Export
 # =============================================================================
 
@@ -322,5 +434,7 @@ __all__ = [
     "download_video",
     "cleanup_temp_file",
     "cleanup_old_temp_files",
+    "truncate_at_sentence",
+    "build_forum_content",
     "TEMP_DIR",
 ]

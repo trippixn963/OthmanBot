@@ -21,8 +21,9 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DEBATES_FORUM_ID, NY_TZ, has_debates_management_role
-from src.utils import edit_thread_with_retry, get_developer_avatar
+from src.core.config import DEBATES_FORUM_ID, NY_TZ, has_debates_management_role, EmbedColors
+from src.utils import edit_thread_with_retry
+from src.utils.footer import set_footer
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -169,7 +170,7 @@ class OpenCog(commands.Cog):
         now = datetime.now(NY_TZ)
         embed = discord.Embed(
             title="🔓 Debate Reopened",
-            color=discord.Color.green()
+            color=EmbedColors.REOPEN
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         debate_display = new_name[:100] + "..." if len(new_name) > 100 else new_name
@@ -180,8 +181,7 @@ class OpenCog(commands.Cog):
         embed.add_field(name="Time", value=f"<t:{int(now.timestamp())}:f>", inline=True)
         embed.add_field(name="Reason", value=reason_display, inline=False)
 
-        developer_avatar_url = await get_developer_avatar(self.bot)
-        embed.set_footer(text="Developed By: حَـــــنَّـــــا", icon_url=developer_avatar_url)
+        set_footer(embed)
 
         # Send the embed
         await interaction.response.send_message(embed=embed)

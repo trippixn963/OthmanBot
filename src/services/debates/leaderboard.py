@@ -171,11 +171,14 @@ class LeaderboardManager:
         content = self._generate_month_content(now.year, now.month)
 
         try:
-            # Create thread with plain text content
-            thread, message = await forum.create_thread(
+            # Create thread with placeholder (forum starter messages don't render mentions)
+            thread, _ = await forum.create_thread(
                 name="Leaderboard",
-                content=content,
+                content="📊 **Debate Leaderboard** - Loading...",
             )
+
+            # Send the actual content as a reply (mentions render properly in replies)
+            message = await send_message_with_retry(thread, content=content)
 
             # Lock and pin the thread so it stays at the top and can't be replied to
             await edit_thread_with_retry(thread, locked=True, pinned=True, archived=False)
@@ -183,8 +186,9 @@ class LeaderboardManager:
             # Save thread ID
             self.db.set_leaderboard_thread(thread.id)
 
-            # Save current month embed
-            self.db.set_month_embed(now.year, now.month, message.id)
+            # Save the reply message ID (not the starter message)
+            if message:
+                self.db.set_month_embed(now.year, now.month, message.id)
 
             self._thread = thread
             logger.success("📊 Created New Leaderboard Thread", [

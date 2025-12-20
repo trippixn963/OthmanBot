@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Optional
 import discord
 
 from src.core.logger import logger
-from src.core.config import can_review_appeals
+from src.core.config import can_review_appeals, has_debates_management_role, EmbedColors
 from src.utils import sanitize_input
 
 if TYPE_CHECKING:
@@ -1037,7 +1037,7 @@ async def handle_info_button_interaction(
     # Build detailed info embed
     embed = discord.Embed(
         title="📋 Appeal Details",
-        color=discord.Color.blue(),
+        color=EmbedColors.APPEAL_PENDING,
     )
 
     # Get user info

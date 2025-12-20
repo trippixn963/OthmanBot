@@ -20,9 +20,10 @@ from typing import TYPE_CHECKING, Optional, Union
 import discord
 
 from src.core.logger import logger
-from src.core.config import NY_TZ, DEBATES_FORUM_ID, EmbedColors, EmbedIcons, EMBED_FOOTER_TEXT, EMBED_NO_VALUE
+from src.core.config import NY_TZ, DEBATES_FORUM_ID, EmbedColors, EmbedIcons
 from src.views.appeals import AppealReviewView, ACTION_TYPE_LABELS
-from src.utils import edit_thread_with_retry, get_developer_avatar
+from src.utils import edit_thread_with_retry
+from src.utils.footer import set_footer
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -674,9 +675,6 @@ class AppealService:
         if not user:
             return False
 
-        # Get developer avatar for footer
-        developer_avatar_url = await get_developer_avatar(self.bot)
-
         action_label = ACTION_TYPE_LABELS.get(action_type, action_type.title())
         now = datetime.now(NY_TZ)
 
@@ -745,10 +743,7 @@ class AppealService:
                 inline=False,
             )
 
-        embed.set_footer(
-            text=EMBED_FOOTER_TEXT,
-            icon_url=developer_avatar_url,
-        )
+        set_footer(embed)
 
         try:
             await user.send(embed=embed)
