@@ -19,6 +19,7 @@ from src.core.health import HealthCheckServer
 from src.core.presence import update_presence, presence_update_loop, start_promo_scheduler
 from src.core.backup import BackupScheduler
 from src.utils.footer import init_footer
+from src.utils.banner import init_banner
 from src.posting.poster import cleanup_old_temp_files
 from src.services import (
     NewsScraper,
@@ -157,6 +158,12 @@ async def on_ready_handler(bot: "OthmanBot") -> None:
         await init_footer(bot)
     except Exception as e:
         logger.warning("Failed to initialize footer", [("Error", str(e))])
+
+    # Initialize bot banner from server banner
+    try:
+        await init_banner(bot)
+    except Exception as e:
+        logger.warning("Failed to initialize banner", [("Error", str(e))])
 
     # Initialize all services with error recovery
     # Each service can fail independently without blocking others
