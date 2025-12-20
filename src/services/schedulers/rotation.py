@@ -15,14 +15,13 @@ Server: discord.gg/syria
 """
 
 import asyncio
-import json
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Optional, Callable, Any
 from enum import Enum
 
 from src.core.logger import logger
 from src.core.config import SCHEDULER_ERROR_RETRY, BOT_DISABLED_CHECK_INTERVAL, NY_TZ
+from src.core.database import get_db
 
 
 # =============================================================================
@@ -86,10 +85,7 @@ class ContentRotationScheduler:
 
         self.is_running: bool = False
         self.task: Optional[asyncio.Task] = None
-
-        # State persistence
-        self.state_file: Path = Path("data/content_rotation_state.json")
-        self.state_file.parent.mkdir(exist_ok=True)
+        self._db = get_db()
 
         # Load saved state or start with news
         self._load_state()
@@ -99,31 +95,32 @@ class ContentRotationScheduler:
     # -------------------------------------------------------------------------
 
     def _load_state(self) -> None:
-        """Load scheduler state from file."""
+        """Load scheduler state from database."""
         try:
-            if self.state_file.exists():
-                with open(self.state_file, "r") as f:
-                    data: dict[str, Any] = json.load(f)
-                    self.is_running = data.get("is_running", False)
+            state = self._db.get_scheduler_state("content_rotation")
 
-                    # Load next content type (default to news if invalid)
-                    next_type_str = data.get("next_content_type", "news")
-                    try:
-                        self.next_content_type = ContentType(next_type_str)
-                    except ValueError:
-                        self.next_content_type = ContentType.NEWS
+            if state:
+                self.is_running = state.get("is_running", False)
 
-                    logger.info("🔄 Loaded Content Rotation State", [
-                        ("Status", "RUNNING" if self.is_running else "STOPPED"),
-                        ("Next Type", self.next_content_type.value),
-                    ])
+                # Load next content type from extra_data (default to news if invalid)
+                extra_data = state.get("extra_data") or {}
+                next_type_str = extra_data.get("next_content_type", "news")
+                try:
+                    self.next_content_type = ContentType(next_type_str)
+                except ValueError:
+                    self.next_content_type = ContentType.NEWS
+
+                logger.info("🔄 Loaded Content Rotation State", [
+                    ("Status", "RUNNING" if self.is_running else "STOPPED"),
+                    ("Next Type", self.next_content_type.value),
+                ])
             else:
                 # Default: start with news
                 self.next_content_type = ContentType.NEWS
                 logger.info("🔄 Starting Fresh Content Rotation", [
                     ("Starting With", "news"),
                 ])
-        except (json.JSONDecodeError, IOError, OSError) as e:
+        except Exception as e:
             logger.warning("🔄 Failed to Load Content Rotation State", [
                 ("Error", str(e)),
             ])
@@ -131,14 +128,14 @@ class ContentRotationScheduler:
             self.next_content_type = ContentType.NEWS
 
     def _save_state(self) -> None:
-        """Save scheduler state to file."""
+        """Save scheduler state to database."""
         try:
-            with open(self.state_file, "w") as f:
-                json.dump({
-                    "is_running": self.is_running,
-                    "next_content_type": self.next_content_type.value,
-                }, f, indent=2)
-        except (IOError, OSError) as e:
+            self._db.set_scheduler_state(
+                scheduler_name="content_rotation",
+                is_running=self.is_running,
+                extra_data={"next_content_type": self.next_content_type.value}
+            )
+        except Exception as e:
             logger.warning("🔄 Failed to Save Content Rotation State", [
                 ("Error", str(e)),
             ])

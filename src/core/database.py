@@ -329,6 +329,18 @@ class DatabaseManager:
             )
         """)
 
+        # -----------------------------------------------------------------
+        # Scheduler State Table
+        # -----------------------------------------------------------------
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scheduler_state (
+                scheduler_name TEXT PRIMARY KEY,
+                is_running INTEGER NOT NULL DEFAULT 0,
+                extra_data TEXT,
+                updated_at REAL NOT NULL
+            )
+        """)
+
         conn.commit()
 
     # =========================================================================
@@ -437,6 +449,64 @@ class DatabaseManager:
             (content_type,)
         )
         return {row["article_id"] for row in rows}
+
+    # =========================================================================
+    # Scheduler State Operations
+    # =========================================================================
+
+    def get_scheduler_state(self, scheduler_name: str) -> Optional[dict]:
+        """
+        Get scheduler state from database.
+
+        Args:
+            scheduler_name: Unique identifier for the scheduler
+
+        Returns:
+            Dict with is_running and extra_data, or None if not found
+        """
+        row = self.fetchone(
+            "SELECT is_running, extra_data FROM scheduler_state WHERE scheduler_name = ?",
+            (scheduler_name,)
+        )
+        if not row:
+            return None
+
+        import json
+        extra_data = None
+        if row["extra_data"]:
+            try:
+                extra_data = json.loads(row["extra_data"])
+            except json.JSONDecodeError:
+                extra_data = None
+
+        return {
+            "is_running": bool(row["is_running"]),
+            "extra_data": extra_data
+        }
+
+    def set_scheduler_state(
+        self,
+        scheduler_name: str,
+        is_running: bool,
+        extra_data: Optional[dict] = None
+    ) -> None:
+        """
+        Save scheduler state to database.
+
+        Args:
+            scheduler_name: Unique identifier for the scheduler
+            is_running: Whether the scheduler is running
+            extra_data: Additional state data (stored as JSON)
+        """
+        import json
+        extra_json = json.dumps(extra_data) if extra_data else None
+
+        self.execute(
+            """INSERT OR REPLACE INTO scheduler_state
+               (scheduler_name, is_running, extra_data, updated_at)
+               VALUES (?, ?, ?, ?)""",
+            (scheduler_name, int(is_running), extra_json, time.time())
+        )
 
 
 # =============================================================================

@@ -11,13 +11,12 @@ Server: discord.gg/syria
 """
 
 import asyncio
-import json
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Optional, Callable, Any
 
 from src.core.logger import logger
 from src.core.config import SCHEDULER_ERROR_RETRY, BOT_DISABLED_CHECK_INTERVAL, NY_TZ
+from src.core.database import get_db
 
 
 # =============================================================================
@@ -30,7 +29,6 @@ class DebatesScheduler:
     def __init__(
         self,
         post_callback: Callable[[], Any],
-        state_filename: str = "debates_scheduler_state.json",
         bot: Any = None,
     ) -> None:
         """
@@ -38,15 +36,13 @@ class DebatesScheduler:
 
         Args:
             post_callback: Async function to call when posting
-            state_filename: JSON file for state persistence
             bot: Bot instance (to check disabled state)
         """
         self.bot = bot
         self.post_callback: Callable[[], Any] = post_callback
         self.is_running: bool = False
         self.task: Optional[asyncio.Task] = None
-        self.state_file: Path = Path(f"data/{state_filename}")
-        self.state_file.parent.mkdir(exist_ok=True)
+        self._db = get_db()
 
         # Posts every 3 hours at these hours (EST)
         self.post_hours: list[int] = [0, 3, 6, 9, 12, 15, 18, 21]
@@ -58,15 +54,14 @@ class DebatesScheduler:
     # -------------------------------------------------------------------------
 
     def _load_state(self) -> None:
-        """Load scheduler state from file."""
+        """Load scheduler state from database."""
         try:
-            if self.state_file.exists():
-                with open(self.state_file, "r") as f:
-                    data: dict[str, Any] = json.load(f)
-                    self.is_running = data.get("is_running", False)
-                    logger.info("🔥 Loaded Debates Scheduler State", [
-                        ("Status", "RUNNING" if self.is_running else "STOPPED"),
-                    ])
+            state = self._db.get_scheduler_state("debates")
+            if state:
+                self.is_running = state.get("is_running", False)
+                logger.info("🔥 Loaded Debates Scheduler State", [
+                    ("Status", "RUNNING" if self.is_running else "STOPPED"),
+                ])
         except Exception as e:
             logger.warning("Failed To Load Debates Scheduler State", [
                 ("Error", str(e)),
@@ -74,10 +69,12 @@ class DebatesScheduler:
             self.is_running = False
 
     def _save_state(self) -> None:
-        """Save scheduler state to file."""
+        """Save scheduler state to database."""
         try:
-            with open(self.state_file, "w") as f:
-                json.dump({"is_running": self.is_running}, f, indent=2)
+            self._db.set_scheduler_state(
+                scheduler_name="debates",
+                is_running=self.is_running
+            )
         except Exception as e:
             logger.warning("Failed To Save Debates Scheduler State", [
                 ("Error", str(e)),
