@@ -235,6 +235,12 @@ LEADERBOARD_TOP_USERS: int = 10  # Top users to show in leaderboards
 LEADERBOARD_TOP_ITEMS: int = 3  # Top items (streaks, debates, etc.)
 
 # =============================================================================
+# Stats API Constants
+# =============================================================================
+
+BASE_COMMAND_COUNT: int = 239  # Commands run before stats tracking started
+
+# =============================================================================
 # Cache Constants
 # =============================================================================
 

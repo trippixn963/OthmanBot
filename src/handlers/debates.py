@@ -82,8 +82,12 @@ class BanEvasionAlertCache:
     to prevent unbounded memory growth.
 
     DESIGN: Uses a dict mapping user_id -> alert_timestamp instead of a simple set.
-    Cleanup happens on each access to keep memory bounded.
+    Cleanup happens periodically (every N checks) to balance memory vs performance.
     """
+
+    # Cleanup every N checks instead of every check (O(n) optimization)
+    CLEANUP_INTERVAL: int = 100
+    MAX_SIZE_BEFORE_CLEANUP: int = 500
 
     def __init__(self, expiry_hours: int = BAN_EVASION_ALERT_EXPIRY_HOURS) -> None:
         """
@@ -94,12 +98,13 @@ class BanEvasionAlertCache:
         """
         self._alerts: Dict[int, datetime] = {}
         self._expiry = timedelta(hours=expiry_hours)
+        self._check_count: int = 0
 
     def should_alert(self, user_id: int) -> bool:
         """
         Check if we should alert for this user.
 
-        Performs cleanup of expired entries on each check.
+        Performs cleanup periodically or when cache grows too large.
 
         Args:
             user_id: Discord user ID to check
@@ -107,9 +112,20 @@ class BanEvasionAlertCache:
         Returns:
             True if we should send an alert, False if already alerted recently
         """
-        self._cleanup()
+        self._check_count += 1
+
+        # Cleanup periodically or when cache is large
+        if (self._check_count >= self.CLEANUP_INTERVAL or
+                len(self._alerts) >= self.MAX_SIZE_BEFORE_CLEANUP):
+            self._cleanup()
+            self._check_count = 0
 
         if user_id in self._alerts:
+            # Check if this specific entry is expired
+            alert_time = self._alerts[user_id]
+            if datetime.now(NY_TZ) - alert_time > self._expiry:
+                del self._alerts[user_id]
+                return True
             return False  # Already alerted and not expired
         return True
 
@@ -1355,16 +1371,6 @@ async def on_member_remove_handler(bot: "OthmanBot", member: discord.Member) -> 
             ("Votes Removed", str(votes_removed)),
         ])
 
-    # Update leaderboard to mark user as left
-    if hasattr(bot, 'leaderboard_manager') and bot.leaderboard_manager is not None:
-        try:
-            await bot.leaderboard_manager.on_member_leave(member.id)
-        except (discord.HTTPException, AttributeError) as e:
-            logger.warning("📊 Failed To Update Leaderboard For Leaving Member", [
-                ("User", member.name),
-                ("Error", str(e)),
-            ])
-
     # Log to main logs
     logger.info("👋 Debate Participant Left Server", [
         ("User", f"{member.name} ({member.id})"),
@@ -1438,20 +1444,6 @@ async def on_member_join_handler(bot: "OthmanBot", member: discord.Member) -> No
     # Check if user has a case log
     case_log = db.get_case_log(member.id)
     case_id = case_log.get('case_id') if case_log else None
-
-    # Update leaderboard to mark user as rejoined (if they were previously cached)
-    if hasattr(bot, 'leaderboard_manager') and bot.leaderboard_manager is not None:
-        try:
-            await bot.leaderboard_manager.on_member_join(
-                member.id,
-                member.name,
-                member.display_name
-            )
-        except (discord.HTTPException, AttributeError) as e:
-            logger.warning("📊 Failed To Update Leaderboard For Rejoining Member", [
-                ("User", member.name),
-                ("Error", str(e)),
-            ])
 
     # Log to main logs
     logger.info("👋 Debate Participant Rejoined Server", [

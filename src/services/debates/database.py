@@ -292,27 +292,6 @@ class DebatesDatabase:
             )
         """)
 
-        # Leaderboard thread tracking (single row)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS leaderboard_thread (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                thread_id INTEGER NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Monthly leaderboard embeds
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS leaderboard_embeds (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                year INTEGER NOT NULL,
-                month INTEGER NOT NULL,
-                message_id INTEGER NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(year, month)
-            )
-        """)
-
         # User cache for "(left)" tracking
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_cache (
@@ -2445,51 +2424,6 @@ class DebatesDatabase:
                 return {"error": str(e), **deleted}
 
     # -------------------------------------------------------------------------
-    # Leaderboard Thread Operations
-    # -------------------------------------------------------------------------
-
-    def get_leaderboard_thread(self) -> Optional[int]:
-        """
-        Get saved leaderboard thread ID.
-
-        Returns:
-            Thread ID if found, None otherwise
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT thread_id FROM leaderboard_thread WHERE id = 1")
-            row = cursor.fetchone()
-            return row[0] if row else None
-
-    def set_leaderboard_thread(self, thread_id: int) -> None:
-        """
-        Save leaderboard thread ID.
-
-        Args:
-            thread_id: Discord thread ID
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT OR REPLACE INTO leaderboard_thread (id, thread_id)
-                   VALUES (1, ?)""",
-                (thread_id,)
-            )
-            conn.commit()
-
-    def clear_leaderboard_thread(self) -> None:
-        """Clear saved leaderboard thread ID and all month embeds."""
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM leaderboard_thread WHERE id = 1")
-            cursor.execute("DELETE FROM leaderboard_embeds")
-            conn.commit()
-            logger.info("📊 Cleared leaderboard thread and month embeds from database")
-
-    # -------------------------------------------------------------------------
     # Monthly Leaderboard Operations
     # -------------------------------------------------------------------------
 
@@ -2545,86 +2479,6 @@ class DebatesDatabase:
                 )
                 for row in cursor.fetchall()
             ]
-
-    # -------------------------------------------------------------------------
-    # Leaderboard Embed Operations
-    # -------------------------------------------------------------------------
-
-    def get_month_embed(self, year: int, month: int) -> Optional[int]:
-        """
-        Get message ID for a month's embed.
-
-        Args:
-            year: Year
-            month: Month (1-12)
-
-        Returns:
-            Message ID if found, None otherwise
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT message_id FROM leaderboard_embeds WHERE year = ? AND month = ?",
-                (year, month)
-            )
-            row = cursor.fetchone()
-            return row[0] if row else None
-
-    def set_month_embed(self, year: int, month: int, message_id: int) -> None:
-        """
-        Save message ID for a month's embed.
-
-        Args:
-            year: Year
-            month: Month (1-12)
-            message_id: Discord message ID
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT OR REPLACE INTO leaderboard_embeds (year, month, message_id)
-                   VALUES (?, ?, ?)""",
-                (year, month, message_id)
-            )
-            conn.commit()
-
-    def get_all_month_embeds(self) -> list[dict]:
-        """
-        Get all monthly embed message IDs.
-
-        Returns:
-            List of dicts with year, month, message_id
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                """SELECT year, month, message_id FROM leaderboard_embeds
-                   ORDER BY year DESC, month DESC"""
-            )
-            return [
-                {"year": row[0], "month": row[1], "message_id": row[2]}
-                for row in cursor.fetchall()
-            ]
-
-    def delete_month_embed(self, year: int, month: int) -> None:
-        """
-        Delete a monthly embed record (when message is deleted/not found).
-
-        Args:
-            year: Year
-            month: Month (1-12)
-        """
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "DELETE FROM leaderboard_embeds WHERE year = ? AND month = ?",
-                (year, month)
-            )
-            conn.commit()
 
     # -------------------------------------------------------------------------
     # User Cache Operations (for "(left)" tracking)

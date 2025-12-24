@@ -260,7 +260,21 @@ class OthmanBot(commands.Bot):
         We guard against re-initialization to prevent duplicate schedulers.
         """
         if self._ready_initialized:
-            logger.info("🔄 Bot Reconnected (skipping re-initialization)")
+            logger.info("🔄 Bot Reconnected", [
+                ("Guilds", str(len(self.guilds))),
+                ("Latency", f"{round(self.latency * 1000)}ms"),
+            ])
+            # Refresh presence on reconnect
+            try:
+                from src.core.presence import update_presence
+                await update_presence(self)
+            except Exception as e:
+                logger.debug("Failed to refresh presence on reconnect", [("Error", str(e))])
+            # Update status channel to show online
+            try:
+                await self.update_status_channel(online=True)
+            except Exception as e:
+                logger.debug("Failed to update status channel on reconnect", [("Error", str(e))])
             return
 
         self._ready_initialized = True
