@@ -21,6 +21,7 @@ import discord
 from src.core.logger import logger
 from src.core.config import DEBATES_FORUM_ID, SECONDS_PER_HOUR, NY_TZ, DISCORD_API_DELAY, LOG_TITLE_PREVIEW_LENGTH, THREAD_NAME_PREVIEW_LENGTH
 from src.utils import edit_thread_with_retry
+from src.utils.discord_rate_limit import log_http_error
 
 # Rate limit backoff settings
 RATE_LIMIT_BASE_DELAY = 5.0  # Base delay when rate limited (seconds)
@@ -182,9 +183,10 @@ async def reconcile_debate_numbering(bot: "OthmanBot") -> dict:
                     ])
                     await asyncio.sleep(retry_after + 2.0)
                 else:
-                    logger.error("Failed To Renumber Thread", [
+                    log_http_error(e, "Renumber Thread", [
                         ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
-                        ("Error", str(e)),
+                        ("Old Number", f"#{old_num}"),
+                        ("New Number", f"#{new_num}"),
                     ])
                 stats["errors"] += 1
             except Exception as e:

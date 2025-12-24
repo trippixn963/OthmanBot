@@ -21,6 +21,7 @@ import discord
 
 from src.core.logger import logger
 from src.core.config import NY_TZ, DEBATES_FORUM_ID, EmbedColors, EmbedIcons
+from src.utils.discord_rate_limit import log_http_error
 from src.views.appeals import AppealReviewView, ACTION_TYPE_LABELS
 from src.utils import edit_thread_with_retry
 from src.utils.footer import set_footer
@@ -758,9 +759,9 @@ class AppealService:
             ])
             return False
         except discord.HTTPException as e:
-            logger.warning("Appeal: DM failed", [
+            log_http_error(e, "Appeal Result DM", [
                 ("User ID", str(user_id)),
-                ("Error", str(e)),
+                ("Approved", str(approved)),
             ])
             return False
 
@@ -906,9 +907,9 @@ class AppealService:
             ])
             return False
         except discord.HTTPException as e:
-            logger.warning("Failed to update appeal embed", [
+            log_http_error(e, "Update Appeal Embed", [
                 ("Appeal ID", str(appeal_id)),
-                ("Error", str(e)),
+                ("Decision", decision),
             ])
             return False
 

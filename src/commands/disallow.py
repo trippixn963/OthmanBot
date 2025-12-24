@@ -25,6 +25,7 @@ from src.core.config import (
     DEBATES_FORUM_ID, NY_TZ, BATCH_PROCESSING_DELAY, REACTION_DELAY,
     DISCORD_API_DELAY, DISCORD_AUTOCOMPLETE_LIMIT, has_debates_management_role, EmbedColors
 )
+from src.utils.discord_rate_limit import log_http_error
 from src.utils import remove_reaction_safe
 from src.utils.footer import set_footer
 from src.views.appeals import AppealButtonView
@@ -482,9 +483,9 @@ class DisallowCog(commands.Cog):
                         ("Thread ID", str(thread_id)),
                     ])
                 except discord.HTTPException as e:
-                    logger.warning("Failed To Fetch Thread", [
+                    log_http_error(e, "Fetch Thread For Cleanup", [
                         ("Thread ID", str(thread_id)),
-                        ("Error", str(e)),
+                        ("User", f"{user.name} ({user.id})"),
                     ])
                 # Small delay between fetches to avoid rate limits
                 await asyncio.sleep(BATCH_PROCESSING_DELAY)
@@ -556,9 +557,9 @@ class DisallowCog(commands.Cog):
                         ("Thread ID", str(thread.id)),
                     ])
                 except discord.HTTPException as e:
-                    logger.warning("Failed To Process Thread", [
+                    log_http_error(e, "Process Thread Reactions", [
                         ("Thread", thread.name[:30]),
-                        ("Error", str(e)),
+                        ("Thread ID", str(thread.id)),
                     ])
                 await asyncio.sleep(DISCORD_API_DELAY)  # Delay between threads
 

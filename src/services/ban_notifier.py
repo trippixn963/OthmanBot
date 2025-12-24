@@ -18,6 +18,7 @@ import discord
 
 from src.core.logger import logger
 from src.core.config import NY_TZ, EmbedColors, EmbedIcons, EMBED_NO_VALUE
+from src.utils.discord_rate_limit import log_http_error
 from src.views.appeals import AppealButtonView
 from src.utils import get_ordinal
 from src.utils.footer import set_footer
@@ -271,11 +272,9 @@ class BanNotifier:
             return False
 
         except discord.HTTPException as e:
-            logger.error("Ban Notification DM Failed - HTTP Error", [
+            log_http_error(e, "Ban Notification DM", [
                 ("User", f"{user.name} ({user.id})"),
                 ("Scope", scope),
-                ("Error Type", type(e).__name__),
-                ("Error", str(e)),
             ])
 
             # Log failure to webhook
@@ -440,11 +439,9 @@ class BanNotifier:
             return False
 
         except discord.HTTPException as e:
-            logger.error("Unban Notification DM Failed - HTTP Error", [
+            log_http_error(e, "Unban Notification DM", [
                 ("User", f"{user.name} ({user.id})"),
                 ("Scope", scope),
-                ("Error Type", type(e).__name__),
-                ("Error", str(e)),
             ])
 
             # Log failure to webhook
@@ -660,11 +657,9 @@ class BanNotifier:
             return False
 
         except discord.HTTPException as e:
-            logger.error("Ban Expiry Notification DM Failed - HTTP Error", [
+            log_http_error(e, "Ban Expiry Notification DM", [
                 ("User ID", str(user_id)),
                 ("Scope", scope),
-                ("Error Type", type(e).__name__),
-                ("Error", str(e)),
             ])
 
             # Log failure to webhook

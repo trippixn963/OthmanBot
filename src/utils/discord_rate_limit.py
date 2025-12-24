@@ -33,6 +33,57 @@ BASE_DELAY: float = 1.0  # seconds
 MAX_DELAY: float = 30.0  # seconds
 REACTION_DELAY: float = 0.3  # delay between reactions (300ms)
 
+# HTTP status code descriptions for logging
+HTTP_STATUS_DESCRIPTIONS = {
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    429: "Rate Limited",
+    500: "Internal Server Error",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+    504: "Gateway Timeout",
+}
+
+
+def log_http_error(
+    e: discord.HTTPException,
+    operation: str,
+    context: list = None,
+) -> None:
+    """
+    Log a Discord HTTPException with comprehensive details.
+
+    Args:
+        e: The HTTPException that occurred
+        operation: Description of what operation failed (e.g., "Send Message", "Edit Thread")
+        context: Additional context tuples for logging [(key, value), ...]
+    """
+    status_desc = HTTP_STATUS_DESCRIPTIONS.get(e.status, "Unknown")
+    retry_after = getattr(e, 'retry_after', None)
+
+    log_items = [
+        ("Status", f"{e.status} ({status_desc})"),
+        ("Error", str(e.text) if hasattr(e, 'text') and e.text else str(e)),
+    ]
+
+    if retry_after:
+        log_items.append(("Retry After", f"{retry_after:.1f}s"))
+
+    if context:
+        log_items.extend(context)
+
+    # Use warning for rate limits (recoverable), error for others
+    if e.status == 429:
+        logger.warning(f"🚦 {operation} Rate Limited", log_items)
+    elif e.status == 403:
+        logger.warning(f"🚫 {operation} Forbidden", log_items)
+    elif e.status == 404:
+        logger.warning(f"❓ {operation} Not Found", log_items)
+    else:
+        logger.error(f"❌ {operation} Failed", log_items)
+
 
 # =============================================================================
 # Helper Functions for Common Operations
