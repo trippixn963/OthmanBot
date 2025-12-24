@@ -402,12 +402,26 @@ def build_forum_content(
 
     message_content = ""
 
-    # Key quote
-    first_sentence = english.split('.')[0].strip()
+    # Key quote - extract first proper sentence
+    # Use '. ' followed by uppercase to detect real sentence boundaries
+    # This avoids splitting on abbreviations like "U.S." or "Dr."
+    import re
+    # Match sentence ending with period followed by space + uppercase (new sentence)
+    # or period at end of text
+    sentence_match = re.search(r'^(.{30,}?\.)\s+[A-Z]', english)
+    if sentence_match:
+        first_sentence = sentence_match.group(1).strip()
+    else:
+        # Fallback: take first 200 chars and truncate at last period
+        snippet = english[:200]
+        last_period = snippet.rfind('.')
+        if last_period > 30:
+            first_sentence = snippet[:last_period + 1].strip()
+        else:
+            first_sentence = truncate_at_sentence(english, 150)
+
     if len(first_sentence) > 250:
         first_sentence = truncate_at_sentence(first_sentence, 247)
-    else:
-        first_sentence = first_sentence + '.'
 
     if len(first_sentence) > 20:
         message_content += f"> 💬 *\"{first_sentence}\"*\n\n"
