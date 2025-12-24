@@ -23,6 +23,8 @@ import discord
 from src.core.logger import logger
 from src.core.config import (
     DEBATES_FORUM_ID,
+    DEVELOPER_ID,
+    MODERATOR_ROLE_ID,
     EmbedColors,
     EmbedIcons,
     OPEN_DISCUSSION_ACKNOWLEDGMENT_EMOJI,
@@ -460,6 +462,20 @@ class OpenDiscussionService:
         # Skip bot messages
         if message.author.bot:
             return True
+
+        # Bypass for developer and moderators - they can always post
+        is_developer = message.author.id == DEVELOPER_ID
+        is_moderator = (
+            hasattr(message.author, 'roles')
+            and any(role.id == MODERATOR_ROLE_ID for role in message.author.roles)
+        )
+        if is_developer or is_moderator:
+            logger.debug("Open Discussion Access Bypassed", [
+                ("User", f"{message.author.name} ({message.author.id})"),
+                ("Is Developer", str(is_developer)),
+                ("Is Moderator", str(is_moderator)),
+            ])
+            return True  # Allow message, skip karma tracking
 
         # Check if user has acknowledged the rules
         has_acknowledged = await self._has_user_acknowledged(message.channel, message.author)
