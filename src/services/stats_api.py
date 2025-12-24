@@ -11,7 +11,6 @@ Server: discord.gg/syria
 """
 
 import asyncio
-import subprocess
 import time
 import psutil
 from collections import defaultdict
@@ -19,14 +18,11 @@ from datetime import datetime
 from aiohttp import web
 from typing import TYPE_CHECKING, Optional
 
-from zoneinfo import ZoneInfo
+import os
 
 from src.core.logger import logger
-from src.core.config import NY_TZ, DEBATES_FORUM_ID, SYRIA_GUILD_ID, load_news_channel_id, load_soccer_channel_id
+from src.core.config import NY_TZ, DEBATES_FORUM_ID, SYRIA_GUILD_ID, load_news_channel_id, load_soccer_channel_id, BASE_COMMAND_COUNT
 from src.services.debates.tags import DEBATE_TAGS
-
-# EST timezone for avatar cache refresh
-EST_TZ = ZoneInfo("America/New_York")
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -40,11 +36,11 @@ if TYPE_CHECKING:
 STATS_API_PORT = 8085
 STATS_API_HOST = "0.0.0.0"
 
-# Base command count (commands run before stats tracking)
-BASE_COMMAND_COUNT = 239
-
 # Cache duration in seconds
 CACHE_TTL = 30
+
+# Bot home directory (for git log)
+BOT_HOME = os.environ.get("BOT_HOME", "/root/OthmanBot")
 
 
 # =============================================================================
@@ -232,7 +228,7 @@ class OthmanAPI:
     def _check_cache_refresh(self) -> None:
         """Clear avatar cache if it's a new day in EST."""
         global _avatar_cache, _avatar_cache_date
-        today_est = datetime.now(EST_TZ).strftime("%Y-%m-%d")
+        today_est = datetime.now(NY_TZ).strftime("%Y-%m-%d")
 
         if _avatar_cache_date != today_est:
             old_count = len(_avatar_cache)
@@ -328,8 +324,8 @@ class OthmanAPI:
             if guild and guild.banner:
                 # Return high quality banner (size=1024)
                 return guild.banner.with_size(1024).url
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to get guild banner", [("Error", str(e))])
         return None
 
     def _get_uptime(self) -> str:
@@ -370,7 +366,8 @@ class OthmanAPI:
                 "disk_used_gb": round(disk.used / (1024 ** 3), 1),
                 "disk_total_gb": round(disk.total / (1024 ** 3), 1),
             }
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to get system resources", [("Error", str(e))])
             return {}
 
     def _get_bot_status(self) -> dict:
@@ -392,21 +389,26 @@ class OthmanAPI:
 
         return status
 
-    def _get_changelog(self) -> list[dict]:
+    async def _get_changelog(self) -> list[dict]:
         """Get recent git commits from the OthmanBot repo."""
         try:
-            result = subprocess.run(
-                ["git", "log", "--oneline", "-10", "--format=%h|%s"],
-                cwd="/root/OthmanBot",
-                capture_output=True,
-                text=True,
-                timeout=5
+            proc = await asyncio.create_subprocess_exec(
+                "git", "log", "--oneline", "-10", "--format=%h|%s",
+                cwd=BOT_HOME,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if result.returncode != 0:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
+
+            if proc.returncode != 0:
+                logger.debug("Git log failed", [
+                    ("Return Code", str(proc.returncode)),
+                    ("Stderr", stderr.decode()[:100] if stderr else "None"),
+                ])
                 return []
 
             commits = []
-            for line in result.stdout.strip().split("\n"):
+            for line in stdout.decode().strip().split("\n"):
                 if "|" in line:
                     commit_hash, message = line.split("|", 1)
                     msg_lower = message.lower()
@@ -423,7 +425,11 @@ class OthmanAPI:
                         "type": commit_type
                     })
             return commits
-        except Exception:
+        except asyncio.TimeoutError:
+            logger.debug("Git log timed out")
+            return []
+        except Exception as e:
+            logger.debug("Git log error", [("Error", str(e))])
             return []
 
     async def _get_hot_debate(self) -> Optional[dict]:
@@ -456,7 +462,7 @@ class OthmanAPI:
                                     image_url = attachment.url
                                     break
                     except Exception:
-                        pass
+                        pass  # Non-critical: image fetch for hot debate
 
                     return {
                         "title": thread.name,
@@ -479,10 +485,11 @@ class OthmanAPI:
                     if result:
                         return result
             except Exception:
-                pass
+                pass  # Non-critical: archived threads may not be accessible
 
             return None
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to get hot debate", [("Error", str(e))])
             return None
 
     async def _count_forum_threads(self, channel_id: Optional[int]) -> int:
@@ -500,9 +507,10 @@ class OthmanAPI:
                 async for _ in channel.archived_threads(limit=None):
                     count += 1
             except Exception:
-                pass
+                pass  # Non-critical: archived threads may not be accessible
             return count
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to count forum threads", [("Channel", str(channel_id)), ("Error", str(e))])
             return 0
 
     async def _get_recent_threads(self, channel_id: Optional[int], limit: int = 5) -> list[dict]:
@@ -528,7 +536,7 @@ class OthmanAPI:
                     if thread.created_at:
                         all_threads.append(thread)
             except Exception:
-                pass
+                pass  # Non-critical: archived threads may not be accessible
 
             # Sort by creation time (newest first) and take top N
             all_threads.sort(key=lambda t: t.created_at, reverse=True)
@@ -568,7 +576,7 @@ class OthmanAPI:
                                 if len(lines[0]) > 150:
                                     excerpt += "..."
                 except Exception:
-                    pass
+                    pass  # Non-critical: message content enrichment
 
                 results.append({
                     "title": thread.name,
@@ -581,7 +589,8 @@ class OthmanAPI:
                 })
 
             return results
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to get recent threads", [("Channel", str(channel_id)), ("Error", str(e))])
             return []
 
     async def _get_trending_debates(self, limit: int = 3) -> list[dict]:
@@ -620,7 +629,7 @@ class OthmanAPI:
                                 image_url = attachment.url
                                 break
                 except Exception:
-                    pass
+                    pass  # Non-critical: image fetch for trending debate
 
                 results.append({
                     "title": thread.name,
@@ -631,7 +640,8 @@ class OthmanAPI:
                 })
 
             return results
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to get trending debates", [("Error", str(e))])
             return []
 
     def _get_activity_sparkline(self, db) -> list[int]:
@@ -666,7 +676,8 @@ class OthmanAPI:
                 return result
             finally:
                 cursor.close()
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to get activity sparkline", [("Error", str(e))])
             return [0] * 7
 
     async def _get_all_time_stats(self, db) -> dict:
@@ -678,8 +689,8 @@ class OthmanAPI:
         if db:
             try:
                 total_votes = db.get_total_votes()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to get total votes", [("Error", str(e))])
 
         # Count news from both news and soccer channels
         if self._bot and self._bot.is_ready():
@@ -743,14 +754,14 @@ class OthmanAPI:
                 # Get monthly leaderboard
                 try:
                     monthly_leaderboard_raw = db.get_monthly_leaderboard(now.year, now.month, limit=15)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to get monthly leaderboard", [("Error", str(e))])
 
                 # Get category leaderboards
                 try:
                     category_leaderboards = db.get_category_leaderboards(limit=15)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to get category leaderboards", [("Error", str(e))])
 
             # Enrich all-time leaderboard with avatars
             leaderboard_tuples = [
@@ -765,8 +776,8 @@ class OthmanAPI:
                 try:
                     user_ids = [u["user_id"] for u in leaderboard]
                     karma_changes = db.get_karma_changes_today(user_ids)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to get karma changes", [("Error", str(e))])
 
             # Calculate max karma for progress bars
             max_karma = max((u["karma"] for u in leaderboard), default=1)
@@ -790,8 +801,8 @@ class OthmanAPI:
                 try:
                     monthly_user_ids = [u["user_id"] for u in monthly_leaderboard]
                     monthly_karma_changes = db.get_karma_changes_today(monthly_user_ids)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to get monthly karma changes", [("Error", str(e))])
 
             # Calculate max karma for monthly progress bars
             monthly_max_karma = max((u["karma"] for u in monthly_leaderboard), default=1)
@@ -855,7 +866,7 @@ class OthmanAPI:
                 "monthly_leaderboard": monthly_leaderboard,
                 "category_leaderboards": enriched_categories,
                 "current_month": now.strftime("%B"),
-                "changelog": self._get_changelog(),
+                "changelog": await self._get_changelog(),
                 "system": self._get_system_resources(),
                 "guild_banner": self._get_guild_banner_url(),
                 "generated_at": datetime.now(NY_TZ).isoformat(),
@@ -975,7 +986,7 @@ class OthmanAPI:
                                 if thread:
                                     thread_name = thread.name
                             except Exception:
-                                pass
+                                pass  # Non-critical: thread name enrichment
 
                         # Only include debates where we found the thread name
                         if thread_name != "Unknown Debate":
@@ -1085,8 +1096,8 @@ class OthmanAPI:
                 await rate_limiter.cleanup()
             except asyncio.CancelledError:
                 break
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Rate limiter cleanup error", [("Error", str(e))])
 
 
 # =============================================================================

@@ -11,6 +11,7 @@ Server: discord.gg/syria
 
 import asyncio
 import os
+import threading
 import time
 from openai import AsyncOpenAI, RateLimitError, APIConnectionError, APIError, AuthenticationError
 from src.core.logger import logger
@@ -26,12 +27,15 @@ TRANSLATE_MAX_RETRIES: int = 3
 TRANSLATE_BASE_DELAY: float = 2.0
 """Base delay in seconds between retries."""
 
-# Simple circuit breaker state
+# Circuit breaker configuration
+FAILURE_THRESHOLD: int = 5
+RECOVERY_TIMEOUT: float = 60.0
+
+# Circuit breaker state (thread-safe with lock)
+_circuit_lock = threading.Lock()
 _failure_count: int = 0
 _last_failure_time: float = 0.0
 _circuit_open: bool = False
-FAILURE_THRESHOLD: int = 5
-RECOVERY_TIMEOUT: float = 60.0
 
 
 # =============================================================================
@@ -42,39 +46,44 @@ def _check_circuit() -> bool:
     """Check if circuit is open. Returns True if requests should be blocked."""
     global _circuit_open, _failure_count, _last_failure_time
 
-    if not _circuit_open:
-        return False
+    with _circuit_lock:
+        if not _circuit_open:
+            return False
 
-    # Check for recovery
-    elapsed = time.time() - _last_failure_time
-    if elapsed >= RECOVERY_TIMEOUT:
-        logger.info("Translation Circuit Half-Open (Testing Recovery)")
-        return False
+        # Check for recovery
+        elapsed = time.time() - _last_failure_time
+        if elapsed >= RECOVERY_TIMEOUT:
+            logger.info("Translation Circuit Half-Open (Testing Recovery)")
+            return False
 
-    return True
+        return True
 
 
 def _record_success() -> None:
     """Record a successful translation."""
     global _failure_count, _circuit_open
-    _failure_count = 0
-    if _circuit_open:
-        _circuit_open = False
-        logger.info("Translation Circuit Closed (Recovered)")
+
+    with _circuit_lock:
+        _failure_count = 0
+        if _circuit_open:
+            _circuit_open = False
+            logger.info("Translation Circuit Closed (Recovered)")
 
 
 def _record_failure() -> None:
     """Record a failed translation."""
     global _failure_count, _last_failure_time, _circuit_open
-    _failure_count += 1
-    _last_failure_time = time.time()
 
-    if _failure_count >= FAILURE_THRESHOLD:
-        _circuit_open = True
-        logger.warning("Translation Circuit Opened", [
-            ("Failures", str(_failure_count)),
-            ("Timeout", f"{RECOVERY_TIMEOUT}s"),
-        ])
+    with _circuit_lock:
+        _failure_count += 1
+        _last_failure_time = time.time()
+
+        if _failure_count >= FAILURE_THRESHOLD:
+            _circuit_open = True
+            logger.warning("Translation Circuit Opened", [
+                ("Failures", str(_failure_count)),
+                ("Timeout", f"{RECOVERY_TIMEOUT}s"),
+            ])
 
 
 # =============================================================================
