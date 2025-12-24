@@ -28,6 +28,7 @@ from src.utils import (
     is_english_only,
     send_webhook_alert_safe,
 )
+from src.utils.discord_rate_limit import log_http_error
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -354,8 +355,8 @@ async def update_analytics_embed(bot: "OthmanBot", thread: discord.Thread, force
         ])
 
     except discord.HTTPException as e:
-        logger.warning("📊 Failed To Update Analytics Embed", [
-            ("Error", str(e)),
+        log_http_error(e, "Update Analytics Embed", [
+            ("Thread ID", str(thread.id)),
         ])
     except (ValueError, KeyError, TypeError) as e:
         logger.error("📊 Data Error Updating Analytics Embed", [
@@ -607,8 +608,9 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                 # Note: No additional DM sent here - user already received detailed ban notification
                 # with appeal button when they were originally banned
             except discord.HTTPException as e:
-                logger.warning("🚫 Failed To Delete Banned User Message", [
-                    ("Error", str(e)),
+                log_http_error(e, "Delete Banned User Message", [
+                    ("User", f"{message.author.name} ({message.author.id})"),
+                    ("Thread", str(message.channel.id)),
                 ])
             return
 
@@ -697,8 +699,9 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                                         thread_id=message.channel.id
                                     )
                         except discord.HTTPException as e:
-                            logger.warning("🔐 Failed To Enforce Access Control", [
-                                ("Error", str(e)),
+                            log_http_error(e, "Enforce Access Control", [
+                                ("User", f"{message.author.name} ({message.author.id})"),
+                                ("Thread", str(message.channel.id)),
                             ])
                         return
 
@@ -715,13 +718,14 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                         ("Thread ID", str(message.channel.id)),
                     ])
                 except discord.HTTPException as e:
-                    logger.warning("🔐 Failed to Fetch Analytics Message", [
+                    log_http_error(e, "Fetch Analytics Message", [
                         ("Message ID", str(analytics_message_id)),
-                        ("Error", str(e)),
+                        ("Thread", str(message.channel.id)),
                     ])
         except discord.HTTPException as e:
-            logger.warning("🔐 Access Control HTTP Error", [
-                ("Error", str(e)),
+            log_http_error(e, "Access Control Check", [
+                ("User", f"{message.author.name} ({message.author.id})"),
+                ("Thread", str(message.channel.id)),
             ])
         except (ValueError, AttributeError) as e:
             logger.error("🔐 Error Checking Access Control", [
@@ -750,8 +754,9 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                     thread_id=message.channel.id
                 )
         except discord.HTTPException as e:
-            logger.warning("🗳️ Failed To Add Vote Reactions", [
-                ("Error", str(e)),
+            log_http_error(e, "Add Vote Reactions", [
+                ("Message ID", str(message.id)),
+                ("Thread", str(message.channel.id)),
             ])
     else:
         logger.debug("⏭️ Skipped Reactions For Short Message", [
@@ -842,8 +847,8 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                 ("Content Length", f"{len(starter_message.content)} chars"),
             ])
         except discord.HTTPException as e:
-            logger.warning("🗳️ Failed To Add Vote Reactions To Debate Post", [
-                ("Error", str(e)),
+            log_http_error(e, "Add Vote Reactions To Post", [
+                ("Thread", f"{thread.name} ({thread.id})"),
             ])
 
         # VALIDATION: Check if title is English-only
@@ -900,8 +905,8 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                     )
 
             except discord.HTTPException as e:
-                logger.error("🌐 Failed To Handle Non-English Title (Discord Error)", [
-                    ("Error", str(e)),
+                log_http_error(e, "Handle Non-English Title", [
+                    ("Thread", f"{original_title} ({thread.id})"),
                 ])
             except (ValueError, AttributeError) as e:
                 logger.error("🌐 Failed To Handle Non-English Title (Data Error)", [
@@ -968,8 +973,9 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                                 ("Tags", ", ".join(tag_names)),
                             ])
         except discord.HTTPException as e:
-            logger.warning("🏷️ Failed To Auto-Tag Debate Thread (Discord Error)", [
-                ("Error", str(e)),
+            log_http_error(e, "Auto-Tag Debate Thread", [
+                ("Debate", f"#{debate_number}"),
+                ("Thread ID", str(thread.id)),
             ])
         except (ValueError, KeyError, AttributeError) as e:
             logger.error("🏷️ Failed To Auto-Tag Debate Thread (Data Error)", [
@@ -1005,9 +1011,9 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                             logger.debug("🗑️ Deleted 'pinned a message' system message")
                             break
                 except discord.HTTPException as e:
-                    logger.warning("📊 Failed to pin analytics message", [
+                    log_http_error(e, "Pin Analytics Message", [
                         ("Thread", str(thread.id)),
-                        ("Error", str(e)),
+                        ("Message ID", str(analytics_message.id)),
                     ])
 
                 # Store analytics message ID in database
@@ -1052,8 +1058,8 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                         thread.id, original_title, starter_message.author.id, starter_message.author.name
                     )
             except discord.HTTPException as e:
-                logger.warning("📊 Failed To Post Analytics Embed For Debate Thread", [
-                    ("Error", str(e)),
+                log_http_error(e, "Post Analytics Embed", [
+                    ("Thread", f"{thread.name} ({thread.id})"),
                 ])
             except (ValueError, KeyError) as e:
                 logger.error("📊 Analytics Embed Data Error", [
@@ -1061,8 +1067,8 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                 ])
 
     except discord.HTTPException as e:
-        logger.warning("🧵 Failed To Process Debate Thread Creation", [
-            ("Error", str(e)),
+        log_http_error(e, "Process Debate Thread Creation", [
+            ("Thread", f"{thread.name} ({thread.id})"),
         ])
 
 
@@ -1137,8 +1143,9 @@ async def on_debate_reaction_add(
                         thread_id=message.channel.id
                     )
             except discord.HTTPException as e:
-                logger.warning("🗳️ Failed To Remove Self-Vote Reaction", [
-                    ("Error", str(e)),
+                log_http_error(e, "Remove Self-Vote Reaction", [
+                    ("User", f"{user.name} ({user.id})"),
+                    ("Message ID", str(message.id)),
                 ])
             return
 
@@ -1556,9 +1563,10 @@ async def _renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int
                 ])
                 await asyncio.sleep(DISCORD_API_DELAY)  # Rate limit protection
             except discord.HTTPException as e:
-                logger.warning("🔢 Failed To Renumber Debate", [
+                log_http_error(e, "Renumber Debate", [
                     ("Thread", thread.name),
-                    ("Error", str(e)),
+                    ("Old Number", f"#{old_number}"),
+                    ("New Number", f"#{new_number}"),
                 ])
 
         # Update the debate counter to reflect the new highest number
@@ -1597,8 +1605,9 @@ async def _renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int
                 ])
 
     except discord.HTTPException as e:
-        logger.error("🔢 Discord Error During Renumbering", [
-            ("Error", str(e)),
+        log_http_error(e, "Renumber Debates Batch", [
+            ("Deleted Number", f"#{deleted_number}"),
+            ("Renumbered So Far", str(renumbered_count)),
         ])
 
     return renumbered_count
