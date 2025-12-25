@@ -84,6 +84,7 @@ class BanEvasionAlertCache:
 
     DESIGN: Uses a dict mapping user_id -> alert_timestamp instead of a simple set.
     Cleanup happens periodically (every N checks) to balance memory vs performance.
+    Thread-safe using a threading lock for concurrent access from async handlers.
     """
 
     # Cleanup every N checks instead of every check (O(n) optimization)
@@ -97,6 +98,8 @@ class BanEvasionAlertCache:
         Args:
             expiry_hours: Hours before an alert entry expires and user can be re-alerted
         """
+        import threading
+        self._lock = threading.Lock()
         self._alerts: Dict[int, datetime] = {}
         self._expiry = timedelta(hours=expiry_hours)
         self._check_count: int = 0
@@ -106,6 +109,7 @@ class BanEvasionAlertCache:
         Check if we should alert for this user.
 
         Performs cleanup periodically or when cache grows too large.
+        Thread-safe.
 
         Args:
             user_id: Discord user ID to check
@@ -113,34 +117,37 @@ class BanEvasionAlertCache:
         Returns:
             True if we should send an alert, False if already alerted recently
         """
-        self._check_count += 1
+        with self._lock:
+            self._check_count += 1
 
-        # Cleanup periodically or when cache is large
-        if (self._check_count >= self.CLEANUP_INTERVAL or
-                len(self._alerts) >= self.MAX_SIZE_BEFORE_CLEANUP):
-            self._cleanup()
-            self._check_count = 0
+            # Cleanup periodically or when cache is large
+            if (self._check_count >= self.CLEANUP_INTERVAL or
+                    len(self._alerts) >= self.MAX_SIZE_BEFORE_CLEANUP):
+                self._cleanup_unlocked()
+                self._check_count = 0
 
-        if user_id in self._alerts:
-            # Check if this specific entry is expired
-            alert_time = self._alerts[user_id]
-            if datetime.now(NY_TZ) - alert_time > self._expiry:
-                del self._alerts[user_id]
-                return True
-            return False  # Already alerted and not expired
-        return True
+            if user_id in self._alerts:
+                # Check if this specific entry is expired
+                alert_time = self._alerts[user_id]
+                if datetime.now(NY_TZ) - alert_time > self._expiry:
+                    del self._alerts[user_id]
+                    return True
+                return False  # Already alerted and not expired
+            return True
 
     def record_alert(self, user_id: int) -> None:
         """
         Record that we've alerted about this user.
+        Thread-safe.
 
         Args:
             user_id: Discord user ID that was flagged
         """
-        self._alerts[user_id] = datetime.now(NY_TZ)
+        with self._lock:
+            self._alerts[user_id] = datetime.now(NY_TZ)
 
-    def _cleanup(self) -> None:
-        """Remove expired entries from cache."""
+    def _cleanup_unlocked(self) -> None:
+        """Remove expired entries from cache. Must be called with lock held."""
         now = datetime.now(NY_TZ)
         expired = [
             user_id for user_id, alert_time in self._alerts.items()
@@ -152,7 +159,8 @@ class BanEvasionAlertCache:
     @property
     def size(self) -> int:
         """Return current cache size (for monitoring)."""
-        return len(self._alerts)
+        with self._lock:
+            return len(self._alerts)
 
 
 # Module-level instance for ban evasion tracking
@@ -614,16 +622,18 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                 ])
             return
 
-    # ACCESS CONTROL BYPASS: Skip for Debate Management role and developer
+    # ACCESS CONTROL BYPASS: Skip for Debate Management role, moderators, and developer
     is_debate_manager = has_debate_management_role(message.author)
+    is_moderator = hasattr(message.author, 'roles') and any(role.id == MODERATOR_ROLE_ID for role in message.author.roles)
     is_developer = message.author.id == DEVELOPER_ID
-    skip_access_control = is_debate_manager or is_developer
+    skip_access_control = is_debate_manager or is_moderator or is_developer
 
     if skip_access_control:
         logger.info("Access Control Bypassed", [
             ("User", f"{message.author.name} ({message.author.id})"),
             ("Thread", f"{message.channel.name} ({message.channel.id})"),
             ("Is Manager", str(is_debate_manager)),
+            ("Is Moderator", str(is_moderator)),
             ("Is Developer", str(is_developer)),
         ])
 
@@ -643,7 +653,8 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                     for reaction in analytics_message.reactions:
                         if str(reaction.emoji) == PARTICIPATE_EMOJI:
                             # Check if the current user is in the list of users who reacted
-                            async for user in reaction.users():
+                            # Use limit=None to fetch ALL users, not just first 100
+                            async for user in reaction.users(limit=None):
                                 if user.id == message.author.id:
                                     user_has_reacted = True
                                     break
@@ -812,7 +823,9 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
             try:
                 starter_message = await thread.fetch_message(thread.id)
             except discord.NotFound:
-                pass
+                logger.debug("Starter message not found by thread ID, trying history", [
+                    ("Thread", f"{thread.name} ({thread.id})"),
+                ])
 
         # Last resort: try thread history
         if starter_message is None:
@@ -1166,8 +1179,12 @@ async def on_debate_reaction_add(
                 # Remove the reaction to signal the vote didn't count
                 try:
                     await reaction.remove(user)
-                except discord.HTTPException:
-                    pass
+                except discord.HTTPException as e:
+                    logger.warning("Failed to remove reaction after vote failure", [
+                        ("Voter", str(voter_id)),
+                        ("Message", str(message.id)),
+                        ("Error", str(e)[:50]),
+                    ])
                 return
         except Exception as e:
             logger.error("Vote Recording Exception", [
@@ -1179,8 +1196,12 @@ async def on_debate_reaction_add(
             # Remove the reaction to signal the vote didn't count
             try:
                 await reaction.remove(user)
-            except discord.HTTPException:
-                pass
+            except discord.HTTPException as remove_err:
+                logger.warning("Failed to remove reaction after exception", [
+                    ("Voter", str(voter_id)),
+                    ("Message", str(message.id)),
+                    ("Error", str(remove_err)[:50]),
+                ])
             return
 
         logger.info("Vote Recorded", [
