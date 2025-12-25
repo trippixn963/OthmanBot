@@ -152,7 +152,15 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
         if hasattr(bot.backup_scheduler, 'is_running') and bot.backup_scheduler.is_running:
             cleanup_tasks.append(("Backup Scheduler", bot.backup_scheduler.stop()))
 
-    # 12. Close database connection
+    # 12. Stop ban expiry scheduler
+    if hasattr(bot, 'ban_expiry_scheduler') and bot.ban_expiry_scheduler:
+        cleanup_tasks.append(("Ban Expiry Scheduler", bot.ban_expiry_scheduler.stop()))
+
+    # 13. Stop case archive scheduler
+    if hasattr(bot, 'case_archive_scheduler') and bot.case_archive_scheduler:
+        cleanup_tasks.append(("Case Archive Scheduler", bot.case_archive_scheduler.stop()))
+
+    # 14. Close database connection
     if hasattr(bot, 'debates_service') and bot.debates_service:
         if hasattr(bot.debates_service, 'db') and bot.debates_service.db:
             cleanup_tasks.append(("Debates Database", _close_database(bot.debates_service.db)))
