@@ -129,4 +129,4 @@ jobs:
           curl -s -X PATCH "https://discord.com/api/v10/channels/${MODS_CATEGORY_ID}" \
             -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"name\": \"OTHMAN ・${{ steps.commit.outputs.sha }}\"}"
+            -d "{\"name\": \"OTHMAN・${{ steps.commit.outputs.sha }}\"}"
