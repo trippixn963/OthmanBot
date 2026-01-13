@@ -68,16 +68,93 @@ class DatabaseManager:
 
         self._db_lock: threading.Lock = threading.Lock()
         self._conn: Optional[sqlite3.Connection] = None
+        self._healthy: bool = False
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._connect()
         self._init_tables()
+        self._healthy = True
         self._initialized = True
 
         logger.tree("Database Manager Initialized", [
             ("Path", str(DB_PATH)),
             ("WAL Mode", "Enabled"),
         ], emoji="🗄️")
+
+    # =========================================================================
+    # Health Check Methods
+    # =========================================================================
+
+    @property
+    def is_healthy(self) -> bool:
+        """Check if database connection is healthy."""
+        if not self._healthy:
+            return False
+        try:
+            with self._db_lock:
+                if self._conn is None:
+                    return False
+                self._conn.execute("SELECT 1")
+            return True
+        except sqlite3.Error:
+            self._healthy = False
+            return False
+
+    def require_healthy(self) -> None:
+        """Raise RuntimeError if database is not healthy."""
+        if not self.is_healthy:
+            raise RuntimeError("Database is not healthy - connection lost or corrupted")
+
+    def health_check(self) -> dict:
+        """
+        Perform comprehensive health check.
+
+        Returns:
+            Dict with health status and diagnostics
+        """
+        result = {
+            "healthy": False,
+            "connected": False,
+            "wal_mode": False,
+            "tables": 0,
+            "db_size_mb": 0.0,
+            "error": None,
+        }
+
+        try:
+            # Check connection
+            with self._db_lock:
+                if self._conn is None:
+                    result["error"] = "No connection"
+                    return result
+
+                # Test query
+                self._conn.execute("SELECT 1")
+                result["connected"] = True
+
+                # Check WAL mode
+                cursor = self._conn.execute("PRAGMA journal_mode")
+                mode = cursor.fetchone()
+                result["wal_mode"] = mode and mode[0].upper() == "WAL"
+
+                # Count tables
+                cursor = self._conn.execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+                )
+                result["tables"] = cursor.fetchone()[0]
+
+            # Get database file size
+            if DB_PATH.exists():
+                result["db_size_mb"] = round(DB_PATH.stat().st_size / (1024 * 1024), 2)
+
+            result["healthy"] = result["connected"] and result["wal_mode"]
+            self._healthy = result["healthy"]
+
+        except sqlite3.Error as e:
+            result["error"] = str(e)
+            self._healthy = False
+
+        return result
 
     def _connect(self) -> None:
         """Establish database connection with WAL mode."""
@@ -92,7 +169,9 @@ class DatabaseManager:
             self._conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
             self._conn.execute("PRAGMA temp_store=MEMORY")
             self._conn.row_factory = sqlite3.Row
+            self._healthy = True
         except sqlite3.Error as e:
+            self._healthy = False
             logger.error("Database Connection Failed", [("Error", str(e))])
             raise
 
@@ -152,6 +231,7 @@ class DatabaseManager:
             if self._conn:
                 self._conn.close()
                 self._conn = None
+                self._healthy = False
                 logger.info("Database Connection Closed")
 
     # =========================================================================

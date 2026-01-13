@@ -29,9 +29,6 @@ from src.services.webhook_alerts import (
     get_alert_service,
 )
 
-# Interaction Logger
-from src.services.interaction_logger import InteractionLogger
-
 # Case Log
 from src.services.case_log import CaseLogService
 
@@ -48,8 +45,6 @@ __all__ = [
     # Webhook Alerts
     "WebhookAlertService",
     "get_alert_service",
-    # Interaction Logger
-    "InteractionLogger",
     # Case Log
     "CaseLogService",
 ]

@@ -11,60 +11,19 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
-from typing import List, TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DISCORD_AUTOCOMPLETE_LIMIT, CASE_LOG_FORUM_ID, has_debates_management_role, EmbedColors
+from src.core.config import CASE_LOG_FORUM_ID, has_debates_management_role, EmbedColors
 from src.utils.footer import set_footer
+from src.utils.autocomplete import case_search_autocomplete
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
-
-
-# =============================================================================
-# Autocomplete Functions
-# =============================================================================
-
-async def case_search_autocomplete(
-    interaction: discord.Interaction,
-    current: str
-) -> List[app_commands.Choice[str]]:
-    """Autocomplete for case search - shows users with cases."""
-    bot = interaction.client
-
-    if not hasattr(bot, 'debates_service') or bot.debates_service is None:
-        return []
-
-    choices = []
-    db = bot.debates_service.db
-
-    # Get all case logs
-    all_cases = db.get_all_case_logs()
-
-    for case in all_cases[:DISCORD_AUTOCOMPLETE_LIMIT]:
-        user_id = case['user_id']
-        case_id = case['case_id']
-
-        # Try to get the member from the guild
-        member = interaction.guild.get_member(user_id) if interaction.guild else None
-
-        if member:
-            name = f"[{case_id:04d}] {member.display_name}"
-        else:
-            name = f"[{case_id:04d}] User {user_id}"
-
-        # Filter by current input (case ID or user ID)
-        if not current or current.lower() in name.lower() or current in str(user_id) or current in str(case_id):
-            choices.append(app_commands.Choice(
-                name=name[:100],  # Discord limit
-                value=str(user_id)
-            ))
-
-    return choices[:DISCORD_AUTOCOMPLETE_LIMIT]
 
 
 # =============================================================================
@@ -91,7 +50,8 @@ class CasesCog(commands.Cog):
         """Look up a user's case history."""
         # Log command invocation
         logger.info("/cases Command Invoked", [
-            ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
             ("User Param", user),
         ])
@@ -99,7 +59,8 @@ class CasesCog(commands.Cog):
         # Security check: Verify user has Debates Management role
         if not has_debates_management_role(interaction.user):
             logger.warning("/cases Command Denied - Missing Role", [
-                ("User", f"{interaction.user.name} ({interaction.user.id})"),
+                ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+                ("ID", str(interaction.user.id)),
             ])
             await interaction.response.send_message(
                 "You don't have permission to use this command. "
@@ -118,7 +79,8 @@ class CasesCog(commands.Cog):
 
         if not hasattr(self.bot, 'debates_service') or self.bot.debates_service is None:
             logger.warning("/cases Command Failed - Service Unavailable", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Reason", "Debates service not initialized"),
             ])
             await interaction.response.send_message(
@@ -139,7 +101,8 @@ class CasesCog(commands.Cog):
             user_id = int(user)
         except ValueError:
             logger.warning("/cases Command Failed - Invalid User ID", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Invalid User Param", user),
                 ("Reason", "Could not parse user as integer"),
             ])
@@ -224,25 +187,13 @@ class CasesCog(commands.Cog):
 
         await interaction.followup.send(embed=embed)
 
-        logger.tree("Case Lookup Complete", [
+        logger.success("📋 Case Lookup Complete", [
             ("User", f"{display_name} ({user_id})"),
             ("Case ID", f"{case['case_id']:04d}"),
             ("Ban Count", str(case['ban_count'])),
-            ("Looked Up By", f"{interaction.user.name}"),
-        ], emoji="📋")
-
-        # Log to webhook
-        try:
-            if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
-                await self.bot.interaction_logger.log_command(
-                    interaction, "cases",
-                    success=True,
-                    details=f"Case [{case['case_id']:04d}] for {display_name}"
-                )
-        except Exception as e:
-            logger.warning("Failed to log /cases command to webhook", [
-                ("Error", str(e)),
-            ])
+            ("Looked Up By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("Mod ID", str(interaction.user.id)),
+        ])
 
 
 # =============================================================================
@@ -252,9 +203,7 @@ class CasesCog(commands.Cog):
 async def setup(bot: "OthmanBot") -> None:
     """Setup function for loading the cog."""
     await bot.add_cog(CasesCog(bot))
-    logger.info("Cases Cog Loaded", [
-        ("Commands", "/cases"),
-    ])
+    logger.tree("Command Loaded", [("Name", "cases")], emoji="✅")
 
 
 # =============================================================================

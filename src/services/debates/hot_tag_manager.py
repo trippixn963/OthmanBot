@@ -250,15 +250,6 @@ class HotTagManager:
 
             logger.info("=" * 60)
 
-            # Send webhook summary
-            if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
-                await self.bot.interaction_logger.log_hot_tag_evaluation_summary(
-                    stats=stats,
-                    duration=duration,
-                    added_threads=added_threads,
-                    removed_threads=removed_threads
-                )
-
         except discord.HTTPException as e:
             logger.error("🔥 Hot Tag Evaluation FAILED - Discord API Error", [
                 ("Error", str(e)),
@@ -346,7 +337,7 @@ class HotTagManager:
             if deserves_hot and not has_hot:
                 # Add Hot tag
                 await self._add_hot_tag(thread)
-                logger.info(f"🔥 [{idx}/{total}] Hot Tag ADDED", [
+                logger.success(f"🔥 [{idx}/{total}] Hot Tag ADDED", [
                     ("Thread", thread_preview),
                     ("Thread ID", str(thread.id)),
                     ("Type", thread_type),
@@ -354,14 +345,6 @@ class HotTagManager:
                     ("Last Activity", f"{hours_since_last:.1f}h ago"),
                     ("Reason", f"≥{HOT_MIN_MESSAGES} msgs AND active within {HOT_MAX_INACTIVITY_HOURS}h"),
                 ])
-
-                # Log to webhook
-                if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
-                    await self.bot.interaction_logger.log_hot_tag_added(
-                        thread.name, thread.id,
-                        f"{message_count} messages, active {hours_since_last:.1f}h ago",
-                        guild_id=thread.guild.id if thread.guild else None
-                    )
                 return "added", thread_preview
 
             elif not deserves_hot and has_hot:
@@ -374,7 +357,7 @@ class HotTagManager:
                 reason = " AND ".join(reason_parts) if reason_parts else "criteria not met"
 
                 await self._remove_hot_tag(thread)
-                logger.info(f"❄️ [{idx}/{total}] Hot Tag REMOVED", [
+                logger.warning(f"❄️ [{idx}/{total}] Hot Tag REMOVED", [
                     ("Thread", thread_preview),
                     ("Thread ID", str(thread.id)),
                     ("Type", thread_type),
@@ -382,14 +365,6 @@ class HotTagManager:
                     ("Last Activity", f"{hours_since_last:.1f}h ago"),
                     ("Reason", reason),
                 ])
-
-                # Log to webhook
-                if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
-                    await self.bot.interaction_logger.log_hot_tag_removed(
-                        thread.name, thread.id,
-                        f"No longer meets criteria: {reason}",
-                        guild_id=thread.guild.id if thread.guild else None
-                    )
                 return "removed", thread_preview
 
             elif deserves_hot and has_hot:

@@ -11,113 +11,19 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
-from typing import List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DISCORD_AUTOCOMPLETE_LIMIT, has_debates_management_role, EmbedColors
+from src.core.config import has_debates_management_role, EmbedColors
 from src.utils.footer import set_footer
+from src.utils.autocomplete import banned_user_autocomplete, thread_id_autocomplete
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
-
-
-# =============================================================================
-# Autocomplete Functions
-# =============================================================================
-
-async def banned_user_autocomplete(
-    interaction: discord.Interaction,
-    current: str
-) -> List[app_commands.Choice[str]]:
-    """Autocomplete for banned users in /allow command - shows expiry info."""
-    from datetime import datetime
-    from src.core.config import NY_TZ
-
-    bot = interaction.client
-
-    if not hasattr(bot, 'debates_service') or bot.debates_service is None:
-        return []
-
-    # Get banned users with expiry info
-    banned_info = bot.debates_service.db.get_banned_users_with_info()
-
-    choices = []
-    seen_users = set()  # Track users to avoid duplicates
-
-    for ban in banned_info[:DISCORD_AUTOCOMPLETE_LIMIT * 2]:  # Get more to filter
-        user_id = ban['user_id']
-        if user_id in seen_users:
-            continue
-        seen_users.add(user_id)
-
-        # Try to get the member from the guild
-        member: Optional[discord.Member] = interaction.guild.get_member(user_id) if interaction.guild else None
-
-        # Format expiry info
-        if ban['expires_at']:
-            try:
-                expiry = datetime.fromisoformat(ban['expires_at'].replace('Z', '+00:00'))
-                now = datetime.now(NY_TZ)
-                if expiry.tzinfo is None:
-                    expiry = expiry.replace(tzinfo=NY_TZ)
-                time_left = expiry - now
-                if time_left.days > 0:
-                    expiry_str = f"{time_left.days}d left"
-                elif time_left.seconds > 3600:
-                    expiry_str = f"{time_left.seconds // 3600}h left"
-                else:
-                    expiry_str = f"{time_left.seconds // 60}m left"
-            except (ValueError, TypeError) as e:
-                logger.debug("Failed to parse ban expiry", [("Error", str(e))])
-                expiry_str = "Temp"
-        else:
-            expiry_str = "Permanent"
-
-        # Format scope
-        scope = "All" if ban['thread_id'] is None else f"Thread"
-
-        if member:
-            name = member.display_name
-            # Filter by current input
-            if current.lower() in name.lower() or current in str(user_id):
-                display = f"{name} ({scope}, {expiry_str})"
-                choices.append(app_commands.Choice(
-                    name=display[:100],  # Discord limit
-                    value=str(user_id)
-                ))
-        else:
-            # User left the server but still in ban list
-            if current in str(user_id) or not current:
-                display = f"User {user_id} ({scope}, {expiry_str})"
-                choices.append(app_commands.Choice(
-                    name=display[:100],
-                    value=str(user_id)
-                ))
-
-    return choices[:DISCORD_AUTOCOMPLETE_LIMIT]
-
-
-async def thread_id_autocomplete(
-    interaction: discord.Interaction,
-    current: str
-) -> List[app_commands.Choice[str]]:
-    """Autocomplete for thread_id field - shows 'All' option plus allows custom thread IDs."""
-    choices = []
-    current_lower = current.lower()
-
-    # Always show "All" option if it matches
-    if not current or "all" in current_lower:
-        choices.append(app_commands.Choice(name="All Debates", value="all"))
-
-    # If user typed something that looks like a thread ID, show it
-    if current and current != "all" and current_lower != "all debates":
-        choices.append(app_commands.Choice(name=f"Thread: {current}", value=current))
-
-    return choices[:DISCORD_AUTOCOMPLETE_LIMIT]
 
 
 # =============================================================================
@@ -148,7 +54,8 @@ class AllowCog(commands.Cog):
         """Unban a user from a specific debate thread or all debates."""
         # Log command invocation
         logger.info("/allow Command Invoked", [
-            ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
             ("User Param", user),
             ("Thread ID Param", thread_id),
@@ -157,7 +64,8 @@ class AllowCog(commands.Cog):
         # Security check: Verify user has Debates Management role
         if not has_debates_management_role(interaction.user):
             logger.warning("/allow Command Denied - Missing Role", [
-                ("User", f"{interaction.user.name} ({interaction.user.id})"),
+                ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+                ("ID", str(interaction.user.id)),
             ])
             await interaction.response.send_message(
                 "You don't have permission to use this command. "
@@ -168,18 +76,10 @@ class AllowCog(commands.Cog):
 
         if not hasattr(self.bot, 'debates_service') or self.bot.debates_service is None:
             logger.warning("/allow Command Failed - Service Unavailable", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Reason", "Debates service not initialized"),
             ])
-            # Log failure to webhook
-            try:
-                if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
-                    await self.bot.interaction_logger.log_command(
-                        interaction, "allow", success=False,
-                        details="Debates service not initialized"
-                    )
-            except Exception as e:
-                logger.debug("Webhook log failed", [("Error", str(e))])
             await interaction.response.send_message(
                 "Debates system is not available.",
                 ephemeral=True
@@ -191,7 +91,8 @@ class AllowCog(commands.Cog):
             user_id = int(user)
         except ValueError:
             logger.warning("/allow Command Failed - Invalid User ID", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Invalid User Param", user),
                 ("Reason", "Could not parse user as integer"),
             ])
@@ -210,7 +111,8 @@ class AllowCog(commands.Cog):
         if member and DEBATES_MANAGEMENT_ROLE_ID and interaction.user.id != DEVELOPER_ID:
             if any(role.id == DEBATES_MANAGEMENT_ROLE_ID for role in member.roles):
                 logger.warning("/allow Command Rejected - Protected User", [
-                    ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                    ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                     ("Target User", f"{member.name} ({member.id})"),
                     ("Reason", "Target has Debates Management role"),
                 ])
@@ -231,7 +133,8 @@ class AllowCog(commands.Cog):
                 scope = f"thread `{target_thread_id}`"
             except ValueError:
                 logger.warning("/allow Command Failed - Invalid Thread ID", [
-                    ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                    ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                     ("Invalid Thread ID", thread_id),
                     ("Reason", "Could not parse thread ID as integer"),
                 ])
@@ -278,24 +181,7 @@ class AllowCog(commands.Cog):
 
             set_footer(embed)
 
-            followup_msg = await interaction.followup.send(embed=embed, wait=True)
-
-            # Get message ID for webhook link
-            message_id = followup_msg.id if followup_msg else None
-
-            # Log success to webhook (non-blocking)
-            try:
-                if self.bot.interaction_logger:
-                    await self.bot.interaction_logger.log_user_unbanned(
-                        user_id, interaction.user, scope, display_name,
-                        guild_id=interaction.guild.id if interaction.guild else None,
-                        channel_id=interaction.channel.id if interaction.channel else None,
-                        message_id=message_id
-                    )
-            except Exception as e:
-                logger.warning("Failed to log allow to webhook", [
-                    ("Error", str(e)),
-                ])
+            await interaction.followup.send(embed=embed, wait=True)
 
             # Log to case system (for mods server forum)
             try:
@@ -330,7 +216,8 @@ class AllowCog(commands.Cog):
         else:
             logger.info("/allow Command - User Was Not Banned", [
                 ("Target User", f"{display_name} ({user_id})"),
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Scope", scope),
             ])
             await interaction.followup.send(
@@ -346,9 +233,7 @@ class AllowCog(commands.Cog):
 async def setup(bot: "OthmanBot") -> None:
     """Setup function for loading the cog."""
     await bot.add_cog(AllowCog(bot))
-    logger.info("Allow Cog Loaded", [
-        ("Commands", "/allow"),
-    ])
+    logger.tree("Command Loaded", [("Name", "allow")], emoji="✅")
 
 
 # =============================================================================

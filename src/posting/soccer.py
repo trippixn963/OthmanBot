@@ -171,16 +171,11 @@ async def post_soccer_article_to_forum(
         logger.info("⚽ Marked Soccer Article As Posted", [
             ("Article ID", bot.soccer_scraper._extract_article_id(article.url)),
         ])
-        logger.info("⚽ Posted Soccer Forum Thread", [
+        logger.success("⚽ Posted Soccer Forum Thread", [
             ("Title", article.title[:50]),
+            ("Source", article.source),
+            ("Channel", channel.name),
         ])
-
-        # Log to webhook
-        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
-            thread_link = f"https://discord.com/channels/{thread.guild.id}/{thread.id}" if thread.guild else None
-            await bot.interaction_logger.log_news_posted(
-                "soccer", article.title, channel.name, article.source, thread_link
-            )
 
         # Send announcement
         if bot.general_channel_id:

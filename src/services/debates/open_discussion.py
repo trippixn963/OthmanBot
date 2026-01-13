@@ -479,19 +479,11 @@ class OpenDiscussionService:
             # Send ephemeral-style reminder in channel (auto-deletes)
             await self._send_acknowledgment_reminder(message.channel, message.author)
 
-            logger.info("Open Discussion Message Deleted (Not Acknowledged)", [
+            logger.warning("🔐 Open Discussion Message Deleted (Not Acknowledged)", [
                 ("User", f"{message.author.name} ({message.author.id})"),
+                ("Thread", message.channel.name),
                 ("Thread ID", str(message.channel.id)),
             ])
-
-            # Log to webhook
-            if hasattr(self._bot, 'interaction_logger') and self._bot.interaction_logger:
-                await self._bot.interaction_logger.log_open_discussion_blocked(
-                    user=message.author,
-                    thread_name=message.channel.name,
-                    guild_id=message.guild.id if message.guild else None,
-                    thread_id=message.channel.id
-                )
 
         return True
 

@@ -112,27 +112,12 @@ class BanExpiryScheduler:
                     except Exception:
                         pass
 
-                    display_name = f"{user.display_name} ({user_id})" if user else f"User {user_id}"
-
-                    logger.tree("Auto-Unban: Ban Expired", [
-                        ("User", display_name),
+                    logger.success("⏰ Auto-Unban: Ban Expired", [
+                        ("User", f"{user.name} ({user.display_name})" if user else f"User {user_id}"),
+                        ("ID", str(user_id)),
                         ("Scope", scope),
                         ("Expired At", ban['expires_at']),
-                    ], emoji="⏰")
-
-                    # Log to webhook if available
-                    try:
-                        if hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
-                            await self.bot.interaction_logger.log_ban_expired(
-                                user_id, scope, user.display_name if user else f"User {user_id}",
-                                guild_id=SYRIA_GUILD_ID,
-                                thread_id=thread_id
-                            )
-                    except Exception as e:
-                        logger.warning("Failed to log auto-unban to webhook", [
-                            ("User ID", str(user_id)),
-                            ("Error", str(e)),
-                        ])
+                    ])
 
                     # Log to case system (for mods server forum)
                     try:
@@ -144,7 +129,8 @@ class BanExpiryScheduler:
                             )
                     except Exception as e:
                         logger.warning("Failed to log auto-unban to case system", [
-                            ("User ID", str(user_id)),
+                            ("User", f"{user.name} ({user.display_name})" if user else f"User {user_id}"),
+                            ("ID", str(user_id)),
                             ("Error", str(e)),
                         ])
 
@@ -161,7 +147,8 @@ class BanExpiryScheduler:
                             )
                     except Exception as e:
                         logger.warning("Failed to send ban expiry notification DM", [
-                            ("User ID", str(user_id)),
+                            ("User", f"{user.name} ({user.display_name})" if user else f"User {user_id}"),
+                            ("ID", str(user_id)),
                             ("Error", str(e)),
                         ])
 

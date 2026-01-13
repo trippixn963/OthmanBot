@@ -53,7 +53,8 @@ class CloseCog(commands.Cog):
         """Close a debate thread with a reason."""
         # Log command invocation
         logger.info("/close Command Invoked", [
-            ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
             ("Reason", reason[:50] + "..." if len(reason) > 50 else reason),
         ])
@@ -61,7 +62,8 @@ class CloseCog(commands.Cog):
         # Security check: Verify user has Debates Management role
         if not has_debates_management_role(interaction.user):
             logger.warning("/close Command Denied - Missing Role", [
-                ("User", f"{interaction.user.name} ({interaction.user.id})"),
+                ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+                ("ID", str(interaction.user.id)),
             ])
             await interaction.response.send_message(
                 "You don't have permission to use this command. "
@@ -73,7 +75,8 @@ class CloseCog(commands.Cog):
         # Validate: Must be used in a thread
         if not isinstance(interaction.channel, discord.Thread):
             logger.warning("/close Command Failed - Not A Thread", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Channel Type", type(interaction.channel).__name__),
             ])
             await interaction.response.send_message(
@@ -87,7 +90,8 @@ class CloseCog(commands.Cog):
         # Validate: Must be in debates forum (check before deferring)
         if thread.parent_id != DEBATES_FORUM_ID:
             logger.warning("/close Command Failed - Not In Debates Forum", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Thread", f"{thread.name} ({thread.id})"),
                 ("Parent ID", str(thread.parent_id)),
                 ("Expected", str(DEBATES_FORUM_ID)),
@@ -101,7 +105,8 @@ class CloseCog(commands.Cog):
         # Validate: Thread not already closed (check name prefix)
         if thread.name.startswith("[CLOSED]"):
             logger.warning("/close Command Failed - Already Closed", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Thread", f"{thread.name} ({thread.id})"),
             ])
             await interaction.response.send_message(
@@ -165,7 +170,8 @@ class CloseCog(commands.Cog):
             owner_member = interaction.guild.get_member(owner.id) if interaction.guild else None
             if owner_member and any(role.id == DEBATES_MANAGEMENT_ROLE_ID for role in owner_member.roles):
                 logger.warning("/close Command Rejected - Protected User", [
-                    ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                    ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                     ("Thread Owner", f"{owner.name} ({owner.id})"),
                     ("Thread", f"{thread.name} ({thread.id})"),
                     ("Reason", "Owner has Debates Management role"),
@@ -235,21 +241,6 @@ class CloseCog(commands.Cog):
                 ("Owner", f"{owner.name} ({owner.id})" if owner else "Unknown"),
                 ("Reason", reason),
             ], emoji="🔒")
-
-            # Log to webhook
-            try:
-                if self.bot.interaction_logger:
-                    await self.bot.interaction_logger.log_debate_closed(
-                        thread=thread,
-                        closed_by=closed_by,
-                        owner=owner,
-                        original_name=original_name,
-                        reason=reason
-                    )
-            except Exception as e:
-                logger.warning("Failed to log debate close to webhook", [
-                    ("Error", str(e)),
-                ])
 
             # Log to case system (creates case for debate owner)
             if owner:
@@ -449,7 +440,8 @@ class CloseCog(commands.Cog):
             await owner.send(embed=embed, view=appeal_view)
 
             logger.info("Close Notification DM Sent", [
-                ("Owner", f"{owner.name} ({owner.id})"),
+                ("User", f"{owner.name} ({owner.display_name})"),
+                ("ID", str(owner.id)),
                 ("Thread", f"{original_name} ({thread.id})"),
             ])
 
@@ -457,13 +449,15 @@ class CloseCog(commands.Cog):
 
         except discord.Forbidden:
             logger.warning("Close Notification DM Failed - DMs Disabled", [
-                ("Owner", f"{owner.name} ({owner.id})"),
+                ("User", f"{owner.name} ({owner.display_name})"),
+                ("ID", str(owner.id)),
             ])
             return False
 
         except discord.HTTPException as e:
             logger.warning("Close Notification DM Failed - HTTP Error", [
-                ("Owner", f"{owner.name} ({owner.id})"),
+                ("User", f"{owner.name} ({owner.display_name})"),
+                ("ID", str(owner.id)),
                 ("Error", str(e)),
             ])
             return False
@@ -476,9 +470,7 @@ class CloseCog(commands.Cog):
 async def setup(bot: "OthmanBot") -> None:
     """Setup function for loading the cog."""
     await bot.add_cog(CloseCog(bot))
-    logger.info("Close Cog Loaded", [
-        ("Commands", "/close"),
-    ])
+    logger.tree("Command Loaded", [("Name", "close")], emoji="✅")
 
 
 # =============================================================================

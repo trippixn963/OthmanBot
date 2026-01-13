@@ -161,11 +161,8 @@ class KarmaReconciliationScheduler:
 
     async def _send_reconciliation_webhook(self, trigger: str, stats: dict, success: bool) -> None:
         """Send reconciliation results to webhook if bot is available."""
-        try:
-            if self.bot and hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
-                await self.bot.interaction_logger.log_karma_reconciliation(trigger, stats, success)
-        except Exception:
-            pass  # Don't fail on webhook error
+        # Logging now handled by tree logger automatically
+        pass
 
     async def _run_orphan_cleanup(self) -> None:
         """Run orphan vote cleanup and log results."""
@@ -194,11 +191,8 @@ class KarmaReconciliationScheduler:
 
     async def _send_orphan_cleanup_webhook(self, stats: dict) -> None:
         """Send orphan cleanup results to webhook if bot is available."""
-        try:
-            if self.bot and hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
-                await self.bot.interaction_logger.log_orphan_vote_cleanup(stats)
-        except Exception:
-            pass  # Don't fail on webhook error
+        # Logging now handled by tree logger automatically
+        pass
 
 
 # =============================================================================

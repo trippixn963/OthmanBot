@@ -85,8 +85,8 @@ class ToggleCog(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
             logger.warning("Unauthorized Toggle Attempt", [
-                ("User", str(interaction.user)),
-                ("User ID", str(interaction.user.id)),
+                ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+                ("ID", str(interaction.user.id)),
                 ("Action", action.value),
             ])
             return
@@ -217,25 +217,14 @@ class ToggleCog(commands.Cog):
                 inline=False
             )
 
-            logger.tree("Bot Toggled OFF (Paused)", [
-                ("By", str(interaction.user)),
-                ("User ID", str(interaction.user.id)),
+            logger.warning("🔴 Bot Toggled OFF (Paused)", [
+                ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+                ("ID", str(interaction.user.id)),
                 ("Guild", interaction.guild.name if interaction.guild else "DM"),
                 ("Channel", getattr(interaction.channel, 'name', 'Unknown')),
                 ("Channels Hidden", str(hidden_count)),
                 ("Steps", ", ".join(steps_completed)),
-            ], emoji="🔴")
-
-            # Log to webhook
-            if self.bot.interaction_logger:
-                await self.bot.interaction_logger.log_event(
-                    "🔴 Bot Toggled OFF",
-                    user=interaction.user,
-                    color=0xFF0000,
-                    Action="Paused",
-                    Channels_Hidden=str(hidden_count),
-                    Steps=", ".join(steps_completed)
-                )
+            ])
 
         except Exception as e:
             embed = discord.Embed(
@@ -337,25 +326,14 @@ class ToggleCog(commands.Cog):
                 inline=False
             )
 
-            logger.tree("Bot Toggled ON (Full Startup)", [
-                ("By", str(interaction.user)),
-                ("User ID", str(interaction.user.id)),
+            logger.success("🟢 Bot Toggled ON (Full Startup)", [
+                ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+                ("ID", str(interaction.user.id)),
                 ("Guild", interaction.guild.name if interaction.guild else "DM"),
                 ("Channel", getattr(interaction.channel, 'name', 'Unknown')),
                 ("Channels Unhidden", str(unhidden_count)),
                 ("Steps", ", ".join(steps_completed)),
-            ], emoji="🟢")
-
-            # Log to webhook
-            if self.bot.interaction_logger:
-                await self.bot.interaction_logger.log_event(
-                    "🟢 Bot Toggled ON",
-                    user=interaction.user,
-                    color=0x00FF00,
-                    Action="Enabled (Full Startup)",
-                    Channels_Visible=str(unhidden_count),
-                    Steps=", ".join(steps_completed)
-                )
+            ])
 
         except Exception as e:
             embed = discord.Embed(
@@ -468,9 +446,7 @@ class ToggleCog(commands.Cog):
 async def setup(bot: "OthmanBot") -> None:
     """Setup function for loading the cog."""
     await bot.add_cog(ToggleCog(bot))
-    logger.info("Toggle Cog Setup Complete", [
-        ("Commands", "/toggle"),
-    ])
+    logger.tree("Command Loaded", [("Name", "toggle")], emoji="✅")
 
 
 # =============================================================================

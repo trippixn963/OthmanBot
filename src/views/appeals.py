@@ -99,7 +99,8 @@ class AppealModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         """Handle modal submission."""
         logger.info("Appeal Modal Submitted", [
-            ("User", f"{interaction.user.name} ({interaction.user.id})"),
+            ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Action Type", self.action_type),
             ("Action ID", str(self.action_id)),
         ])
@@ -167,7 +168,8 @@ class AppealModal(discord.ui.Modal):
     ) -> None:
         """Handle modal errors."""
         logger.error("Appeal Modal Error", [
-            ("User", f"{interaction.user.name} ({interaction.user.id})"),
+            ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Action Type", self.action_type),
             ("Error", str(error)),
         ])
@@ -229,7 +231,8 @@ class DenyReasonModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         """Handle modal submission."""
         logger.info("Deny Reason Modal Submitted", [
-            ("Moderator", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Moderator", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Appeal ID", str(self.appeal_id)),
             ("Reason Length", str(len(self.denial_reason.value))),
         ])
@@ -404,28 +407,13 @@ class AppealButton(discord.ui.Button):
 
         # Verify user is the one who should appeal FIRST (before logging)
         if interaction.user.id != expected_user_id:
-            logger.warning("Appeal Button Rejected - Wrong User", [
-                ("Clicked By", f"{interaction.user.name} ({interaction.user.id})"),
+            logger.warning("⛔ Appeal Button Rejected - Wrong User", [
+                ("Clicked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Expected User", str(expected_user_id)),
                 ("Action Type", action_type),
                 ("Source", source),
             ])
-
-            # Log rejection to webhook
-            try:
-                if bot.interaction_logger:
-                    await bot.interaction_logger.log_appeal_rejected_wrong_user(
-                        user=interaction.user,
-                        expected_user_id=expected_user_id,
-                        action_type=action_type,
-                        action_id=action_id,
-                        source=source,
-                        is_dm=is_dm,
-                    )
-            except Exception as e:
-                logger.warning("Failed to log appeal rejection to webhook", [
-                    ("Error", str(e)),
-                ])
 
             await interaction.response.send_message(
                 "You cannot submit an appeal for another user.",
@@ -433,27 +421,13 @@ class AppealButton(discord.ui.Button):
             )
             return
 
-        logger.info("Appeal Button Clicked", [
-            ("User", f"{interaction.user.name} ({interaction.user.id})"),
+        logger.info("📝 Appeal Button Clicked", [
+            ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Action Type", action_type),
             ("Action ID", str(action_id)),
             ("Source", source),
         ])
-
-        # Log valid click to webhook
-        try:
-            if bot.interaction_logger:
-                await bot.interaction_logger.log_appeal_button_clicked(
-                    user=interaction.user,
-                    action_type=action_type,
-                    action_id=action_id,
-                    source=source,
-                    is_dm=is_dm,
-                )
-        except Exception as e:
-            logger.warning("Failed to log appeal button click to webhook", [
-                ("Error", str(e)),
-            ])
 
         # Check if appeal already exists
         if bot.debates_service and bot.debates_service.db:
@@ -631,7 +605,8 @@ async def _handle_review_button(
         return
 
     logger.info("Appeal Review Button Clicked", [
-        ("Moderator", f"{interaction.user.name} ({interaction.user.id})"),
+        ("Moderator", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
         ("Appeal ID", str(appeal_id)),
         ("Action", action),
     ])
@@ -639,7 +614,8 @@ async def _handle_review_button(
     # Check if user can review appeals
     if not can_review_appeals(interaction.user):
         logger.warning("Appeal Review Denied - No Permission", [
-            ("User", f"{interaction.user.name} ({interaction.user.id})"),
+            ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Appeal ID", str(appeal_id)),
         ])
         await interaction.response.send_message(
@@ -760,36 +736,23 @@ async def handle_appeal_button_interaction(
     source = "DM" if is_dm else f"#{interaction.channel.name if interaction.channel else 'Unknown'}"
 
     logger.info("Appeal Button Clicked", [
-        ("User", f"{interaction.user.name} ({interaction.user.id})"),
+        ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
         ("Action Type", action_type),
         ("Action ID", str(action_id)),
         ("Expected User", str(expected_user_id)),
         ("Source", source),
     ])
 
-    # Get bot instance for webhook logging
+    # Get bot instance
     from src.bot import OthmanBot
     bot: "OthmanBot" = interaction.client  # type: ignore
-
-    # Log to webhook
-    try:
-        if bot.interaction_logger:
-            await bot.interaction_logger.log_appeal_button_clicked(
-                user=interaction.user,
-                action_type=action_type,
-                action_id=action_id,
-                source=source,
-                is_dm=is_dm,
-            )
-    except Exception as e:
-        logger.warning("Failed to log appeal button click to webhook", [
-            ("Error", str(e)),
-        ])
 
     # Verify user is the one who should appeal
     if interaction.user.id != expected_user_id:
         logger.warning("Appeal Button Rejected - Wrong User", [
-            ("Clicked By", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Clicked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Expected User", str(expected_user_id)),
             ("Action Type", action_type),
         ])
@@ -867,7 +830,8 @@ async def handle_review_button_interaction(
         return
 
     logger.info("Appeal Review Button Clicked", [
-        ("Moderator", f"{interaction.user.name} ({interaction.user.id})"),
+        ("Moderator", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
         ("Appeal ID", str(appeal_id)),
         ("Action", action),
     ])
@@ -875,7 +839,8 @@ async def handle_review_button_interaction(
     # Check if user can review appeals
     if not can_review_appeals(interaction.user):
         logger.warning("Appeal Review Denied - No Permission", [
-            ("User", f"{interaction.user.name} ({interaction.user.id})"),
+            ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Appeal ID", str(appeal_id)),
         ])
         await interaction.response.send_message(
@@ -991,14 +956,16 @@ async def handle_info_button_interaction(
         return
 
     logger.info("More Info Button Clicked", [
-        ("Moderator", f"{interaction.user.name} ({interaction.user.id})"),
+        ("Moderator", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
         ("Appeal ID", str(appeal_id)),
     ])
 
     # Check if user has Debates Management role
     if not has_debates_management_role(interaction.user):
         logger.warning("More Info Denied - Missing Role", [
-            ("User", f"{interaction.user.name} ({interaction.user.id})"),
+            ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Appeal ID", str(appeal_id)),
         ])
         await interaction.response.send_message(

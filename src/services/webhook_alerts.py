@@ -34,10 +34,8 @@ if TYPE_CHECKING:
 # Constants
 # =============================================================================
 
-# Colors
-COLOR_ONLINE = 0x00FF00   # Green
-COLOR_OFFLINE = 0xFF0000  # Red
-COLOR_WARNING = 0xFFAA00  # Orange
+# Colors imported from centralized colors module
+from src.core.colors import COLOR_ONLINE, COLOR_OFFLINE, COLOR_WARNING
 
 # Retry settings
 MAX_RETRIES = 3

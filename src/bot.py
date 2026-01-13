@@ -31,21 +31,9 @@ from src.core.config import (
     load_soccer_channel_id,
     load_general_channel_id,
 )
-from src.handlers.ready import on_ready_handler
-from src.handlers.reactions import on_reaction_add_handler
 from src.handlers.shutdown import shutdown_handler
-from src.handlers.debates import (
-    on_message_handler,
-    on_thread_create_handler,
-    on_thread_delete_handler,
-    on_debate_reaction_add,
-    on_debate_reaction_remove,
-    on_member_remove_handler,
-    on_member_join_handler,
-)
 from src.services.debates import DebatesService, OpenDiscussionService
 from src.services.webhook_alerts import get_alert_service
-from src.services.interaction_logger import InteractionLogger
 from src.services.case_log import CaseLogService
 from src.services.ban_notifier import BanNotifier
 from src.services.appeal_service import AppealService
@@ -103,6 +91,7 @@ class OthmanBot(commands.Bot):
     - reactions: Track upvotes/downvotes
     - members: Track user join/leave
     - message_content: Read debate messages for karma tracking
+    - presences: Track user online status for karma cards
     """
 
     # =========================================================================
@@ -121,6 +110,7 @@ class OthmanBot(commands.Bot):
         intents.reactions = True
         intents.members = True
         intents.message_content = True
+        intents.presences = True  # Required for accurate user status in karma cards
 
         super().__init__(
             command_prefix="!",  # Not used - bot uses slash commands only
@@ -181,12 +171,6 @@ class OthmanBot(commands.Bot):
         self.alert_service = get_alert_service()
 
         # =================================================================
-        # Interaction Logger
-        # DESIGN: Logs commands, debates, karma to Discord webhook
-        # =================================================================
-        self.interaction_logger: Optional[InteractionLogger] = None
-
-        # =================================================================
         # Case Log Service
         # DESIGN: Logs ban/unban actions to forum threads in mods server
         # =================================================================
@@ -225,9 +209,6 @@ class OthmanBot(commands.Bot):
         # Initialize open discussion service (casual chat, no karma tracking)
         self.open_discussion = OpenDiscussionService(self, self.debates_service.db)
 
-        # Initialize interaction logger
-        self.interaction_logger = InteractionLogger(self)
-
         # Initialize case log service (for ban/unban logging to mods server)
         self.case_log_service = CaseLogService(self)
 
@@ -250,103 +231,12 @@ class OthmanBot(commands.Bot):
         await self.load_extension("src.commands.close")
         await self.load_extension("src.commands.open")
 
-        # Note: Commands will be synced in on_ready for instant guild-specific sync
-        logger.info("Bot setup complete - commands will sync on ready")
+        # Load handler cogs (self-register their event listeners)
+        await self.load_extension("src.handlers.ready")
+        await self.load_extension("src.handlers.reactions")
+        await self.load_extension("src.handlers.debates")
 
-    async def on_ready(self) -> None:
-        """Event handler called when bot is ready.
-
-        NOTE: Discord can fire on_ready multiple times (reconnects, resume, etc.)
-        We guard against re-initialization to prevent duplicate schedulers.
-        """
-        if self._ready_initialized:
-            logger.info("🔄 Bot Reconnected", [
-                ("Guilds", str(len(self.guilds))),
-                ("Latency", f"{round(self.latency * 1000)}ms"),
-            ])
-            # Refresh presence on reconnect
-            try:
-                from src.core.presence import update_presence
-                await update_presence(self)
-            except Exception as e:
-                logger.debug("Failed to refresh presence on reconnect", [("Error", str(e))])
-            # Update status channel to show online
-            try:
-                await self.update_status_channel(online=True)
-            except Exception as e:
-                logger.debug("Failed to update status channel on reconnect", [("Error", str(e))])
-            return
-
-        self._ready_initialized = True
-        await on_ready_handler(self)
-
-    async def on_message(self, message: discord.Message) -> None:
-        """Event handler for messages.
-
-        NOTE: Messages are still processed when disabled to track karma/message counts.
-        The message handler itself checks bot.disabled to skip non-essential actions.
-        """
-        await on_message_handler(self, message)
-
-    async def on_thread_create(self, thread: discord.Thread) -> None:
-        """Event handler for thread creation.
-
-        NOTE: Thread creation is blocked when disabled to prevent new debates.
-        """
-        if self.disabled:
-            return
-        await on_thread_create_handler(self, thread)
-
-    async def on_thread_delete(self, thread: discord.Thread) -> None:
-        """Event handler for thread deletion - triggers auto-renumbering.
-
-        NOTE: Thread deletion tracking is blocked when disabled.
-        """
-        if self.disabled:
-            return
-        await on_thread_delete_handler(self, thread)
-
-    async def on_reaction_add(
-        self,
-        reaction: discord.Reaction,
-        user: discord.User
-    ) -> None:
-        """Event handler for reaction additions.
-
-        NOTE: Reactions are still processed when disabled to track karma.
-        Non-karma reactions (news announcements) are blocked.
-        """
-        if not self.disabled:
-            await on_reaction_add_handler(self, reaction, user)
-        # Always track karma votes even when disabled
-        await on_debate_reaction_add(self, reaction, user)
-
-    async def on_reaction_remove(
-        self,
-        reaction: discord.Reaction,
-        user: discord.User
-    ) -> None:
-        """Event handler for reaction removals.
-
-        NOTE: Reactions are still processed when disabled to track karma.
-        """
-        await on_debate_reaction_remove(self, reaction, user)
-
-    async def on_member_remove(self, member: discord.Member) -> None:
-        """Event handler for member leaving the server."""
-        if self.disabled:
-            return
-        await on_member_remove_handler(self, member)
-
-    async def on_member_join(self, member: discord.Member) -> None:
-        """Event handler for member joining the server."""
-        if self.disabled:
-            return
-        await on_member_join_handler(self, member)
-
-    async def on_resumed(self) -> None:
-        """Event handler for bot resuming connection after disconnect."""
-        logger.info("Bot Connection Resumed")
+        logger.info("Bot setup complete - commands and handlers loaded")
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
         """Event handler for all interactions.

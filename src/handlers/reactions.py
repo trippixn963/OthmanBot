@@ -11,6 +11,7 @@ Server: discord.gg/syria
 from typing import TYPE_CHECKING
 
 import discord
+from discord.ext import commands
 
 from src.core.logger import logger
 
@@ -18,52 +19,54 @@ if TYPE_CHECKING:
     from src.bot import OthmanBot
 
 
-# =============================================================================
-# Reaction Handler
-# =============================================================================
+class ReactionHandler(commands.Cog):
+    """Handles reaction events - blocks reactions on announcements."""
 
-async def on_reaction_add_handler(
-    bot: "OthmanBot",
-    reaction: discord.Reaction,
-    user: discord.User
-) -> None:
-    """
-    Event handler for when a reaction is added to a message.
+    def __init__(self, bot: "OthmanBot") -> None:
+        self.bot = bot
 
-    Args:
-        bot: The OthmanBot instance
-        reaction: The reaction that was added
-        user: The user who added the reaction
+    @commands.Cog.listener()
+    async def on_reaction_add(
+        self,
+        reaction: discord.Reaction,
+        user: discord.User
+    ) -> None:
+        """
+        Block ALL reactions on announcement embeds.
 
-    DESIGN: Block ALL reactions on announcement embeds
-    Only enforces on tracked announcement messages
-    Removes reactions immediately to keep announcements clean
-    """
-    # Ignore bot's own reactions
-    if user.bot:
-        return
+        Only enforces on tracked announcement messages.
+        Removes reactions immediately to keep announcements clean.
+        """
+        # Ignore bot's own reactions
+        if user.bot:
+            return
 
-    # Check if this is an announcement message
-    if reaction.message.id not in bot.announcement_messages:
-        return
+        # Check if this is an announcement message
+        if reaction.message.id not in self.bot.announcement_messages:
+            return
 
-    # Remove ALL reactions on announcement embeds
-    try:
-        await reaction.remove(user)
-        logger.info("Announcement Reaction Removed", [
-            ("User", f"{user.name} ({user.id})"),
-            ("Emoji", str(reaction.emoji)),
-            ("Message ID", str(reaction.message.id)),
-            ("Channel", str(reaction.message.channel.id)),
-        ])
-    except discord.HTTPException as e:
-        logger.warning("📛 Failed To Remove Reaction", [
-            ("Error", str(e)),
-        ])
+        # Remove ALL reactions on announcement embeds
+        try:
+            await reaction.remove(user)
+            logger.info("Announcement Reaction Removed", [
+                ("User", f"{user.name} ({user.display_name})"),
+                ("ID", str(user.id)),
+                ("Emoji", str(reaction.emoji)),
+                ("Message ID", str(reaction.message.id)),
+                ("Channel", str(reaction.message.channel.id)),
+            ])
+        except discord.HTTPException as e:
+            logger.warning("Failed To Remove Reaction", [
+                ("User", f"{user.name} ({user.display_name})"),
+                ("ID", str(user.id)),
+                ("Emoji", str(reaction.emoji)),
+                ("Error", str(e)),
+            ])
 
 
-# =============================================================================
-# Module Export
-# =============================================================================
-
-__all__ = ["on_reaction_add_handler"]
+async def setup(bot: "OthmanBot") -> None:
+    """Load the ReactionHandler cog."""
+    await bot.add_cog(ReactionHandler(bot))
+    logger.tree("Handler Loaded", [
+        ("Name", "ReactionHandler"),
+    ], emoji="✅")

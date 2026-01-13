@@ -21,6 +21,7 @@ import discord
 
 from src.core.logger import logger
 from src.core.config import DEBATES_FORUM_ID, DISCORD_ARCHIVED_THREADS_LIMIT, DISCORD_API_DELAY, REACTION_DELAY, LOG_TITLE_PREVIEW_LENGTH
+from src.core.emojis import UPVOTE_EMOJI, DOWNVOTE_EMOJI
 
 # Constants for orphan cleanup
 ORPHAN_CLEANUP_BATCH_SIZE = 50  # Process orphans in batches to avoid memory issues
@@ -32,10 +33,6 @@ RATE_LIMIT_MAX_DELAY = 60.0  # Maximum backoff delay (seconds)
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
-
-# Vote emoji constants
-UPVOTE_EMOJI = "\u2b06\ufe0f"  # ⬆️
-DOWNVOTE_EMOJI = "\u2b07\ufe0f"  # ⬇️
 
 
 # =============================================================================
@@ -211,6 +208,10 @@ async def _ensure_starter_reactions(thread: discord.Thread, stats: dict, bot: "O
         Additional delay needed if rate limited (0.0 if not)
     """
     rate_limit_delay = 0.0
+
+    # Skip archived threads - can't add reactions
+    if thread.archived:
+        return rate_limit_delay
 
     try:
         # Fetch starter message (same ID as thread)

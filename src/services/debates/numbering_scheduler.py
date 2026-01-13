@@ -359,11 +359,8 @@ class NumberingReconciliationScheduler:
 
     async def _send_reconciliation_webhook(self, trigger: str, stats: dict, success: bool) -> None:
         """Send reconciliation results to webhook if bot is available."""
-        try:
-            if self.bot and hasattr(self.bot, 'interaction_logger') and self.bot.interaction_logger:
-                await self.bot.interaction_logger.log_numbering_reconciliation(trigger, stats, success)
-        except Exception:
-            pass  # Don't fail on webhook error
+        # Logging now handled by tree logger automatically
+        pass
 
 
 # =============================================================================
