@@ -354,9 +354,9 @@ class AppealButton(discord.ui.Button):
 
     def __init__(self, custom_id: str) -> None:
         super().__init__(
-            style=discord.ButtonStyle.primary,
+            style=discord.ButtonStyle.secondary,
             label="Appeal",
-            emoji="\U0001f4dd",  # memo emoji
+            emoji=discord.PartialEmoji(name="appeal", id=1460605659371274446),
             custom_id=custom_id,
         )
 
