@@ -211,19 +211,13 @@ async def post_article_to_forum(
                 ("Article ID", bot.news_scraper._extract_article_id(article.url)),
             ])
 
-        logger.info("📰 Posted Forum Thread", [
+        logger.success("📰 Posted Forum Thread", [
             ("Title", article.title[:50]),
+            ("Source", article.source),
             ("Image", "Yes" if image_file else "No"),
             ("Video", "Yes" if video_file else "No"),
             ("Tag", applied_tags[0].name if applied_tags else "None"),
         ])
-
-        # Log to webhook
-        if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
-            thread_link = f"https://discord.com/channels/{thread.guild.id}/{thread.id}" if thread.guild else None
-            await bot.interaction_logger.log_news_posted(
-                "news", article.title, channel.name, article.source, thread_link
-            )
 
         # Send announcement
         if bot.general_channel_id:

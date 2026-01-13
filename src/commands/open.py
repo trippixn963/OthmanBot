@@ -52,7 +52,8 @@ class OpenCog(commands.Cog):
         """Reopen a closed debate thread with a reason."""
         # Log command invocation
         logger.info("/open Command Invoked", [
-            ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
             ("Reason", reason[:50] + "..." if len(reason) > 50 else reason),
         ])
@@ -60,7 +61,8 @@ class OpenCog(commands.Cog):
         # Security check: Verify user has Debates Management role
         if not has_debates_management_role(interaction.user):
             logger.warning("/open Command Denied - Missing Role", [
-                ("User", f"{interaction.user.name} ({interaction.user.id})"),
+                ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+                ("ID", str(interaction.user.id)),
             ])
             await interaction.response.send_message(
                 "You don't have permission to use this command. "
@@ -72,7 +74,8 @@ class OpenCog(commands.Cog):
         # Validate: Must be used in a thread
         if not isinstance(interaction.channel, discord.Thread):
             logger.warning("/open Command Failed - Not A Thread", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Channel Type", type(interaction.channel).__name__),
             ])
             await interaction.response.send_message(
@@ -86,7 +89,8 @@ class OpenCog(commands.Cog):
         # Validate: Must be in debates forum
         if thread.parent_id != DEBATES_FORUM_ID:
             logger.warning("/open Command Failed - Not In Debates Forum", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Thread", f"{thread.name} ({thread.id})"),
                 ("Parent ID", str(thread.parent_id)),
                 ("Expected", str(DEBATES_FORUM_ID)),
@@ -100,7 +104,8 @@ class OpenCog(commands.Cog):
         # Validate: Thread must be closed (has [CLOSED] prefix)
         if not thread.name.startswith("[CLOSED]"):
             logger.warning("/open Command Failed - Not Closed", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Thread", f"{thread.name} ({thread.id})"),
             ])
             await interaction.response.send_message(
@@ -131,7 +136,8 @@ class OpenCog(commands.Cog):
             owner_member = interaction.guild.get_member(owner.id) if interaction.guild else None
             if owner_member and any(role.id == DEBATES_MANAGEMENT_ROLE_ID for role in owner_member.roles):
                 logger.warning("/open Command Rejected - Protected User", [
-                    ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                    ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                     ("Thread Owner", f"{owner.name} ({owner.id})"),
                     ("Thread", f"{thread.name} ({thread.id})"),
                     ("Reason", "Owner has Debates Management role"),
@@ -234,22 +240,6 @@ class OpenCog(commands.Cog):
                 ("Reason", reason),
             ], emoji="🔓")
 
-            # Log to webhook
-            try:
-                if self.bot.interaction_logger:
-                    await self.bot.interaction_logger.log_debate_reopened(
-                        thread=thread,
-                        reopened_by=reopened_by,
-                        owner=owner,
-                        original_name=original_name,
-                        new_name=new_name,
-                        reason=reason
-                    )
-            except Exception as e:
-                logger.warning("Failed to log debate reopen to webhook", [
-                    ("Error", str(e)),
-                ])
-
             # Log to case system (if owner has a case)
             if owner:
                 try:
@@ -282,9 +272,7 @@ class OpenCog(commands.Cog):
 async def setup(bot: "OthmanBot") -> None:
     """Setup function for loading the cog."""
     await bot.add_cog(OpenCog(bot))
-    logger.info("Open Cog Loaded", [
-        ("Commands", "/open"),
-    ])
+    logger.tree("Command Loaded", [("Name", "open")], emoji="✅")
 
 
 # =============================================================================

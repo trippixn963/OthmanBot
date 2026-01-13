@@ -94,7 +94,8 @@ class RenameCog(commands.Cog):
         """
         # Log command invocation
         logger.info("/rename Command Invoked", [
-            ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+            ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
             ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
             ("Title Param", title if title else "Auto-detect from suggested"),
         ])
@@ -102,7 +103,8 @@ class RenameCog(commands.Cog):
         # Security check: Verify user has Debates Management role
         if not has_debates_management_role(interaction.user):
             logger.warning("/rename Command Denied - Missing Role", [
-                ("User", f"{interaction.user.name} ({interaction.user.id})"),
+                ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
+                ("ID", str(interaction.user.id)),
             ])
             await interaction.response.send_message(
                 "You don't have permission to use this command. "
@@ -114,7 +116,8 @@ class RenameCog(commands.Cog):
         # Must be used in a thread
         if not isinstance(interaction.channel, discord.Thread):
             logger.warning("/rename Command Failed - Not In Thread", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Channel Type", type(interaction.channel).__name__),
                 ("Reason", "Command must be used inside a debate thread"),
             ])
@@ -129,7 +132,8 @@ class RenameCog(commands.Cog):
         # Check if thread is in the debates forum
         if thread.parent_id != DEBATES_FORUM_ID:
             logger.warning("/rename Command Failed - Wrong Forum", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Thread", f"{thread.name} ({thread.id})"),
                 ("Parent ID", str(thread.parent_id)),
                 ("Expected Forum ID", str(DEBATES_FORUM_ID)),
@@ -173,7 +177,8 @@ class RenameCog(commands.Cog):
 
         if title is None:
             logger.warning("/rename Command Failed - No Title Found", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Thread", f"{thread.name} ({thread.id})"),
                 ("Reason", "No title provided and no suggested title in thread"),
             ])
@@ -187,7 +192,8 @@ class RenameCog(commands.Cog):
         # Validate title is English-only
         if not is_english_only(title):
             logger.warning("/rename Command Failed - Non-English Title", [
-                ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                 ("Thread", f"{thread.name} ({thread.id})"),
                 ("Provided Title", title),
                 ("Reason", "Title contains non-English characters"),
@@ -224,7 +230,8 @@ class RenameCog(commands.Cog):
 
             if not success:
                 logger.error("/rename Command Failed - Thread Edit Failed", [
-                    ("Invoked By", f"{interaction.user.name} ({interaction.user.id})"),
+                    ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
+            ("ID", str(interaction.user.id)),
                     ("Thread", f"{thread.name} ({thread.id})"),
                     ("Attempted Title", new_title),
                     ("Reason", "edit_thread_with_retry returned False"),
@@ -359,22 +366,11 @@ class RenameCog(commands.Cog):
                     logger.warning("Failed to track debate creator", [("Error", str(e))])
 
             # Send success message
-            followup_msg = await interaction.followup.send(
+            await interaction.followup.send(
                 f"Thread renamed to **{new_title}** and unlocked.",
                 ephemeral=False,
                 wait=True
             )
-
-            # Get message ID for webhook link
-            message_id = followup_msg.id if followup_msg else None
-
-            # Log success to webhook
-            if self.bot.interaction_logger:
-                await self.bot.interaction_logger.log_command(
-                    interaction, "rename", success=True,
-                    message_id=message_id,
-                    debate=f"#{debate_number}", title=title[:LOG_TITLE_PREVIEW_LENGTH]
-                )
 
         except (discord.HTTPException, discord.Forbidden, sqlite3.Error, ValueError) as e:
             logger.error("Failed to rename debate thread", [
@@ -387,12 +383,6 @@ class RenameCog(commands.Cog):
                 ephemeral=True
             )
 
-            # Log failure to webhook
-            if self.bot.interaction_logger:
-                await self.bot.interaction_logger.log_command(
-                    interaction, "rename", success=False, error=str(e)
-                )
-
 
 # =============================================================================
 # Setup Function
@@ -401,9 +391,7 @@ class RenameCog(commands.Cog):
 async def setup(bot: "OthmanBot") -> None:
     """Setup function for loading the cog."""
     await bot.add_cog(RenameCog(bot))
-    logger.info("Rename Cog Loaded", [
-        ("Commands", "/rename"),
-    ])
+    logger.tree("Command Loaded", [("Name", "rename")], emoji="✅")
 
 
 # =============================================================================

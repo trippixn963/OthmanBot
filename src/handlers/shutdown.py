@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, List, Tuple, Any
 from src.core.logger import logger
 from src.core.presence import stop_promo_scheduler
 from src.services.webhook_alerts import get_alert_service
+from src.services import playwright_pool
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -173,9 +174,8 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
     if hasattr(bot, 'stats_api') and bot.stats_api:
         cleanup_tasks.append(("Stats API", bot.stats_api.stop()))
 
-    # 15. Close interaction logger session
-    if hasattr(bot, 'interaction_logger') and bot.interaction_logger:
-        cleanup_tasks.append(("Interaction Logger", bot.interaction_logger.close()))
+    # 15. Cleanup Playwright browser pool
+    cleanup_tasks.append(("Playwright Pool", playwright_pool.cleanup()))
 
     # Execute all cleanup tasks with timeout
     if cleanup_tasks:

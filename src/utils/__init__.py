@@ -38,6 +38,38 @@ from .discord_rate_limit import (
     delete_message_safe,
     remove_reaction_safe,
 )
+from .error_handler import (
+    send_error_response,
+    handle_command_errors,
+    safe_api_call,
+)
+from .embed_factory import (
+    create_embed,
+    create_success_embed,
+    create_error_embed,
+    create_warning_embed,
+    create_info_embed,
+    create_ban_embed,
+    create_unban_embed,
+    add_timestamp_field,
+    format_discord_timestamp,
+)
+from .duration import (
+    parse_duration,
+    format_duration,
+    get_remaining_duration,
+    DURATION_SUGGESTIONS,
+)
+from .api_cache import (
+    ResponseCache,
+    RateLimiter,
+)
+from .autocomplete import (
+    thread_id_autocomplete,
+    duration_autocomplete,
+    banned_user_autocomplete,
+    case_search_autocomplete,
+)
 
 __all__ = [
     # Retry and circuit breaker utilities
@@ -72,4 +104,31 @@ __all__ = [
     "edit_thread_with_retry",
     "delete_message_safe",
     "remove_reaction_safe",
+    # Error handling utilities
+    "send_error_response",
+    "handle_command_errors",
+    "safe_api_call",
+    # Embed factory utilities
+    "create_embed",
+    "create_success_embed",
+    "create_error_embed",
+    "create_warning_embed",
+    "create_info_embed",
+    "create_ban_embed",
+    "create_unban_embed",
+    "add_timestamp_field",
+    "format_discord_timestamp",
+    # Duration utilities
+    "parse_duration",
+    "format_duration",
+    "get_remaining_duration",
+    "DURATION_SUGGESTIONS",
+    # API cache utilities
+    "ResponseCache",
+    "RateLimiter",
+    # Autocomplete utilities
+    "thread_id_autocomplete",
+    "duration_autocomplete",
+    "banned_user_autocomplete",
+    "case_search_autocomplete",
 ]

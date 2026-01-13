@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 from src.core.logger import logger
 from src.core.config import NY_TZ, LOG_TITLE_PREVIEW_LENGTH, EmbedColors
+from src.core.colors import EmbedIcons
 from src.utils.footer import set_footer
 
 import math
@@ -400,7 +401,7 @@ async def generate_analytics_embed(bot: "OthmanBot", analytics: DebateAnalytics)
         "• No hate speech\n"
         "• Stay on topic\n"
         "• No spam\n\n"
-        "✅ React below to join"
+        f"{EmbedIcons.PARTICIPATE} React below to join"
     )
     embed.add_field(name="📜 Rules", value=rules, inline=True)
 
