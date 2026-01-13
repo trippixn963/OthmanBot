@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Shutdown Handler
+OthmanBot - Shutdown Handler
 ======================================
 
 Graceful shutdown and cleanup logic.

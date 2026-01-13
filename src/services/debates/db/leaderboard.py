@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Leaderboard Database Mixin
+OthmanBot - Leaderboard Database Mixin
 ================================================
 
 Leaderboard and ranking operations.

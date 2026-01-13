@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Ready Handler
+OthmanBot - Ready Handler
 ===================================
 
 Service initialization and startup logic.
@@ -16,6 +16,7 @@ from discord.ext import commands
 
 from src.core.logger import logger
 from src.core.config import SYRIA_GUILD_ID, ALLOWED_GUILD_IDS, BOT_STARTUP_DELAY
+from src.core.constants import TIMEOUT_LONG, TIMEOUT_MEDIUM, TIMEOUT_EXTENDED, SLEEP_STARTUP_DELAY
 from src.core.health import HealthCheckServer
 from src.core.presence import update_presence, presence_update_loop, start_promo_scheduler
 from src.core.backup import BackupScheduler
@@ -92,7 +93,7 @@ class ReadyHandler(commands.Cog):
 
         # Leave unauthorized guilds first
         try:
-            async with asyncio.timeout(15.0):
+            async with asyncio.timeout(TIMEOUT_LONG):
                 await self._leave_unauthorized_guilds()
         except asyncio.TimeoutError:
             logger.warning("Timeout leaving unauthorized guilds - continuing startup")
@@ -111,7 +112,7 @@ class ReadyHandler(commands.Cog):
 
         # Sync slash commands
         try:
-            async with asyncio.timeout(30.0):
+            async with asyncio.timeout(TIMEOUT_EXTENDED):
                 await self._sync_commands()
         except asyncio.TimeoutError:
             logger.error("Timeout syncing commands - continuing startup")
@@ -140,7 +141,7 @@ class ReadyHandler(commands.Cog):
 
         # Set initial presence
         try:
-            async with asyncio.timeout(10.0):
+            async with asyncio.timeout(TIMEOUT_MEDIUM):
                 await update_presence(bot)
         except asyncio.TimeoutError:
             logger.warning("Timeout setting initial presence")
@@ -235,7 +236,7 @@ class ReadyHandler(commands.Cog):
     async def _refresh_analytics_background(self) -> None:
         """Background task to refresh all analytics embeds."""
         try:
-            await asyncio.sleep(5.0)
+            await asyncio.sleep(SLEEP_STARTUP_DELAY)
             from src.handlers.debates import refresh_all_analytics_embeds
             await refresh_all_analytics_embeds(self.bot)
         except Exception as e:

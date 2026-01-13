@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Embed Footer Utility
+OthmanBot - Embed Footer Utility
 ==========================================
 
 Centralized footer for all embeds.

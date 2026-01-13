@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Translation Utility
+OthmanBot - Translation Utility
 =========================================
 
 OpenAI-powered translation for non-English text.

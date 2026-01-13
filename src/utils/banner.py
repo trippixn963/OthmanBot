@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Banner Utility
+OthmanBot - Banner Utility
 ====================================
 
 Syncs bot banner with server banner.

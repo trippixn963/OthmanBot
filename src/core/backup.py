@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Database Backup System
+OthmanBot - Database Backup System
 ============================================
 
 Automated SQLite database backup with daily rotation and retention policy.

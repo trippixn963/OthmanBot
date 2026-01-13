@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Helper Utilities
+OthmanBot - Helper Utilities
 ======================================
 
 Common helper functions used across the bot.
@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Optional
 import discord
 
 from src.core.logger import logger
+from src.core.constants import TIMEOUT_SHORT
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -84,7 +85,7 @@ async def get_developer_avatar(bot: "OthmanBot") -> str:
     developer_id_str = os.getenv("DEVELOPER_ID")
     if developer_id_str and developer_id_str.isdigit():
         try:
-            async with asyncio.timeout(5.0):  # 5 second timeout for API call
+            async with asyncio.timeout(TIMEOUT_SHORT):
                 developer = await bot.fetch_user(int(developer_id_str))
                 if developer is not None:
                     developer_avatar_url = developer.display_avatar.url

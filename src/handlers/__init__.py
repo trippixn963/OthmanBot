@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Handlers Package
+OthmanBot - Handlers Package
 ======================================
 
 Event handlers as Discord.py Cogs.

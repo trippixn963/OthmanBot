@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Case Archive Scheduler
+OthmanBot - Case Archive Scheduler
 ============================================
 
 Background task that archives inactive case threads.

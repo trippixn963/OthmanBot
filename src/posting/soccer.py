@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Soccer Poster Module
+OthmanBot - Soccer Poster Module
 ==========================================
 
 Soccer news article posting to forum channels.

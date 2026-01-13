@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Database Core
+OthmanBot - Database Core
 ===================================
 
 Base database class with connection handling, schema, and migrations.

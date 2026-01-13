@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Debate Stats Backfill & Reconciliation
+OthmanBot - Debate Stats Backfill & Reconciliation
 ============================================================
 
 One-time backfill and nightly reconciliation for debate_participation

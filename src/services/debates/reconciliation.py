@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Karma Reconciliation
+OthmanBot - Karma Reconciliation
 ==========================================
 
 Reconciles karma based on actual Discord reactions.

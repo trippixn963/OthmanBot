@@ -20,6 +20,7 @@ from discord.ext import commands
 
 from src.core.logger import logger
 from src.core.config import DEVELOPER_ID, SYRIA_GUILD_ID, TOGGLE_CHANNEL_IDS, CONTENT_PREVIEW_LENGTH, EmbedColors
+from src.core.constants import TIMEOUT_SHORT, TIMEOUT_MEDIUM
 from src.core.backup import create_backup
 
 if TYPE_CHECKING:
@@ -144,7 +145,7 @@ class ToggleCog(commands.Cog):
 
             # Step 3: Create backup before disabling
             try:
-                async with asyncio.timeout(10.0):
+                async with asyncio.timeout(TIMEOUT_MEDIUM):
                     backup_path = await asyncio.to_thread(create_backup)
                     if backup_path:
                         steps_completed.append("Backup created")
@@ -162,7 +163,7 @@ class ToggleCog(commands.Cog):
 
             # Step 5: Update presence to show offline
             try:
-                async with asyncio.timeout(5.0):
+                async with asyncio.timeout(TIMEOUT_SHORT):
                     await self.bot.change_presence(
                         status=discord.Status.dnd,
                         activity=discord.Activity(
@@ -180,7 +181,7 @@ class ToggleCog(commands.Cog):
 
             # Step 6: Update status channel to offline
             try:
-                async with asyncio.timeout(5.0):
+                async with asyncio.timeout(TIMEOUT_SHORT):
                     await self.bot.update_status_channel(online=False)
                 steps_completed.append("Status updated")
             except asyncio.TimeoutError:
@@ -193,7 +194,7 @@ class ToggleCog(commands.Cog):
             # Step 7: Send webhook shutdown alert
             if hasattr(self.bot, 'alert_service') and self.bot.alert_service:
                 try:
-                    async with asyncio.timeout(5.0):
+                    async with asyncio.timeout(TIMEOUT_SHORT):
                         await self.bot.alert_service.send_shutdown_alert()
                     steps_completed.append("Shutdown alert")
                 except asyncio.TimeoutError:
@@ -261,7 +262,7 @@ class ToggleCog(commands.Cog):
 
             # Step 3: Update presence to show online
             try:
-                async with asyncio.timeout(5.0):
+                async with asyncio.timeout(TIMEOUT_SHORT):
                     await self.bot.change_presence(
                         status=discord.Status.online,
                         activity=discord.Activity(
@@ -279,7 +280,7 @@ class ToggleCog(commands.Cog):
 
             # Step 4: Update status channel to online
             try:
-                async with asyncio.timeout(5.0):
+                async with asyncio.timeout(TIMEOUT_SHORT):
                     await self.bot.update_status_channel(online=True)
                 steps_completed.append("Status updated")
             except asyncio.TimeoutError:
@@ -292,7 +293,7 @@ class ToggleCog(commands.Cog):
             # Step 5: Send webhook startup alert
             if hasattr(self.bot, 'alert_service') and self.bot.alert_service:
                 try:
-                    async with asyncio.timeout(5.0):
+                    async with asyncio.timeout(TIMEOUT_SHORT):
                         await self.bot.alert_service.send_startup_alert()
                     steps_completed.append("Startup alert")
                 except asyncio.TimeoutError:

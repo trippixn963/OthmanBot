@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Karma Database Mixin
+OthmanBot - Karma Database Mixin
 ==========================================
 
 Vote and karma tracking operations.

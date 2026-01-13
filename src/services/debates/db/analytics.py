@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Analytics Database Mixin
+OthmanBot - Analytics Database Mixin
 ==============================================
 
 User analytics, streaks, and participation tracking.

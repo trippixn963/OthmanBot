@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Views Package
+OthmanBot - Views Package
 ===================================
 
 Discord UI Views and Modals used across the bot.

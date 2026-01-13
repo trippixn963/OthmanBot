@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Debates Handler
+OthmanBot - Debates Handler
 =====================================
 
 Auto-react with upvote/downvote on forum thread replies and track karma.

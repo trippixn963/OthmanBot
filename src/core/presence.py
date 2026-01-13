@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Presence Module
+OthmanBot - Presence Module
 =====================================
 
 Bot presence update logic with rotating status display.
@@ -18,6 +18,7 @@ import discord
 
 from src.core.logger import logger
 from src.core.config import PRESENCE_UPDATE_INTERVAL, NY_TZ
+from src.core.constants import SLEEP_PRESENCE_UPDATE
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -267,7 +268,7 @@ async def _promo_loop(bot: "OthmanBot") -> None:
                 ("Error", str(e)),
                 ("Action", "Continuing loop"),
             ])
-            await asyncio.sleep(60)
+            await asyncio.sleep(SLEEP_PRESENCE_UPDATE)
 
 
 # =============================================================================

@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Main Bot Class
+OthmanBot - Main Bot Class
 ====================================
 
 Core Discord client for the Syria Discord server combining automated

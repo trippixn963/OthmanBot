@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Health Check Server
+OthmanBot - Health Check Server
 =========================================
 
 Simple HTTP health check endpoint for monitoring bot status.

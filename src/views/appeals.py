@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Appeal Views and Modals
+OthmanBot - Appeal Views and Modals
 =============================================
 
 Discord UI components for the appeal system.
@@ -24,6 +24,7 @@ import discord
 
 from src.core.logger import logger
 from src.core.config import can_review_appeals, has_debates_management_role, EmbedColors
+from src.core.emojis import APPEAL_EMOJI
 from src.utils import sanitize_input
 
 if TYPE_CHECKING:
@@ -356,7 +357,7 @@ class AppealButton(discord.ui.Button):
         super().__init__(
             style=discord.ButtonStyle.secondary,
             label="Appeal",
-            emoji=discord.PartialEmoji(name="appeal", id=1460605659371274446),
+            emoji=discord.PartialEmoji.from_str(APPEAL_EMOJI),
             custom_id=custom_id,
         )
 

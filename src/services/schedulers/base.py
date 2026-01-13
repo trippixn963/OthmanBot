@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Base Scheduler Service
+OthmanBot - Base Scheduler Service
 ============================================
 
 Base class for all content schedulers (news, soccer).

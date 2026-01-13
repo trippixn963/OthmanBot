@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Scrapers Package
+OthmanBot - Scrapers Package
 ======================================
 
 Content scraper modules for news and soccer.

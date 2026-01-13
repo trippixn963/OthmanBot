@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Bans Database Mixin
+OthmanBot - Bans Database Mixin
 =========================================
 
 Debate ban management operations.

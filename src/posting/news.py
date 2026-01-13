@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - News Poster Module
+OthmanBot - News Poster Module
 ========================================
 
 News article posting to forum channels.

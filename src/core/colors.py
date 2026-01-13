@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Centralized Colors
+OthmanBot - Centralized Colors
 ========================================
 
 All colors used throughout the bot in one place.

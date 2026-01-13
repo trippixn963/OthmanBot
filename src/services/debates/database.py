@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Debates Database (Redirect)
+OthmanBot - Debates Database (Redirect)
 =================================================
 
 This file redirects to the modular database package.

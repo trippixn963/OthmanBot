@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Case Log Service
+OthmanBot - Case Log Service
 ======================================
 
 Service for logging ban/unban actions to forum threads in the mods server.
