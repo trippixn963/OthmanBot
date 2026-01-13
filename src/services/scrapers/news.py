@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - News Scraper Service
+OthmanBot - News Scraper Service
 =========================================
 
 Fetches Syrian news from Enab Baladi RSS feed.

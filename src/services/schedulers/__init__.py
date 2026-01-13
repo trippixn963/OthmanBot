@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Schedulers Package
+OthmanBot - Schedulers Package
 ========================================
 
 Task scheduling modules for content posting.

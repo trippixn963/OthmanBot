@@ -5,7 +5,7 @@ OthmanBot - Karma Card Generator
 HTML/CSS based karma card rendered with Playwright for professional quality.
 Optimized with page pooling and caching for fast generation.
 
-Author: John Hamwi
+Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 

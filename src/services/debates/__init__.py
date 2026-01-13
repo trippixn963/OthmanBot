@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Debates Service Package
+OthmanBot - Debates Service Package
 =============================================
 
 Karma tracking for the debates forum.

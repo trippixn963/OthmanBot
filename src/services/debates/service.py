@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Debates Service
+OthmanBot - Debates Service
 =====================================
 
 High-level service for karma tracking operations.

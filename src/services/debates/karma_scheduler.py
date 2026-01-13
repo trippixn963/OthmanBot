@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Karma Reconciliation Scheduler
+OthmanBot - Karma Reconciliation Scheduler
 ====================================================
 
 Nightly scheduled karma reconciliation at 00:00 EST (midnight).

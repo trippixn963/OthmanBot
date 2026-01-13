@@ -20,6 +20,13 @@ from src.core.config import (
     NY_TZ, DEBATES_FORUM_ID, SYRIA_GUILD_ID,
     load_news_channel_id, load_soccer_channel_id, BASE_COMMAND_COUNT
 )
+from src.core.constants import (
+    SLEEP_ERROR_RETRY,
+    LEADERBOARD_DISPLAY_LIMIT,
+    TRENDING_LIMIT,
+    RECENT_ITEMS_LIMIT,
+    HISTORY_LIMIT_MAX,
+)
 from src.utils.api_cache import ResponseCache
 from src.services.stats_api.constants import (
     STATS_API_PORT, STATS_API_HOST, CACHE_TTL, get_tier
@@ -201,16 +208,16 @@ class OthmanAPI:
             if db:
                 total_debates = db.get_active_debate_count()
                 votes_today = db.get_votes_today()
-                leaderboard_raw = db.get_leaderboard(limit=15)
+                leaderboard_raw = db.get_leaderboard(limit=LEADERBOARD_DISPLAY_LIMIT)
                 monthly_stats = db.get_monthly_stats(now.year, now.month)
 
                 try:
-                    monthly_leaderboard_raw = db.get_monthly_leaderboard(now.year, now.month, limit=15)
+                    monthly_leaderboard_raw = db.get_monthly_leaderboard(now.year, now.month, limit=LEADERBOARD_DISPLAY_LIMIT)
                 except Exception as e:
                     logger.debug("Failed to get monthly leaderboard", [("Error", str(e))])
 
                 try:
-                    category_leaderboards = db.get_category_leaderboards(limit=15)
+                    category_leaderboards = db.get_category_leaderboards(limit=LEADERBOARD_DISPLAY_LIMIT)
                 except Exception as e:
                     logger.debug("Failed to get category leaderboards", [("Error", str(e))])
 
@@ -279,9 +286,9 @@ class OthmanAPI:
             hot_debate = await get_hot_debate(self._bot)
             news_channel_id = load_news_channel_id()
             soccer_channel_id = load_soccer_channel_id()
-            recent_news = await get_recent_threads(self._bot, news_channel_id, limit=5)
-            recent_soccer = await get_recent_threads(self._bot, soccer_channel_id, limit=5)
-            trending_debates = await get_trending_debates(self._bot, limit=3)
+            recent_news = await get_recent_threads(self._bot, news_channel_id, limit=RECENT_ITEMS_LIMIT)
+            recent_soccer = await get_recent_threads(self._bot, soccer_channel_id, limit=RECENT_ITEMS_LIMIT)
+            trending_debates = await get_trending_debates(self._bot, limit=TRENDING_LIMIT)
             activity_sparkline = get_activity_sparkline(db)
 
             # Build response
@@ -356,7 +363,7 @@ class OthmanAPI:
                     headers={"Access-Control-Allow-Origin": "*"}
                 )
 
-            leaderboard_raw = db.get_leaderboard(limit=100)
+            leaderboard_raw = db.get_leaderboard(limit=HISTORY_LIMIT_MAX)
             total_users = db.get_total_users() if hasattr(db, 'get_total_users') else len(leaderboard_raw)
             total_karma = db.get_total_karma() if hasattr(db, 'get_total_karma') else sum(u.total_karma for u in leaderboard_raw)
 
@@ -461,7 +468,7 @@ class OthmanAPI:
 
             rank_change = db.get_rank_change(user_id)
             karma_history = db.get_karma_history(user_id, days=7)
-            recent_debates_raw = db.get_user_recent_debates(user_id, limit=5)
+            recent_debates_raw = db.get_user_recent_debates(user_id, limit=RECENT_ITEMS_LIMIT)
 
             # Enrich recent debates with thread names
             recent_debates = []
@@ -589,7 +596,7 @@ class OthmanAPI:
         """Periodically clean up rate limiter entries."""
         while True:
             try:
-                await asyncio.sleep(300)
+                await asyncio.sleep(SLEEP_ERROR_RETRY)
                 await rate_limiter.cleanup()
             except asyncio.CancelledError:
                 break

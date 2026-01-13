@@ -42,6 +42,17 @@ TEMP_FILE_MAX_AGE_HOURS = 24
 LOG_RETENTION_DAYS = 7
 CACHE_CLEANUP_INTERVAL_SECONDS = 300  # 5 minutes
 
+# Timeouts (seconds)
+TIMEOUT_SHORT = 5.0
+TIMEOUT_MEDIUM = 10.0
+TIMEOUT_LONG = 15.0
+TIMEOUT_EXTENDED = 30.0
+
+# Sleep intervals (seconds)
+SLEEP_PRESENCE_UPDATE = 60
+SLEEP_ERROR_RETRY = 300
+SLEEP_STARTUP_DELAY = 5.0
+
 
 # =============================================================================
 # API Constants
@@ -50,6 +61,19 @@ CACHE_CLEANUP_INTERVAL_SECONDS = 300  # 5 minutes
 DEFAULT_CACHE_TTL_SECONDS = 30
 DEFAULT_RATE_LIMIT_PER_MINUTE = 60
 DEFAULT_BURST_LIMIT = 10
+
+# =============================================================================
+# Discord Query Limits
+# =============================================================================
+
+HISTORY_LIMIT_SMALL = 5
+HISTORY_LIMIT_MEDIUM = 20
+HISTORY_LIMIT_LARGE = 50
+HISTORY_LIMIT_MAX = 100
+ARCHIVED_THREADS_LIMIT = 100
+LEADERBOARD_DISPLAY_LIMIT = 15
+TRENDING_LIMIT = 3
+RECENT_ITEMS_LIMIT = 5
 
 
 # =============================================================================
@@ -76,8 +100,26 @@ __all__ = [
     "TEMP_FILE_MAX_AGE_HOURS",
     "LOG_RETENTION_DAYS",
     "CACHE_CLEANUP_INTERVAL_SECONDS",
+    # Timeouts
+    "TIMEOUT_SHORT",
+    "TIMEOUT_MEDIUM",
+    "TIMEOUT_LONG",
+    "TIMEOUT_EXTENDED",
+    # Sleep intervals
+    "SLEEP_PRESENCE_UPDATE",
+    "SLEEP_ERROR_RETRY",
+    "SLEEP_STARTUP_DELAY",
     # API
     "DEFAULT_CACHE_TTL_SECONDS",
     "DEFAULT_RATE_LIMIT_PER_MINUTE",
     "DEFAULT_BURST_LIMIT",
+    # Query limits
+    "HISTORY_LIMIT_SMALL",
+    "HISTORY_LIMIT_MEDIUM",
+    "HISTORY_LIMIT_LARGE",
+    "HISTORY_LIMIT_MAX",
+    "ARCHIVED_THREADS_LIMIT",
+    "LEADERBOARD_DISPLAY_LIMIT",
+    "TRENDING_LIMIT",
+    "RECENT_ITEMS_LIMIT",
 ]

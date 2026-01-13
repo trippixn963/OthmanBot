@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Webhook Alert Service
+OthmanBot - Webhook Alert Service
 ==========================================
 
 Sends bot status notifications to Discord webhooks with:

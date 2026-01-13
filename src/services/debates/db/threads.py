@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Threads Database Mixin
+OthmanBot - Threads Database Mixin
 ============================================
 
 Thread data, analytics messages, and debate numbering.

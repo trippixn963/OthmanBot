@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Announcements Module
+OthmanBot - Announcements Module
 ==========================================
 
 Shared announcement embed logic for all content types.

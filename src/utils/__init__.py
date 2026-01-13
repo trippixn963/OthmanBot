@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Utilities Package
+OthmanBot - Utilities Package
 ======================================
 
 Author: حَـــــنَّـــــا

@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Hot Debate Posting
+OthmanBot - Hot Debate Posting
 ========================================
 
 Posts hot debates to general channel.

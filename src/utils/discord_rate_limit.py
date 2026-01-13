@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Discord Rate Limit Utilities
+OthmanBot - Discord Rate Limit Utilities
 ==================================================
 
 Rate limit handling for Discord API operations.

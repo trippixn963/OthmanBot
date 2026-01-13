@@ -13,7 +13,7 @@ Features:
 - Semaphore to limit concurrent renders
 - Graceful cleanup on shutdown
 
-Author: John Hamwi
+Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 

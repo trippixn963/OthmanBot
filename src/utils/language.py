@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Language Detection Utilities
+OthmanBot - Language Detection Utilities
 ==================================================
 
 Utilities for detecting and validating text language.

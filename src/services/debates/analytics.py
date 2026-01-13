@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Debate Analytics
+OthmanBot - Debate Analytics
 ======================================
 
 Live-updating analytics for debate threads.

@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Debate Numbering Reconciliation Scheduler
+OthmanBot - Debate Numbering Reconciliation Scheduler
 ===============================================================
 
 Nightly scheduled debate numbering reconciliation at 00:15 NY_TZ.

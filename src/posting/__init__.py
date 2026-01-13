@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Posting Package
+OthmanBot - Posting Package
 =====================================
 
 Content posting modules for news and soccer.

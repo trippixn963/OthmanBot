@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Hot Tag Manager
+OthmanBot - Hot Tag Manager
 =====================================
 
 Background task that evaluates and assigns the "Hot" tag to debate threads

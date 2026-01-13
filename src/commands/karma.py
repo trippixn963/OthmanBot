@@ -7,7 +7,7 @@ Slash command for checking user karma points with a beautiful card.
 Commands:
 - /karma - Check karma points for yourself or another user
 
-Author: John Hamwi
+Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 

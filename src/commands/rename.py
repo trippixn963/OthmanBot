@@ -29,6 +29,7 @@ from src.core.config import (
     has_debates_management_role,
     EmbedIcons,
 )
+from src.core.constants import TIMEOUT_MEDIUM
 from src.utils import (
     edit_thread_with_retry,
     send_message_with_retry,
@@ -161,7 +162,7 @@ class RenameCog(commands.Cog):
         # If no title provided, try to extract suggested title from bot's moderation message
         if title is None:
             try:
-                async with asyncio.timeout(10):
+                async with asyncio.timeout(TIMEOUT_MEDIUM):
                     async for message in thread.history(limit=SUGGESTED_TITLE_SEARCH_LIMIT):
                         if message.author.id == self.bot.user.id and "Suggested Title:" in message.content:
                             lines = message.content.split("\n")

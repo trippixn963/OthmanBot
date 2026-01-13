@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Unified Database
+OthmanBot - Unified Database
 ======================================
 
 Central SQLite database manager for all bot data.

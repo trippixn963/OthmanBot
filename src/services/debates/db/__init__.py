@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Debates Database Package
+OthmanBot - Debates Database Package
 ==============================================
 
 Modular SQLite database with mixins for different features.

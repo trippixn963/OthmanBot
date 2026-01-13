@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Open Discussion Service
+OthmanBot - Open Discussion Service
 =============================================
 
 Service for managing the Open Discussion thread - a casual conversation space
@@ -11,7 +11,7 @@ Features:
 - No karma or message count tracking for users
 - Unacknowledged users get message deleted with ephemeral reminder
 
-Author: John Hamwi
+Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 

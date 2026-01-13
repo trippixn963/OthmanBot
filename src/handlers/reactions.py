@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Reaction Handler
+OthmanBot - Reaction Handler
 ======================================
 
 Block reactions on announcement embeds.

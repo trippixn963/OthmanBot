@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Debate Tags Configuration
+OthmanBot - Debate Tags Configuration
 ===============================================
 
 Debate forum tag definitions and AI-powered auto-tagging.

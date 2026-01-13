@@ -1,5 +1,5 @@
 """
-Othman Discord Bot - Retry Utilities
+OthmanBot - Retry Utilities
 ====================================
 
 Exponential backoff retry decorator and circuit breaker for handling transient failures.
