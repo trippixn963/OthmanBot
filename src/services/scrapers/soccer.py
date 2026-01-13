@@ -28,6 +28,7 @@ from typing import Optional
 from src.core.logger import logger
 from src.core.config import NY_TZ
 from src.services.scrapers.base import BaseScraper, Article
+from src.utils.language import is_english_only
 
 
 class SoccerScraper(BaseScraper):
@@ -215,6 +216,12 @@ class SoccerScraper(BaseScraper):
                     ])
                 else:
                     ai_title = await self._generate_soccer_title(original_title, full_content)
+                    if ai_title is None:
+                        logger.warning("⚽ Skipping Article - Title Generation Failed", [
+                            ("Title", original_title[:50]),
+                            ("URL", entry.get('link', '')[:60]),
+                        ])
+                        continue
                     self.ai_cache.cache_title(article_id, original_title, ai_title)
                     logger.info("🔄 Cache Miss - Generated Title", [
                         ("Article ID", article_id),
@@ -430,7 +437,7 @@ class SoccerScraper(BaseScraper):
             from urllib.parse import urljoin
             return urljoin(base_url, url_str)
 
-    async def _generate_soccer_title(self, original_title: str, content: str) -> str:
+    async def _generate_soccer_title(self, original_title: str, content: str) -> Optional[str]:
         """
         Generate a concise 3-5 word English title for soccer articles.
 
@@ -439,13 +446,13 @@ class SoccerScraper(BaseScraper):
             content: Article content for context
 
         Returns:
-            Generated English title or original if AI fails
+            Generated English title, or None if generation fails
         """
         if not self.openai_client:
             logger.warning("⚽ OpenAI Client Not Initialized For Title", [
-                ("Action", "Using original title"),
+                ("Action", "Skipping article"),
             ])
-            return original_title
+            return None
 
         logger.info("⚽ Generating Soccer Title", [
             ("Original", original_title[:50]),
@@ -467,23 +474,41 @@ CRITICAL RULES:
             )
 
             ai_title = response.strip()
-            if ai_title and 3 <= len(ai_title.split()) <= 7:
+
+            # Validate title is English and proper length
+            if ai_title and 3 <= len(ai_title.split()) <= 7 and is_english_only(ai_title):
                 logger.success("⚽ Soccer Title Generated", [
                     ("Original", original_title[:30]),
                     ("Generated", ai_title),
                 ])
                 return ai_title
-            logger.warning("⚽ Invalid Soccer Title Length", [
-                ("Title", ai_title),
-                ("Action", "Using original"),
+
+            # Retry if not English
+            if ai_title and not is_english_only(ai_title):
+                logger.warning("⚽ Generated Title Not English - Retrying", [
+                    ("Generated", ai_title[:30]),
+                ])
+                response = await self._call_openai(
+                    system_prompt="Translate this Arabic headline to English. Return ONLY a 3-5 word English title.",
+                    user_prompt=original_title,
+                    max_tokens=20,
+                    temperature=0.2,
+                )
+                ai_title = response.strip()
+                if ai_title and is_english_only(ai_title):
+                    return ai_title
+
+            logger.warning("⚽ Title Generation Failed", [
+                ("Title", ai_title[:30] if ai_title else "empty"),
+                ("Action", "Skipping article"),
             ])
-            return original_title
+            return None
         except Exception as e:
             logger.warning("⚽ Failed to Generate AI Soccer Title", [
                 ("Error", str(e)[:100]),
-                ("Action", "Using original"),
+                ("Action", "Skipping article"),
             ])
-            return original_title
+            return None
 
     async def _detect_team_tag(self, title: str, content: str) -> str:
         """

@@ -27,6 +27,7 @@ from openai import OpenAI, APIError, RateLimitError, APIConnectionError, Authent
 from src.core.logger import logger
 from src.core.database import get_db
 from src.utils import AICache
+from src.utils.language import is_english_only
 
 
 # =============================================================================
@@ -203,7 +204,7 @@ class BaseScraper:
     # AI Generation Methods
     # -------------------------------------------------------------------------
 
-    async def _generate_title(self, original_title: str, content: str) -> str:
+    async def _generate_title(self, original_title: str, content: str) -> Optional[str]:
         """
         Generate an English title using AI.
 
@@ -212,14 +213,14 @@ class BaseScraper:
             content: Article content for context
 
         Returns:
-            AI-generated English title
+            AI-generated English title, or None if generation fails
         """
         if not self.openai_client:
             logger.warning("🤖 OpenAI Client Not Initialized For Title", [
-                ("Action", "Using original title"),
+                ("Action", "Skipping article"),
                 ("Original", original_title[:50]),
             ])
-            return original_title
+            return None
 
         # Check cache first
         cache_key: str = f"title_{original_title[:100]}"
@@ -251,6 +252,35 @@ CRITICAL RULES:
                 temperature=0.3,
             )
             title: str = response.strip().strip('"').strip("'")
+
+            # Validate the title is actually English
+            if not is_english_only(title):
+                logger.warning("🤖 Generated Title Not English - Retrying", [
+                    ("Original", original_title[:30]),
+                    ("Generated", title[:30]),
+                ])
+                # Retry with more explicit instruction
+                response = await self._call_openai(
+                    system_prompt="Translate this Arabic headline to English. Return ONLY the English translation, nothing else.",
+                    user_prompt=original_title,
+                    max_tokens=50,
+                    temperature=0.2,
+                )
+                title = response.strip().strip('"').strip("'")
+
+                # If still not English, generate a generic title from content
+                if not is_english_only(title):
+                    logger.warning("🤖 Retry Failed - Generating From Content", [
+                        ("Original", original_title[:30]),
+                    ])
+                    response = await self._call_openai(
+                        system_prompt="Generate a 3-5 word English headline summarizing this article. English only.",
+                        user_prompt=f"Article content:\n{content[:500]}",
+                        max_tokens=30,
+                        temperature=0.3,
+                    )
+                    title = response.strip().strip('"').strip("'")
+
             self.ai_cache.set(cache_key, title)
             logger.success("🤖 Title Generated", [
                 ("Original", original_title[:30]),
@@ -261,9 +291,10 @@ CRITICAL RULES:
             logger.warning("🤖 Failed to Generate Title", [
                 ("Error", str(e)),
                 ("Original", original_title[:30]),
-                ("Action", "Using original title"),
+                ("Action", "Skipping article"),
             ])
-            return original_title
+            # Return None to signal that this article should be skipped
+            return None
 
     def _truncate_at_sentence(self, text: str, max_length: int) -> str:
         """

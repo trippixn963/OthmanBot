@@ -240,6 +240,12 @@ class NewsScraper(BaseScraper):
                     ])
                 else:
                     ai_title = await self._generate_title(original_title, full_content)
+                    if ai_title is None:
+                        logger.warning("📰 Skipping Article - Title Generation Failed", [
+                            ("Title", original_title[:50]),
+                            ("URL", entry.get('link', '')[:60]),
+                        ])
+                        continue
                     self.ai_cache.cache_title(article_id, original_title, ai_title)
                     logger.info("🔄 Cache Miss - Generated Title", [
                         ("Article ID", article_id),
