@@ -35,7 +35,7 @@ class DatabaseCore:
     """
 
     # Current schema version - increment when adding migrations
-    SCHEMA_VERSION = 15
+    SCHEMA_VERSION = 16
 
     # Valid table names for SQL injection prevention
     VALID_TABLES = frozenset({
@@ -289,6 +289,7 @@ class DatabaseCore:
                 thread_name TEXT NOT NULL,
                 closed_by INTEGER NOT NULL,
                 reason TEXT,
+                user_id INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 reopened_at TIMESTAMP,
                 reopened_by INTEGER
@@ -300,6 +301,25 @@ class DatabaseCore:
             CREATE TABLE IF NOT EXISTS debate_counter (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 counter INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
+        # Appeals table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS appeals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                action_type TEXT NOT NULL,
+                action_id INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                additional_context TEXT,
+                status TEXT DEFAULT 'pending',
+                reviewed_by INTEGER,
+                reviewed_at TIMESTAMP,
+                denial_reason TEXT,
+                message_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, action_type, action_id)
             )
         """)
 
@@ -331,13 +351,21 @@ class DatabaseCore:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ban_history_user ON ban_history(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_closure_history_thread ON closure_history(thread_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_closure_history_user ON closure_history(closed_by)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_closure_history_owner ON closure_history(user_id)")
+
+        # Appeals indexes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_appeals_user ON appeals(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_appeals_status ON appeals(status)")
 
     def _run_migrations(self, cursor: sqlite3.Cursor, current_version: int) -> int:
         """Run all pending migrations."""
         migrations_run = 0
 
-        # All migrations already applied via _create_base_tables
-        # This handles incremental updates for existing databases
+        # Migration 16: Add user_id column to closure_history for tracking debate owners
+        if current_version < 16:
+            if not self._column_exists(cursor, "closure_history", "user_id"):
+                cursor.execute("ALTER TABLE closure_history ADD COLUMN user_id INTEGER")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_closure_history_owner ON closure_history(user_id)")
 
         if current_version < self.SCHEMA_VERSION:
             # Update schema version
