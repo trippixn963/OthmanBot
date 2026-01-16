@@ -38,8 +38,13 @@ class BansMixin:
                 )
                 conn.commit()
                 success = True
-            except sqlite3.IntegrityError:
-                pass
+            except sqlite3.IntegrityError as e:
+                conn.rollback()
+                logger.debug("Ban Already Exists", [
+                    ("User ID", str(user_id)),
+                    ("Thread ID", str(thread_id) if thread_id else "Global"),
+                    ("Error", str(e)),
+                ])
 
         if success:
             self._add_to_ban_history(user_id, thread_id, banned_by, reason, expires_at)
@@ -179,8 +184,13 @@ class BansMixin:
                     (user_id, thread_id, banned_by, reason, duration, expires_at)
                 )
                 conn.commit()
-            except Exception:
-                pass
+            except Exception as e:
+                conn.rollback()
+                logger.debug("Ban History Insert Failed", [
+                    ("User ID", str(user_id)),
+                    ("Thread ID", str(thread_id) if thread_id else "Global"),
+                    ("Error", str(e)),
+                ])
 
     def update_ban_history_removal(
         self,

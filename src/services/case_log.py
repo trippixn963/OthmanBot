@@ -106,10 +106,11 @@ class CaseLogService:
             # If case was just created, ban embed was already included in thread creation
             if case.get('just_created'):
                 logger.tree("Case Log: New Case Created With Ban", [
-                    ("User", f"{user.display_name} ({user.id})"),
+                    ("User", f"{user.name} ({user.display_name})"),
+                    ("ID", str(user.id)),
                     ("Case ID", f"{case['case_id']:04d}"),
                     ("Thread ID", str(case['thread_id'])),
-                    ("Banned By", f"{banned_by.display_name}"),
+                    ("Banned By", f"{banned_by.name} ({banned_by.display_name})"),
                     ("Scope", scope),
                     ("Duration", duration),
                     ("Ban #", "1"),
@@ -148,14 +149,16 @@ class CaseLogService:
                     await case_thread.send(embed=escalation_embed)
 
                     logger.info("Case Log: Repeat Offender Alert Sent", [
-                        ("User", f"{user.display_name} ({user.id})"),
+                        ("User", f"{user.name} ({user.display_name})"),
+                        ("ID", str(user.id)),
                         ("Disallow Count", str(ban_count)),
                     ])
 
                 logger.tree("Case Log: Ban Logged", [
-                    ("User", f"{user.display_name} ({user.id})"),
+                    ("User", f"{user.name} ({user.display_name})"),
+                    ("ID", str(user.id)),
                     ("Case ID", f"{case['case_id']:04d}"),
-                    ("Banned By", f"{banned_by.display_name}"),
+                    ("Banned By", f"{banned_by.name} ({banned_by.display_name})"),
                     ("Scope", scope),
                     ("Duration", duration),
                     ("Ban #", str(ban_count)),
@@ -164,7 +167,7 @@ class CaseLogService:
 
         except Exception as e:
             logger.error("Case Log: Failed To Log Ban", [
-                ("User ID", str(user.id)),
+                ("ID", str(user.id)),
                 ("Error", str(e)),
             ])
 
@@ -390,7 +393,8 @@ class CaseLogService:
                     )
 
                 logger.info("Case Log: User Rejoined Server Logged", [
-                    ("User", f"{member.display_name} ({member.id})"),
+                    ("User", f"{member.name} ({member.display_name})"),
+                    ("ID", str(member.id)),
                     ("Case ID", f"{case['case_id']:04d}"),
                     ("Previous Disallows", str(disallow_count)),
                     ("Still Disallowed", "Yes" if is_still_disallowed else "No"),
@@ -399,7 +403,7 @@ class CaseLogService:
 
         except Exception as e:
             logger.warning("Case Log: Failed To Log Member Rejoined", [
-                ("User ID", str(member.id)),
+                ("ID", str(member.id)),
                 ("Error", str(e)),
             ])
 
@@ -440,10 +444,11 @@ class CaseLogService:
                 if case_thread:
                     self.db.create_case_log(owner.id, case_id, case_thread.id)
                     logger.tree("Case Log: New Case Created With Debate Close", [
-                        ("User", f"{owner.display_name} ({owner.id})"),
+                        ("User", f"{owner.name} ({owner.display_name})"),
+                        ("ID", str(owner.id)),
                         ("Case ID", f"{case_id:04d}"),
                         ("Thread ID", str(case_thread.id)),
-                        ("Closed By", f"{closed_by.display_name}"),
+                        ("Closed By", f"{closed_by.name} ({closed_by.display_name})"),
                         ("Debate", original_name[:30]),
                         ("Reason", reason[:50] if len(reason) > 50 else reason),
                     ], emoji="🔒")
@@ -458,9 +463,10 @@ class CaseLogService:
                 await case_thread.send(embed=embed)
 
                 logger.tree("Case Log: Debate Close Logged", [
-                    ("User", f"{owner.display_name} ({owner.id})"),
+                    ("User", f"{owner.name} ({owner.display_name})"),
+                    ("ID", str(owner.id)),
                     ("Case ID", f"{case['case_id']:04d}"),
-                    ("Closed By", f"{closed_by.display_name}"),
+                    ("Closed By", f"{closed_by.name} ({closed_by.display_name})"),
                     ("Debate", original_name[:30]),
                     ("Reason", reason[:50] if len(reason) > 50 else reason),
                 ], emoji="🔒")
@@ -511,9 +517,10 @@ class CaseLogService:
                 await case_thread.send(embed=embed)
 
                 logger.tree("Case Log: Debate Reopen Logged", [
-                    ("User", f"{owner.display_name} ({owner.id})"),
+                    ("User", f"{owner.name} ({owner.display_name})"),
+                    ("ID", str(owner.id)),
                     ("Case ID", f"{case['case_id']:04d}"),
-                    ("Reopened By", f"{reopened_by.display_name}"),
+                    ("Reopened By", f"{reopened_by.name} ({reopened_by.display_name})"),
                     ("Debate", new_name[:30]),
                     ("Reason", reason[:50] if len(reason) > 50 else reason),
                 ], emoji="🔓")

@@ -52,7 +52,9 @@ async def backfill_debate_stats(bot: "OthmanBot") -> dict:
 
     # Check if backfill has already been done
     if not hasattr(bot, 'debates_service') or bot.debates_service is None:
-        logger.warning("Debates service not available for backfill")
+        logger.warning("Debates Service Not Available For Backfill", [
+            ("Action", "Skipping backfill"),
+        ])
         return stats
 
     # Check if tables already have data
@@ -66,12 +68,16 @@ async def backfill_debate_stats(bot: "OthmanBot") -> dict:
         ])
         return stats
 
-    logger.info("📊 Starting Debate Stats Backfill...")
+    logger.info("📊 Starting Debate Stats Backfill", [
+        ("Forum ID", str(DEBATES_FORUM_ID)),
+    ])
 
     try:
         debates_forum = bot.get_channel(DEBATES_FORUM_ID)
         if not debates_forum:
-            logger.warning("Debates Forum Not Found For Backfill")
+            logger.warning("Debates Forum Not Found For Backfill", [
+                ("Forum ID", str(DEBATES_FORUM_ID)),
+            ])
             return stats
 
         # Collect all threads (active + archived)
@@ -102,7 +108,7 @@ async def backfill_debate_stats(bot: "OthmanBot") -> dict:
                 # Count messages per user in this thread
                 message_counts: dict[int, int] = {}
 
-                async for message in thread.history(limit=None):
+                async for message in thread.history(limit=1000):
                     # Skip bot messages
                     if message.author.bot:
                         continue
@@ -181,15 +187,21 @@ async def reconcile_debate_stats(bot: "OthmanBot") -> dict:
     }
 
     if not hasattr(bot, 'debates_service') or bot.debates_service is None:
-        logger.warning("Debates service not available for stats reconciliation")
+        logger.warning("Debates Service Not Available For Stats Reconciliation", [
+            ("Action", "Skipping reconciliation"),
+        ])
         return stats
 
-    logger.info("📊 Starting Nightly Stats Reconciliation...")
+    logger.info("📊 Starting Nightly Stats Reconciliation", [
+        ("Forum ID", str(DEBATES_FORUM_ID)),
+    ])
 
     try:
         debates_forum = bot.get_channel(DEBATES_FORUM_ID)
         if not debates_forum:
-            logger.warning("Debates Forum Not Found For Stats Reconciliation")
+            logger.warning("Debates Forum Not Found For Stats Reconciliation", [
+                ("Forum ID", str(DEBATES_FORUM_ID)),
+            ])
             return stats
 
         # Collect all threads (active + archived)
@@ -220,7 +232,7 @@ async def reconcile_debate_stats(bot: "OthmanBot") -> dict:
                 # Count messages per user in this thread
                 message_counts: dict[int, int] = {}
 
-                async for message in thread.history(limit=None):
+                async for message in thread.history(limit=1000):
                     # Skip bot messages
                     if message.author.bot:
                         continue
@@ -288,18 +300,32 @@ class StatsReconciliationScheduler:
         self._task: asyncio.Task | None = None
         self._running = False
 
-        # Schedule time: 00:30 EST
+        # Schedule time: 00:50 EST
         self.schedule_hour = 0
-        self.schedule_minute = 30
+        self.schedule_minute = 50
+
+    def _handle_task_exception(self, task: asyncio.Task) -> None:
+        """Handle exceptions from the scheduler task."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.tree("Stats Reconciliation Scheduler Task Exception", [
+                ("Error Type", type(exc).__name__),
+                ("Error", str(exc)[:100]),
+            ], emoji="❌")
 
     async def start(self) -> None:
         """Start the scheduler."""
         if self._running:
-            logger.warning("Stats reconciliation scheduler already running")
+            logger.warning("Stats Reconciliation Scheduler Already Running", [
+                ("Action", "Skipping start"),
+            ])
             return
 
         self._running = True
         self._task = asyncio.create_task(self._scheduler_loop())
+        self._task.add_done_callback(self._handle_task_exception)
         logger.info("Stats Reconciliation Scheduler Started", [
             ("Schedule", "nightly at 00:30 EST"),
         ])
@@ -314,7 +340,9 @@ class StatsReconciliationScheduler:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        logger.info("Stats reconciliation scheduler stopped")
+        logger.info("Stats Reconciliation Scheduler Stopped", [
+            ("Status", "Task cancelled"),
+        ])
 
     async def _scheduler_loop(self) -> None:
         """Main scheduler loop."""
@@ -345,7 +373,9 @@ class StatsReconciliationScheduler:
 
                 # Run reconciliation
                 if self._running:
-                    logger.info("Starting nightly stats reconciliation...")
+                    logger.info("Starting Nightly Stats Reconciliation", [
+                        ("Mode", "Full scan"),
+                    ])
                     try:
                         stats = await self.callback()
                         logger.success("Nightly Stats Reconciliation Complete", [

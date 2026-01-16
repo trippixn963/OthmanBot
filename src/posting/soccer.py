@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 import discord
 
 from src.core.logger import logger
+from src.core.emojis import UPVOTE_EMOJI
+from src.services.database import get_db
 from src.posting.poster import download_image, cleanup_temp_file, build_forum_content
 from src.posting.announcements import send_soccer_announcement
 from src.services import Article as SoccerArticle
@@ -41,21 +43,30 @@ async def post_soccer_news(bot: "OthmanBot") -> None:
     Handles all errors gracefully to keep scheduler running
     """
     if not bot.soccer_channel_id:
-        logger.error("⚽ SOCCER_CHANNEL_ID Not Configured")
+        logger.error("⚽ SOCCER_CHANNEL_ID Not Configured", [
+            ("Action", "Skipping soccer post"),
+        ])
         return
 
     if not bot.soccer_scraper:
-        logger.error("⚽ Soccer Scraper Not Initialized")
+        logger.error("⚽ Soccer Scraper Not Initialized", [
+            ("Action", "Skipping soccer post"),
+        ])
         return
 
     try:
-        logger.info("⚽ Fetching Latest Soccer News Articles")
+        logger.info("⚽ Fetching Latest Soccer News Articles", [
+            ("Max Articles", "1"),
+            ("Hours Back", "24"),
+        ])
         articles = await bot.soccer_scraper.fetch_latest_soccer_news(
             max_articles=1, hours_back=24
         )
 
         if not articles:
-            logger.warning("⚽ No New Soccer Articles Found To Post")
+            logger.warning("⚽ No New Soccer Articles Found To Post", [
+                ("Action", "Skipping post"),
+            ])
             return
 
         article = articles[0]
@@ -137,6 +148,7 @@ async def post_soccer_article_to_forum(
             published_date=article.published_date,
             arabic_summary=article.arabic_summary,
             english_summary=article.english_summary,
+            key_quote=article.key_quote,
         )
 
         # Format thread name
@@ -159,18 +171,34 @@ async def post_soccer_article_to_forum(
         files = [image_file] if image_file else []
 
         # Create thread
-        thread, _ = await channel.create_thread(
+        thread_with_msg = await channel.create_thread(
             name=thread_name,
             content=message_content,
             files=files,
             applied_tags=applied_tags,
         )
+        thread = thread_with_msg.thread
+
+        # Add upvote reaction for community engagement
+        if thread_with_msg.message:
+            try:
+                await thread_with_msg.message.add_reaction(UPVOTE_EMOJI)
+            except discord.HTTPException:
+                pass  # Silently ignore if reaction fails
 
         # Mark as posted (saves to database)
+        article_id = bot.soccer_scraper._extract_article_id(article.url)
         bot.soccer_scraper.add_posted_url(article.url)
-        logger.info("⚽ Marked Soccer Article As Posted", [
-            ("Article ID", bot.soccer_scraper._extract_article_id(article.url)),
-        ])
+
+        # Track engagement for this article
+        db = get_db()
+        db.track_article_engagement(
+            content_type="soccer",
+            article_id=article_id,
+            thread_id=thread.id,
+            thread_url=thread.jump_url,
+            title=article.title,
+        )
         logger.success("⚽ Posted Soccer Forum Thread", [
             ("Title", article.title[:50]),
             ("Source", article.source),

@@ -2,8 +2,8 @@
 OthmanBot - Hot Tag Manager
 =====================================
 
-Background task that evaluates and assigns the "Hot" tag to debate threads
-once daily at midnight EST.
+Evaluates and assigns the "Hot" tag to debate threads.
+Called by the centralized MaintenanceScheduler at 00:00 EST.
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
@@ -11,9 +11,8 @@ Server: discord.gg/syria
 
 import asyncio
 import discord
-from discord.ext import tasks
-from datetime import datetime, time, timezone
-from typing import Optional, List, TYPE_CHECKING
+from datetime import datetime, timezone
+from typing import List, TYPE_CHECKING
 from src.core.logger import logger
 from src.core.config import DEBATES_FORUM_ID, DISCORD_ARCHIVED_THREADS_LIMIT, NY_TZ, LOG_TITLE_PREVIEW_LENGTH
 from src.utils import edit_thread_with_retry
@@ -26,9 +25,6 @@ if TYPE_CHECKING:
 # =============================================================================
 # Constants
 # =============================================================================
-
-MIDNIGHT_EST = time(hour=0, minute=0, tzinfo=NY_TZ)
-"""Time when hot tag evaluation runs (midnight EST)."""
 
 RATE_LIMIT_DELAY: float = 0.5
 """Delay between thread evaluations to avoid rate limits (seconds)."""
@@ -43,11 +39,10 @@ class HotTagManager:
     Manages the dynamic "Hot" tag on debate threads.
 
     DESIGN:
-    - Runs once daily at midnight EST
+    - Called by MaintenanceScheduler at 00:00 EST
     - Evaluates all threads against activity thresholds
     - Adds "Hot" tag to threads that meet criteria
     - Removes "Hot" tag from threads that no longer meet criteria
-    - Much less spammy than frequent evaluations
     """
 
     def __init__(self, bot: "OthmanBot") -> None:
@@ -59,46 +54,17 @@ class HotTagManager:
         """
         self.bot = bot
         self.hot_tag_id = DEBATE_TAGS["hot"]
-        logger.debug("Hot Tag Manager Initialized", [
-            ("Hot Tag ID", str(self.hot_tag_id)),
-            ("Min Messages", str(HOT_MIN_MESSAGES)),
-            ("Max Inactivity", f"{HOT_MAX_INACTIVITY_HOURS}h"),
-        ])
 
     # -------------------------------------------------------------------------
-    # Start/Stop Controls
+    # Main Evaluation Method
     # -------------------------------------------------------------------------
 
-    async def start(self) -> None:
-        """Start the background task."""
-        if not self.manage_hot_tags.is_running():
-            self.manage_hot_tags.start()
-            logger.info("🔥 Hot Tag Manager Started", [
-                ("Schedule", "Daily at 00:00 EST"),
-                ("Criteria", f"≥{HOT_MIN_MESSAGES} msgs + active within {HOT_MAX_INACTIVITY_HOURS}h"),
-            ])
-
-    async def stop(self) -> None:
-        """Stop the background task."""
-        if self.manage_hot_tags.is_running():
-            self.manage_hot_tags.cancel()
-            logger.info("🔥 Hot Tag Manager Stopped")
-
-    # -------------------------------------------------------------------------
-    # Main Loop - Runs Daily at Midnight EST
-    # -------------------------------------------------------------------------
-
-    @tasks.loop(time=MIDNIGHT_EST)
-    async def manage_hot_tags(self) -> None:
+    async def evaluate_all_threads(self) -> dict:
         """
-        Daily evaluation of all debate threads for Hot tag status.
+        Evaluate all debate threads for Hot tag status.
 
-        DESIGN:
-        - Runs once at midnight EST
-        - Checks all active and recently archived threads
-        - Adds Hot tag to threads meeting activity threshold
-        - Removes Hot tag from threads no longer meeting threshold
-        - Single daily evaluation prevents notification spam
+        Returns:
+            Dict with evaluation statistics
         """
         start_time = datetime.now(NY_TZ)
 
@@ -142,7 +108,9 @@ class HotTagManager:
             kept_threads: List[str] = []
 
             # Process all active threads
-            logger.info("📋 Processing Active Threads...")
+            logger.info("📋 Processing Active Threads", [
+                ("Status", "Starting active thread scan"),
+            ])
             active_thread_count = len(debates_forum.threads)
             logger.debug("Active Threads Found", [("Count", str(active_thread_count))])
 
@@ -174,7 +142,9 @@ class HotTagManager:
                 await asyncio.sleep(RATE_LIMIT_DELAY)
 
             # Process recently archived threads
-            logger.info("📋 Processing Archived Threads...")
+            logger.info("📋 Processing Archived Threads", [
+                ("Status", "Starting archived thread scan"),
+            ])
             archived_idx = 0
 
             async for thread in debates_forum.archived_threads(limit=DISCORD_ARCHIVED_THREADS_LIMIT):
@@ -256,31 +226,15 @@ class HotTagManager:
                 ("Error Code", str(e.code) if hasattr(e, 'code') else "N/A"),
                 ("Status", str(e.status) if hasattr(e, 'status') else "N/A"),
             ])
+            return {"error": str(e)}
         except Exception as e:
             logger.error("🔥 Hot Tag Evaluation FAILED - Unexpected Error", [
                 ("Error", str(e)),
                 ("Error Type", type(e).__name__),
             ])
+            return {"error": str(e)}
 
-    @manage_hot_tags.before_loop
-    async def before_manage_hot_tags(self) -> None:
-        """Wait until the bot is ready before starting the task."""
-        await self.bot.wait_until_ready()
-
-        # Calculate time until next run
-        now = datetime.now(NY_TZ)
-        next_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        if now.hour >= 0:
-            from datetime import timedelta
-            next_midnight += timedelta(days=1)
-        time_until = next_midnight - now
-        hours_until = time_until.total_seconds() / 3600
-
-        logger.info("🔥 Hot Tag Manager Ready", [
-            ("Next Run", next_midnight.strftime("%Y-%m-%d %H:%M EST")),
-            ("Time Until", f"{hours_until:.1f}h"),
-            ("Criteria", f"≥{HOT_MIN_MESSAGES} msgs + ≤{HOT_MAX_INACTIVITY_HOURS}h inactive"),
-        ])
+        return stats
 
     # -------------------------------------------------------------------------
     # Thread Evaluation
@@ -549,7 +503,27 @@ class HotTagManager:
 
 
 # =============================================================================
+# Standalone Function (called by MaintenanceScheduler)
+# =============================================================================
+
+async def evaluate_hot_tags(bot: "OthmanBot") -> dict:
+    """
+    Evaluate hot tags on all debate threads.
+
+    Standalone function called by the centralized MaintenanceScheduler.
+
+    Args:
+        bot: The OthmanBot instance
+
+    Returns:
+        Dict with evaluation statistics
+    """
+    manager = HotTagManager(bot)
+    return await manager.evaluate_all_threads()
+
+
+# =============================================================================
 # Module Export
 # =============================================================================
 
-__all__ = ["HotTagManager"]
+__all__ = ["HotTagManager", "evaluate_hot_tags"]

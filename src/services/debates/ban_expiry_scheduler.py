@@ -56,14 +56,18 @@ class BanExpiryScheduler:
         """Stop the scheduler."""
         if self._check_expired_bans.is_running():
             self._check_expired_bans.cancel()
-            logger.info("Ban Expiry Scheduler Stopped")
+            logger.info("Ban Expiry Scheduler Stopped", [
+                ("Status", "Task cancelled"),
+            ])
 
     @tasks.loop(minutes=1)
     async def _check_expired_bans(self) -> None:
         """Check for and remove expired bans."""
         try:
             if not hasattr(self.bot, 'debates_service') or not self.bot.debates_service:
-                logger.debug("Ban Expiry Check Skipped - Debates Service Not Ready")
+                logger.debug("Ban Expiry Check Skipped", [
+                    ("Reason", "Debates service not ready"),
+                ])
                 return
 
             db = self.bot.debates_service.db

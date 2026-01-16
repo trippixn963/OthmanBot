@@ -94,7 +94,8 @@ def handle_command_errors(
             except discord.Forbidden as e:
                 log_details = [("Error", "Missing permissions")]
                 if log_user and interaction:
-                    log_details.insert(0, ("User", f"{interaction.user.name} ({interaction.user.id})"))
+                    log_details.insert(0, ("ID", str(interaction.user.id)))
+                    log_details.insert(0, ("User", f"{interaction.user.name} ({interaction.user.display_name})"))
 
                 logger.warning(f"{operation_name} Failed (Forbidden)", log_details)
 
@@ -107,7 +108,8 @@ def handle_command_errors(
             except discord.NotFound as e:
                 log_details = [("Error", "Resource not found")]
                 if log_user and interaction:
-                    log_details.insert(0, ("User", f"{interaction.user.name} ({interaction.user.id})"))
+                    log_details.insert(0, ("ID", str(interaction.user.id)))
+                    log_details.insert(0, ("User", f"{interaction.user.name} ({interaction.user.display_name})"))
 
                 logger.warning(f"{operation_name} Failed (NotFound)", log_details)
 
@@ -120,7 +122,8 @@ def handle_command_errors(
             except discord.HTTPException as e:
                 log_details = []
                 if log_user and interaction:
-                    log_details.append(("User", f"{interaction.user.name} ({interaction.user.id})"))
+                    log_details.append(("User", f"{interaction.user.name} ({interaction.user.display_name})"))
+                    log_details.append(("ID", str(interaction.user.id)))
 
                 log_http_error(e, operation_name, log_details)
 
@@ -133,9 +136,10 @@ def handle_command_errors(
                     ("Error", str(e)[:100]),
                 ]
                 if log_user and interaction:
-                    log_details.insert(0, ("User", f"{interaction.user.name} ({interaction.user.id})"))
+                    log_details.insert(0, ("ID", str(interaction.user.id)))
+                    log_details.insert(0, ("User", f"{interaction.user.name} ({interaction.user.display_name})"))
 
-                logger.error(f"{operation_name} Failed (Unexpected)", log_details)
+                logger.exception(f"{operation_name} Failed (Unexpected)", log_details)
 
                 if interaction:
                     await send_error_response(
@@ -183,7 +187,7 @@ async def safe_api_call(
         log_http_error(e, operation_name, log_details or [])
         return default
     except Exception as e:
-        logger.error(f"{operation_name} Failed (Unexpected)", [
+        logger.exception(f"{operation_name} Failed (Unexpected)", [
             ("Error Type", type(e).__name__),
             ("Error", str(e)[:100]),
             *(log_details or []),

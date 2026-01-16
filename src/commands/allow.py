@@ -113,7 +113,8 @@ class AllowCog(commands.Cog):
                 logger.warning("/allow Command Rejected - Protected User", [
                     ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
             ("ID", str(interaction.user.id)),
-                    ("Target User", f"{member.name} ({member.id})"),
+                    ("Target User", f"{member.name} ({member.display_name})"),
+                    ("ID", str(member.id)),
                     ("Reason", "Target has Debates Management role"),
                 ])
                 await interaction.response.send_message(
@@ -155,8 +156,10 @@ class AllowCog(commands.Cog):
 
         if success:
             logger.tree("User Unbanned From Debates", [
-                ("Unbanned User", f"{display_name} ({user_id})"),
-                ("Unbanned By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Unbanned User", display_name),
+                ("ID", str(user_id)),
+                ("Unbanned By", f"{interaction.user.name} ({interaction.user.display_name})"),
+                ("ID", str(interaction.user.id)),
                 ("Scope", scope),
                 ("Thread ID", str(target_thread_id) if target_thread_id else "Global"),
             ], emoji="✅")

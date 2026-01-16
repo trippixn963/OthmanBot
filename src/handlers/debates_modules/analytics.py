@@ -57,7 +57,7 @@ async def update_analytics_embed(bot: "OthmanBot", thread: discord.Thread, force
 
     try:
         # Get analytics message ID from database
-        analytics_message_id = bot.debates_service.db.get_analytics_message(thread.id)
+        analytics_message_id = await bot.debates_service.db.get_analytics_message_async(thread.id)
         if not analytics_message_id:
             logger.debug("📊 No Analytics Message Found", [
                 ("Thread ID", str(thread.id)),
@@ -68,7 +68,7 @@ async def update_analytics_embed(bot: "OthmanBot", thread: discord.Thread, force
         analytics_message = await safe_fetch_message(thread, analytics_message_id)
         if analytics_message is None:
             # Clear stale reference to prevent repeated warnings
-            bot.debates_service.db.clear_analytics_message(thread.id)
+            await bot.debates_service.db.clear_analytics_message_async(thread.id)
             logger.info("📊 Cleared Stale Analytics Reference", [
                 ("Message ID", str(analytics_message_id)),
                 ("Thread ID", str(thread.id)),
@@ -115,16 +115,22 @@ async def refresh_all_analytics_embeds(bot: "OthmanBot") -> int:
         Number of embeds updated
     """
     if not hasattr(bot, 'debates_service') or bot.debates_service is None:
-        logger.warning("Cannot refresh analytics - debates service not available")
+        logger.warning("Cannot Refresh Analytics", [
+            ("Reason", "Debates service not available"),
+        ])
         return 0
 
     if not DEBATES_FORUM_ID:
-        logger.warning("Cannot refresh analytics - DEBATES_FORUM_ID not set")
+        logger.warning("Cannot Refresh Analytics", [
+            ("Reason", "DEBATES_FORUM_ID not set"),
+        ])
         return 0
 
     forum = bot.get_channel(DEBATES_FORUM_ID)
     if not forum or not isinstance(forum, discord.ForumChannel):
-        logger.warning("Cannot refresh analytics - forum channel not found")
+        logger.warning("Cannot Refresh Analytics", [
+            ("Reason", "Forum channel not found"),
+        ])
         return 0
 
     updated_count = 0

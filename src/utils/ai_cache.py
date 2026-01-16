@@ -12,7 +12,7 @@ Server: discord.gg/syria
 
 from typing import Optional
 
-from src.core.database import get_db
+from src.services.database import get_db
 from src.core.logger import logger
 
 

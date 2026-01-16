@@ -89,8 +89,10 @@ async def get_developer_avatar(bot: "OthmanBot") -> str:
                 developer = await bot.fetch_user(int(developer_id_str))
                 if developer is not None:
                     developer_avatar_url = developer.display_avatar.url
-        except (discord.NotFound, discord.HTTPException, asyncio.TimeoutError):
-            pass  # Use bot avatar as fallback
+        except (discord.NotFound, discord.HTTPException, asyncio.TimeoutError) as e:
+            logger.debug("Developer Avatar Fetch Failed (Using Bot Avatar)", [
+                ("Error Type", type(e).__name__),
+            ])
 
     return developer_avatar_url
 

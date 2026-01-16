@@ -18,7 +18,7 @@ from src.core.logger import logger
 from src.core.config import SYRIA_GUILD_ID, ALLOWED_GUILD_IDS, BOT_STARTUP_DELAY
 from src.core.constants import TIMEOUT_LONG, TIMEOUT_MEDIUM, TIMEOUT_EXTENDED, SLEEP_STARTUP_DELAY
 from src.core.health import HealthCheckServer
-from src.core.presence import update_presence, presence_update_loop, start_promo_scheduler
+from src.core.presence import setup_presence
 from src.core.backup import BackupScheduler
 from src.utils.footer import init_footer
 from src.utils.banner import init_banner
@@ -29,14 +29,11 @@ from src.services import (
 )
 from src.services.stats_api import OthmanAPI
 from src.services.schedulers.rotation import ContentRotationScheduler
+from src.services.schedulers.maintenance import MaintenanceScheduler
 from src.services.debates.scheduler import DebatesScheduler
-from src.services.debates.hot_tag_manager import HotTagManager
+from src.services.debates.maintenance_scheduler import DebateMaintenanceScheduler
 from src.services.debates.reconciliation import reconcile_karma
-from src.services.debates.karma_scheduler import KarmaReconciliationScheduler
-from src.services.debates.numbering_scheduler import (
-    NumberingReconciliationScheduler,
-    reconcile_debate_numbering,
-)
+from src.services.debates.numbering_scheduler import reconcile_debate_numbering
 from src.services.debates.ban_expiry_scheduler import BanExpiryScheduler
 from src.services.case_archive_scheduler import CaseArchiveScheduler
 from src.posting.news import post_news
@@ -66,11 +63,6 @@ class ReadyHandler(commands.Cog):
                 ("Guilds", str(len(self.bot.guilds))),
                 ("Latency", f"{round(self.bot.latency * 1000)}ms"),
             ])
-            # Refresh presence on reconnect
-            try:
-                await update_presence(self.bot)
-            except Exception as e:
-                logger.debug("Failed to refresh presence on reconnect", [("Error", str(e))])
             # Update status channel to show online
             try:
                 await self.bot.update_status_channel(online=True)
@@ -84,7 +76,9 @@ class ReadyHandler(commands.Cog):
     @commands.Cog.listener()
     async def on_resumed(self) -> None:
         """Handle bot connection resume."""
-        logger.info("Bot Connection Resumed")
+        logger.info("Bot Connection Resumed", [
+            ("Status", "Reconnected to Discord"),
+        ])
 
     async def _initialize_services(self) -> None:
         """Initialize all services with error recovery."""
@@ -96,7 +90,10 @@ class ReadyHandler(commands.Cog):
             async with asyncio.timeout(TIMEOUT_LONG):
                 await self._leave_unauthorized_guilds()
         except asyncio.TimeoutError:
-            logger.warning("Timeout leaving unauthorized guilds - continuing startup")
+            logger.warning("Timeout Leaving Unauthorized Guilds", [
+                ("Timeout", f"{TIMEOUT_LONG}s"),
+                ("Action", "Continuing startup"),
+            ])
 
         logger.tree(
             f"Bot Ready: {bot.user.name}",
@@ -115,7 +112,10 @@ class ReadyHandler(commands.Cog):
             async with asyncio.timeout(TIMEOUT_EXTENDED):
                 await self._sync_commands()
         except asyncio.TimeoutError:
-            logger.error("Timeout syncing commands - continuing startup")
+            logger.error("Timeout Syncing Commands", [
+                ("Timeout", f"{TIMEOUT_EXTENDED}s"),
+                ("Action", "Continuing startup"),
+            ])
 
         # Initialize footer and banner
         try:
@@ -130,34 +130,28 @@ class ReadyHandler(commands.Cog):
 
         # Initialize all services
         init_results.append(("Content Rotation", await self._safe_init("Content Rotation", self._init_content_rotation)))
+        init_results.append(("Maintenance Scheduler", await self._safe_init("Maintenance Scheduler", self._init_maintenance_scheduler)))
         init_results.append(("Debates Scheduler", await self._safe_init("Debates Scheduler", self._init_debates_scheduler)))
-        init_results.append(("Hot Tag Manager", await self._safe_init("Hot Tag Manager", self._init_hot_tag_manager)))
+        init_results.append(("Debate Maintenance", await self._safe_init("Debate Maintenance", self._init_debate_maintenance)))
         init_results.append(("Open Discussion", await self._safe_init("Open Discussion", self._init_open_discussion)))
-        init_results.append(("Karma Reconciliation", await self._safe_init("Karma Reconciliation", self._init_karma_reconciliation)))
-        init_results.append(("Numbering Reconciliation", await self._safe_init("Numbering Reconciliation", self._init_numbering_reconciliation)))
+        init_results.append(("Startup Reconciliation", await self._safe_init("Startup Reconciliation", self._init_startup_reconciliation)))
         init_results.append(("Ban Expiry Scheduler", await self._safe_init("Ban Expiry Scheduler", self._init_ban_expiry_scheduler)))
         init_results.append(("Case Archive Scheduler", await self._safe_init("Case Archive Scheduler", self._init_case_archive_scheduler)))
         init_results.append(("Backup Scheduler", await self._safe_init("Backup Scheduler", self._init_backup_scheduler)))
 
-        # Set initial presence
+        # Start presence handler (rotation + promo)
         try:
-            async with asyncio.timeout(TIMEOUT_MEDIUM):
-                await update_presence(bot)
-        except asyncio.TimeoutError:
-            logger.warning("Timeout setting initial presence")
+            bot.presence_handler = await setup_presence(bot)
         except Exception as e:
-            logger.warning("Failed to set initial presence", [("Error", str(e))])
-
-        # Start presence update loop
-        bot.presence_task = asyncio.create_task(presence_update_loop(bot))
-        logger.info("Started Presence Update Loop", [("Interval", "60 seconds")])
-
-        # Start promotional presence scheduler
-        await start_promo_scheduler(bot)
+            logger.warning("Failed To Start Presence Handler", [
+                ("Error", str(e)[:50]),
+            ])
 
         # Clean up old temp files
         cleanup_old_temp_files()
-        logger.info("Cleaned Up Old Temp Files")
+        logger.info("Cleaned Up Old Temp Files", [
+            ("Action", "Removed expired temp files"),
+        ])
 
         # Start health check HTTP server
         try:
@@ -185,12 +179,15 @@ class ReadyHandler(commands.Cog):
             async with asyncio.timeout(10.0):
                 await bot.update_status_channel(online=True)
         except asyncio.TimeoutError:
-            logger.warning("Timeout updating status channel")
+            logger.warning("Timeout Updating Status Channel", [
+                ("Timeout", "10s"),
+            ])
         except Exception as e:
             logger.warning("Failed to update status channel", [("Error", str(e))])
 
         # Refresh analytics embeds in background
-        asyncio.create_task(self._refresh_analytics_background())
+        analytics_task = asyncio.create_task(self._refresh_analytics_background())
+        analytics_task.add_done_callback(_handle_task_exception)
 
         # Log summary
         succeeded = sum(1 for _, ok in init_results if ok)
@@ -265,29 +262,50 @@ class ReadyHandler(commands.Cog):
             ("Interval", "hourly"),
         ], emoji="🔄")
 
+    async def _init_maintenance_scheduler(self) -> None:
+        """Initialize maintenance scheduler for cleanup and engagement tracking."""
+        bot = self.bot
+
+        bot.maintenance_scheduler = MaintenanceScheduler(bot)
+
+        # Warm the cache before starting
+        await bot.maintenance_scheduler.warm_cache()
+
+        # Start the scheduler
+        bot.maintenance_scheduler.start()
+
+        logger.tree("Maintenance Scheduler Initialized", [
+            ("Engagement Check", "every 2 hours"),
+            ("Cleanup", "every 6 hours"),
+            ("Cache", "warmed"),
+        ], emoji="🔧")
+
     async def _init_debates_scheduler(self) -> None:
         """Initialize debates scheduler."""
         bot = self.bot
         if not bot.general_channel_id:
-            logger.info("General Channel Not Configured - Skipping Debates Scheduler")
+            logger.info("Skipping Debates Scheduler", [
+                ("Reason", "General channel not configured"),
+            ])
             return
 
         bot.debates_scheduler = DebatesScheduler(lambda: post_hot_debate(bot), bot=bot)
         await bot.debates_scheduler.start(post_immediately=False)
         logger.tree("Automated Hot Debates Started", [("Interval", "every 3 hours")], emoji="🔥")
 
-    async def _init_hot_tag_manager(self) -> None:
-        """Initialize Hot tag manager."""
+    async def _init_debate_maintenance(self) -> None:
+        """Initialize centralized debate maintenance scheduler."""
         bot = self.bot
-        bot.hot_tag_manager = HotTagManager(bot)
-        await bot.hot_tag_manager.start()
-        logger.tree("Hot Tag Manager Started", [("Check Interval", "every 10 minutes")], emoji="🏷️")
+        bot.debate_maintenance_scheduler = DebateMaintenanceScheduler(bot)
+        await bot.debate_maintenance_scheduler.start()
 
     async def _init_open_discussion(self) -> None:
         """Initialize Open Discussion thread."""
         bot = self.bot
         if not hasattr(bot, 'open_discussion') or not bot.open_discussion:
-            logger.info("Open Discussion Service Not Initialized - Skipping")
+            logger.info("Skipping Open Discussion", [
+                ("Reason", "Service not initialized"),
+            ])
             return
 
         thread = await bot.open_discussion.ensure_thread_exists()
@@ -304,10 +322,12 @@ class ReadyHandler(commands.Cog):
                 ("Pinned", "Yes" if is_pinned else "No"),
             ], emoji="💬")
         else:
-            logger.warning("Failed To Create Open Discussion Thread")
+            logger.warning("Failed To Create Open Discussion Thread", [
+                ("Action", "Thread creation returned None"),
+            ])
 
-    async def _init_karma_reconciliation(self) -> None:
-        """Initialize karma reconciliation."""
+    async def _init_startup_reconciliation(self) -> None:
+        """Run startup reconciliation in background."""
         bot = self.bot
 
         # Run startup reconciliation in background
@@ -319,25 +339,16 @@ class ReadyHandler(commands.Cog):
             bot._background_tasks = [t for t in bot._background_tasks if not t.done()]
         bot._background_tasks.append(reconciliation_task)
 
-        # Start nightly scheduler
-        bot.karma_reconciliation_scheduler = KarmaReconciliationScheduler(
-            lambda: reconcile_karma(bot, days_back=None),
-            bot=bot
-        )
-        await bot.karma_reconciliation_scheduler.start()
-
     async def _run_startup_reconciliation(self) -> None:
         """Run combined startup reconciliation."""
         bot = self.bot
         await asyncio.sleep(BOT_STARTUP_DELAY)
 
-        karma_stats = None
-        karma_success = True
-        numbering_stats = None
-        numbering_success = True
-
         # Karma reconciliation
-        logger.info("Running Startup Karma Reconciliation (Full Scan)")
+        logger.info("Running Startup Karma Reconciliation", [
+            ("Mode", "Full scan"),
+            ("Days Back", "All"),
+        ])
         try:
             karma_stats = await reconcile_karma(bot, days_back=None)
             logger.tree("Startup Karma Reconciliation Complete", [
@@ -347,11 +358,11 @@ class ReadyHandler(commands.Cog):
             ], emoji="🔄")
         except Exception as e:
             logger.error("Startup Karma Reconciliation Failed", [("Error", str(e))])
-            karma_success = False
-            karma_stats = {"error": str(e)}
 
         # Numbering reconciliation
-        logger.info("Running Startup Numbering Reconciliation")
+        logger.info("Running Startup Numbering Reconciliation", [
+            ("Mode", "Full scan"),
+        ])
         try:
             numbering_stats = await reconcile_debate_numbering(bot)
             if numbering_stats['gaps_found'] > 0:
@@ -366,17 +377,6 @@ class ReadyHandler(commands.Cog):
                 ])
         except Exception as e:
             logger.error("Startup Numbering Reconciliation Failed", [("Error", str(e))])
-            numbering_success = False
-            numbering_stats = {"error": str(e)}
-
-    async def _init_numbering_reconciliation(self) -> None:
-        """Initialize numbering reconciliation scheduler."""
-        bot = self.bot
-        bot.numbering_reconciliation_scheduler = NumberingReconciliationScheduler(
-            lambda: reconcile_debate_numbering(bot),
-            bot=bot
-        )
-        await bot.numbering_reconciliation_scheduler.start()
 
     async def _init_backup_scheduler(self) -> None:
         """Initialize database backup scheduler."""
@@ -397,7 +397,9 @@ class ReadyHandler(commands.Cog):
         """Initialize ban expiry scheduler."""
         bot = self.bot
         if not hasattr(bot, 'debates_service') or not bot.debates_service:
-            logger.info("Debates Service Not Initialized - Skipping Ban Expiry Scheduler")
+            logger.info("Skipping Ban Expiry Scheduler", [
+                ("Reason", "Debates service not initialized"),
+            ])
             return
 
         bot.ban_expiry_scheduler = BanExpiryScheduler(bot)
@@ -408,11 +410,15 @@ class ReadyHandler(commands.Cog):
         """Initialize case archive scheduler."""
         bot = self.bot
         if not hasattr(bot, 'case_log_service') or not bot.case_log_service:
-            logger.info("Case Log Service Not Initialized - Skipping Case Archive Scheduler")
+            logger.info("Skipping Case Archive Scheduler", [
+                ("Reason", "Case log service not initialized"),
+            ])
             return
 
         if not bot.case_log_service.enabled:
-            logger.info("Case Log Service Disabled - Skipping Case Archive Scheduler")
+            logger.info("Skipping Case Archive Scheduler", [
+                ("Reason", "Case log service disabled"),
+            ])
             return
 
         bot.case_archive_scheduler = CaseArchiveScheduler(bot)

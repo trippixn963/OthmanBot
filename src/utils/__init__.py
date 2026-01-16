@@ -70,6 +70,11 @@ from .autocomplete import (
     banned_user_autocomplete,
     case_search_autocomplete,
 )
+from .similarity import (
+    cosine_similarity,
+    is_duplicate_content,
+    SIMILARITY_THRESHOLD,
+)
 
 __all__ = [
     # Retry and circuit breaker utilities
@@ -131,4 +136,8 @@ __all__ = [
     "duration_autocomplete",
     "banned_user_autocomplete",
     "case_search_autocomplete",
+    # Similarity utilities
+    "cosine_similarity",
+    "is_duplicate_content",
+    "SIMILARITY_THRESHOLD",
 ]

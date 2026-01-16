@@ -57,7 +57,9 @@ class CaseArchiveScheduler:
         """Stop the scheduler."""
         if self._archive_inactive_cases.is_running():
             self._archive_inactive_cases.cancel()
-            logger.info("Case Archive Scheduler Stopped")
+            logger.info("Case Archive Scheduler Stopped", [
+                ("Status", "Task cancelled"),
+            ])
 
     @tasks.loop(hours=24)
     async def _archive_inactive_cases(self) -> None:
@@ -69,7 +71,9 @@ class CaseArchiveScheduler:
             if not self.bot.case_log_service.enabled:
                 return
 
-            logger.info("Case Archive: Starting Daily Archive Check")
+            logger.info("Case Archive: Starting Daily Archive Check", [
+                ("Threshold", f"{self.DAYS_INACTIVE} days"),
+            ])
 
             archived_count = await self.bot.case_log_service.archive_inactive_cases(
                 days_inactive=self.DAYS_INACTIVE
@@ -81,7 +85,9 @@ class CaseArchiveScheduler:
                     ("Inactivity Threshold", f"{self.DAYS_INACTIVE} days"),
                 ], emoji="📦")
             else:
-                logger.info("Case Archive: No Inactive Threads To Archive")
+                logger.info("Case Archive: No Inactive Threads To Archive", [
+                    ("Status", "All threads active"),
+                ])
 
         except Exception as e:
             logger.error("Error In Case Archive Check", [

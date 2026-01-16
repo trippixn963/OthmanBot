@@ -16,7 +16,7 @@ from typing import Optional, Callable, Any
 
 from src.core.logger import logger
 from src.core.config import SCHEDULER_ERROR_RETRY, BOT_DISABLED_CHECK_INTERVAL, NY_TZ
-from src.core.database import get_db
+from src.services.database import get_db
 
 
 # =============================================================================
@@ -95,17 +95,31 @@ class DebatesScheduler:
             True if started successfully, False if already running
         """
         if post_immediately:
-            logger.info("🔥 Posting hot debate immediately (test mode)")
+            logger.info("🔥 Posting Hot Debate Immediately", [
+                ("Mode", "Test/manual"),
+            ])
             await self.post_callback()
 
         if self.task and not self.task.done():
-            logger.warning("Debates scheduler task is already running")
+            logger.warning("Debates Scheduler Already Running", [
+                ("Action", "Skipping start"),
+            ])
             return False
+
+        # Cancel any existing task to prevent duplicates
+        if self.task:
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
+            self.task = None
 
         self.is_running = True
         self._save_state()
 
         self.task = asyncio.create_task(self._schedule_loop())
+        self.task.add_done_callback(self._handle_task_exception)
 
         next_post: datetime = self._calculate_next_post_time()
         logger.success(
@@ -113,6 +127,17 @@ class DebatesScheduler:
             f"Next post at {next_post.strftime('%I:%M %p')}"
         )
         return True
+
+    def _handle_task_exception(self, task: asyncio.Task) -> None:
+        """Handle exceptions from the scheduler task."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error("Scheduler Task Exception", [
+                ("Error Type", type(exc).__name__),
+                ("Error", str(exc)),
+            ])
 
     async def stop(self) -> bool:
         """
@@ -122,7 +147,9 @@ class DebatesScheduler:
             True if stopped successfully, False if not running
         """
         if not self.is_running:
-            logger.warning("Debates scheduler is not running")
+            logger.warning("Debates Scheduler Not Running", [
+                ("Action", "Cannot stop"),
+            ])
             return False
 
         self.is_running = False
@@ -135,7 +162,9 @@ class DebatesScheduler:
             except asyncio.CancelledError:
                 pass
 
-        logger.success("🔥 Debates scheduler stopped")
+        logger.success("🔥 Debates Scheduler Stopped", [
+            ("Status", "Task cancelled"),
+        ])
         return True
 
     # -------------------------------------------------------------------------
@@ -172,7 +201,9 @@ class DebatesScheduler:
                     continue
 
                 if self.is_running:
-                    logger.info("🔥⏰ 3-Hourly Hot Debate Post Triggered")
+                    logger.info("🔥⏰ 3-Hourly Hot Debate Post Triggered", [
+                        ("Time", datetime.now(NY_TZ).strftime('%I:%M %p')),
+                    ])
                     try:
                         await self.post_callback()
                     except Exception as e:
@@ -191,7 +222,9 @@ class DebatesScheduler:
                             pass
 
             except asyncio.CancelledError:
-                logger.info("Debates scheduler loop cancelled")
+                logger.info("Debates Scheduler Loop Cancelled", [
+                    ("Reason", "Task cancelled"),
+                ])
                 break
             except Exception as e:
                 logger.error("Debates Scheduler Loop Error", [

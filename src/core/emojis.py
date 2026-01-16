@@ -25,6 +25,7 @@ DOWNVOTE_EMOJI = "<:downvote:1460603397748035606>"
 VERIFY_EMOJI = "<:verify:1460604872754725028>"
 LEADERBOARD_EMOJI = "<:leaderboard:1452015571120951316>"
 APPEAL_EMOJI = "<:appeal:1460605659371274446>"
+READ_EMOJI = "<:read:1460695721874428058>"
 
 
 # =============================================================================
@@ -46,4 +47,5 @@ __all__ = [
     "LEADERBOARD_EMOJI",
     "PARTICIPATE_EMOJI",
     "APPEAL_EMOJI",
+    "READ_EMOJI",
 ]

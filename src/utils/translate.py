@@ -53,7 +53,10 @@ def _check_circuit() -> bool:
         # Check for recovery
         elapsed = time.time() - _last_failure_time
         if elapsed >= RECOVERY_TIMEOUT:
-            logger.info("Translation Circuit Half-Open (Testing Recovery)")
+            logger.info("Translation Circuit Half-Open (Testing Recovery)", [
+                ("Elapsed", f"{elapsed:.1f}s"),
+                ("Recovery Timeout", f"{RECOVERY_TIMEOUT}s"),
+            ])
             return False
 
         return True
@@ -67,7 +70,9 @@ def _record_success() -> None:
         _failure_count = 0
         if _circuit_open:
             _circuit_open = False
-            logger.info("Translation Circuit Closed (Recovered)")
+            logger.info("Translation Circuit Closed (Recovered)", [
+                ("Status", "Circuit recovered"),
+            ])
 
 
 def _record_failure() -> None:
@@ -106,12 +111,17 @@ async def translate_to_english(text: str) -> str:
     """
     # Check circuit breaker
     if _check_circuit():
-        logger.debug("Translation Skipped (Circuit Open)")
+        logger.debug("Translation Skipped (Circuit Open)", [
+            ("Reason", "Circuit breaker active"),
+        ])
         return "Error: Translation service temporarily unavailable"
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        logger.error("OPENAI_API_KEY not found in environment variables")
+        logger.error("OPENAI_API_KEY Not Found", [
+            ("Env Var", "OPENAI_API_KEY"),
+            ("Action", "Translation unavailable"),
+        ])
         return "Error: Translation service unavailable"
 
     client = AsyncOpenAI(api_key=api_key, timeout=30.0)

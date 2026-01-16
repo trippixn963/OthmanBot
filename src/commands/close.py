@@ -171,8 +171,9 @@ class CloseCog(commands.Cog):
             if owner_member and any(role.id == DEBATES_MANAGEMENT_ROLE_ID for role in owner_member.roles):
                 logger.warning("/close Command Rejected - Protected User", [
                     ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
-            ("ID", str(interaction.user.id)),
-                    ("Thread Owner", f"{owner.name} ({owner.id})"),
+                    ("ID", str(interaction.user.id)),
+                    ("Thread Owner", f"{owner.name} ({owner.display_name})"),
+                    ("ID", str(owner.id)),
                     ("Thread", f"{thread.name} ({thread.id})"),
                     ("Reason", "Owner has Debates Management role"),
                 ])
@@ -192,8 +193,11 @@ class CloseCog(commands.Cog):
                 user_id=owner.id,
             )
 
-        # Send the embed with appeal button
-        await interaction.response.send_message(embed=embed, view=view)
+        # Send the embed with appeal button (only pass view if not None)
+        if view:
+            await interaction.response.send_message(embed=embed, view=view)
+        else:
+            await interaction.response.send_message(embed=embed)
 
         # Do all slow operations in background (thread rename, archive, lock, logging, renumbering, owner DM)
         asyncio.create_task(self._close_thread_background(
@@ -217,35 +221,45 @@ class CloseCog(commands.Cog):
         """Handle all slow close operations in background."""
         try:
             # Rename the thread
-            try:
-                await edit_thread_with_retry(thread, name=new_name)
-            except Exception as e:
-                logger.warning("/close Thread Rename Failed", [
+            rename_success = await edit_thread_with_retry(thread, name=new_name)
+            if rename_success:
+                logger.tree("Thread Renamed", [
+                    ("Thread ID", str(thread.id)),
+                    ("New Name", new_name[:50]),
+                ], emoji="✏️")
+            else:
+                logger.tree("Thread Rename Failed", [
                     ("Thread", f"{original_name} ({thread.id})"),
-                    ("Error", str(e)),
-                ])
+                    ("Target Name", new_name[:50]),
+                ], emoji="⚠️")
 
             # Lock the thread (don't archive - let Discord auto-archive based on forum settings)
-            try:
-                await edit_thread_with_retry(thread, locked=True)
-            except Exception as e:
-                logger.warning("/close Lock Failed", [
+            lock_success = await edit_thread_with_retry(thread, locked=True)
+            if lock_success:
+                logger.tree("Thread Locked", [
+                    ("Thread ID", str(thread.id)),
+                ], emoji="🔒")
+            else:
+                logger.tree("Thread Lock Failed", [
                     ("Thread", f"{new_name} ({thread.id})"),
-                    ("Error", str(e)),
-                ])
+                ], emoji="⚠️")
 
             # Log success
             logger.tree("Debate Closed", [
                 ("Thread", f"{original_name} ({thread.id})"),
-                ("Closed By", f"{closed_by.name} ({closed_by.id})"),
-                ("Owner", f"{owner.name} ({owner.id})" if owner else "Unknown"),
-                ("Reason", reason),
-            ], emoji="🔒")
+                ("Renamed", "Yes" if rename_success else "No"),
+                ("Locked", "Yes" if lock_success else "No"),
+                ("Closed By", f"{closed_by.name} ({closed_by.display_name})"),
+                ("ID", str(closed_by.id)),
+                ("Owner", f"{owner.name} ({owner.display_name})" if owner else "Unknown"),
+                ("ID", str(owner.id) if owner else "Unknown"),
+                ("Reason", reason[:50]),
+            ], emoji="✅" if rename_success and lock_success else "⚠️")
 
             # Log to case system (creates case for debate owner)
             if owner:
-                try:
-                    if self.bot.case_log_service:
+                if self.bot.case_log_service:
+                    try:
                         await self.bot.case_log_service.log_debate_closed(
                             thread=thread,
                             closed_by=closed_by,
@@ -253,17 +267,35 @@ class CloseCog(commands.Cog):
                             original_name=original_name,
                             reason=reason
                         )
-                except Exception as e:
-                    logger.warning("Failed to log debate close to case system", [
-                        ("Error", str(e)),
+                        logger.debug("Case Log Updated (Debate Closed)", [
+                            ("Thread ID", str(thread.id)),
+                            ("Owner", f"{owner.name} ({owner.display_name})"),
+                            ("ID", str(owner.id)),
+                        ])
+                    except Exception as e:
+                        logger.tree("Failed to Update Case Log (Debate Closed)", [
+                            ("Thread ID", str(thread.id)),
+                            ("Owner", f"{owner.name} ({owner.display_name})"),
+                            ("ID", str(owner.id)),
+                            ("Error", str(e)[:80]),
+                        ], emoji="⚠️")
+                else:
+                    logger.debug("Case Log Service Not Available", [
+                        ("Thread ID", str(thread.id)),
+                        ("Event", "Debate Closed"),
                     ])
+            else:
+                logger.debug("No Owner Found for Case Log", [
+                    ("Thread ID", str(thread.id)),
+                    ("Event", "Debate Closed"),
+                ])
 
             # Record to closure history and send DM notification
             past_closure_count = 0
             if owner:
                 # Add to closure history
-                try:
-                    if self.bot.debates_service and self.bot.debates_service.db:
+                if self.bot.debates_service and self.bot.debates_service.db:
+                    try:
                         self.bot.debates_service.db.add_to_closure_history(
                             user_id=owner.id,
                             thread_id=thread.id,
@@ -273,9 +305,22 @@ class CloseCog(commands.Cog):
                         )
                         # Get count (subtract 1 since we just added this one)
                         past_closure_count = max(0, self.bot.debates_service.db.get_user_closure_count(owner.id) - 1)
-                except Exception as e:
-                    logger.warning("Failed to record closure to history", [
-                        ("Error", str(e)),
+                        logger.debug("Closure History Recorded", [
+                            ("Thread ID", str(thread.id)),
+                            ("Owner", f"{owner.name} ({owner.display_name})"),
+                            ("ID", str(owner.id)),
+                            ("Past Closures", str(past_closure_count)),
+                        ])
+                    except Exception as e:
+                        logger.tree("Failed to Record Closure History", [
+                            ("Thread ID", str(thread.id)),
+                            ("Owner", f"{owner.name} ({owner.display_name})"),
+                            ("ID", str(owner.id)),
+                            ("Error", str(e)[:80]),
+                        ], emoji="⚠️")
+                else:
+                    logger.debug("Debates Service Not Available for Closure History", [
+                        ("Thread ID", str(thread.id)),
                     ])
 
                 # Send DM notification to owner with appeal button
@@ -290,7 +335,8 @@ class CloseCog(commands.Cog):
                     )
                 except Exception as e:
                     logger.warning("Failed to send close notification DM", [
-                        ("Owner", f"{owner.name} ({owner.id})"),
+                        ("Owner", f"{owner.name} ({owner.display_name})"),
+                        ("Owner ID", str(owner.id)),
                         ("Error", str(e)),
                     ])
 
@@ -417,8 +463,11 @@ class CloseCog(commands.Cog):
                             value=f"<t:{int(member.joined_at.timestamp())}:D>",
                             inline=True,
                         )
-            except Exception:
-                pass  # Silently ignore if we can't get join date
+            except Exception as e:
+                logger.debug("Could Not Get Member Join Date For Close DM", [
+                    ("Error Type", type(e).__name__),
+                    ("Error", str(e)[:50]),
+                ])
 
             # What's Next guidance
             embed.add_field(

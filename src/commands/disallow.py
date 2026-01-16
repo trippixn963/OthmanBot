@@ -69,7 +69,8 @@ class DisallowCog(commands.Cog):
             ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
             ("ID", str(interaction.user.id)),
             ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
-            ("Target User", f"{user.name} ({user.id})"),
+            ("Target User", f"{user.name} ({user.display_name})"),
+            ("ID", str(user.id)),
             ("Thread ID Param", thread_id),
             ("Duration", duration),
         ])
@@ -119,7 +120,8 @@ class DisallowCog(commands.Cog):
                 logger.warning("/disallow Command Rejected - Protected User", [
                     ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
             ("ID", str(interaction.user.id)),
-                    ("Target User", f"{user.name} ({user.id})"),
+                    ("Target User", f"{user.name} ({user.display_name})"),
+                    ("ID", str(user.id)),
                     ("Reason", "Target has Debates Management role"),
                 ])
                 await interaction.response.send_message(
@@ -187,8 +189,10 @@ class DisallowCog(commands.Cog):
 
         if success:
             logger.tree("User Banned From Debates", [
-                ("Banned User", f"{user.name} ({user.id})"),
-                ("Banned By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Banned User", f"{user.name} ({user.display_name})"),
+                ("ID", str(user.id)),
+                ("Banned By", f"{interaction.user.name} ({interaction.user.display_name})"),
+                ("ID", str(interaction.user.id)),
                 ("Scope", scope),
                 ("Thread ID", str(target_thread_id) if target_thread_id else "Global"),
                 ("Duration", duration_display),
@@ -273,9 +277,10 @@ class DisallowCog(commands.Cog):
             asyncio.create_task(self._remove_user_reactions(user, target_thread_id))
         else:
             logger.info("/disallow Command - User Already Banned", [
-                ("Target User", f"{user.name} ({user.id})"),
+                ("Target User", f"{user.name} ({user.display_name})"),
+                ("ID", str(user.id)),
                 ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
-            ("ID", str(interaction.user.id)),
+                ("ID", str(interaction.user.id)),
                 ("Scope", scope),
             ])
             await interaction.response.send_message(
@@ -305,7 +310,9 @@ class DisallowCog(commands.Cog):
             else:
                 # All threads - use database as source of truth
                 if not hasattr(self.bot, 'debates_service') or not self.bot.debates_service:
-                    logger.warning("Debates service not available for reaction cleanup")
+                    logger.warning("Debates Service Not Available For Reaction Cleanup", [
+                        ("Action", "Skipping cleanup"),
+                    ])
                     return
                 thread_ids = self.bot.debates_service.db.get_all_debate_thread_ids()
 
@@ -346,7 +353,7 @@ class DisallowCog(commands.Cog):
             for thread in threads_to_process:
                 try:
                     # Get the analytics message ID from database
-                    analytics_msg_id = self.bot.debates_service.db.get_analytics_message(thread.id)
+                    analytics_msg_id = await self.bot.debates_service.db.get_analytics_message_async(thread.id)
 
                     if not analytics_msg_id:
                         logger.debug("No Analytics Message Found", [

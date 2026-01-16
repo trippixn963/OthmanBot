@@ -40,11 +40,15 @@ async def post_hot_debate(bot: "OthmanBot") -> None:
     try:
         # Validate configuration
         if not bot.general_channel_id:
-            logger.warning("🔥 General Channel Not Configured - Skipping Hot Debate Post")
+            logger.warning("🔥 General Channel Not Configured", [
+                ("Action", "Skipping hot debate post"),
+            ])
             return
 
         if not bot.debates_service:
-            logger.warning("🔥 Debates Service Not Initialized - Skipping Hot Debate Post")
+            logger.warning("🔥 Debates Service Not Initialized", [
+                ("Action", "Skipping hot debate post"),
+            ])
             return
 
         # Get general channel
@@ -56,11 +60,15 @@ async def post_hot_debate(bot: "OthmanBot") -> None:
             return
 
         # Get hottest debate
-        logger.info("🔥 Fetching Hottest Debate")
+        logger.info("🔥 Fetching Hottest Debate", [
+            ("Forum ID", str(DEBATES_FORUM_ID)),
+        ])
         hot_debate = await bot.debates_service.get_hottest_debate(bot, DEBATES_FORUM_ID)
 
         if not hot_debate:
-            logger.info("🔥 No Hot Debates Found - Skipping Post")
+            logger.info("🔥 No Hot Debates Found", [
+                ("Action", "Skipping post"),
+            ])
             return
 
         # Format the announcement

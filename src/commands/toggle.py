@@ -150,7 +150,9 @@ class ToggleCog(commands.Cog):
                     if backup_path:
                         steps_completed.append("Backup created")
             except asyncio.TimeoutError:
-                logger.warning("Backup timed out during toggle")
+                logger.warning("Backup Timed Out During Toggle", [
+                    ("Timeout", f"{TIMEOUT_MEDIUM}s"),
+                ])
             except Exception as e:
                 logger.warning("Failed to create backup during toggle", [
                     ("Error", str(e)),
@@ -173,7 +175,10 @@ class ToggleCog(commands.Cog):
                     )
                 steps_completed.append("Presence updated")
             except asyncio.TimeoutError:
-                logger.warning("Presence update timed out")
+                logger.warning("Presence Update Timed Out", [
+                    ("Timeout", f"{TIMEOUT_SHORT}s"),
+                    ("Context", "Toggle OFF"),
+                ])
             except Exception as e:
                 logger.warning("Failed to update presence", [
                     ("Error", str(e)),
@@ -185,7 +190,10 @@ class ToggleCog(commands.Cog):
                     await self.bot.update_status_channel(online=False)
                 steps_completed.append("Status updated")
             except asyncio.TimeoutError:
-                logger.warning("Status channel update timed out")
+                logger.warning("Status Channel Update Timed Out", [
+                    ("Timeout", f"{TIMEOUT_SHORT}s"),
+                    ("Context", "Toggle OFF"),
+                ])
             except Exception as e:
                 logger.warning("Failed to update status channel", [
                     ("Error", str(e)),
@@ -198,7 +206,9 @@ class ToggleCog(commands.Cog):
                         await self.bot.alert_service.send_shutdown_alert()
                     steps_completed.append("Shutdown alert")
                 except asyncio.TimeoutError:
-                    logger.warning("Shutdown alert timed out")
+                    logger.warning("Shutdown Alert Timed Out", [
+                        ("Timeout", f"{TIMEOUT_SHORT}s"),
+                    ])
                 except Exception as e:
                     logger.warning("Failed to send shutdown alert", [
                         ("Error", str(e)),
@@ -272,7 +282,10 @@ class ToggleCog(commands.Cog):
                     )
                 steps_completed.append("Presence updated")
             except asyncio.TimeoutError:
-                logger.warning("Presence update timed out")
+                logger.warning("Presence Update Timed Out", [
+                    ("Timeout", f"{TIMEOUT_SHORT}s"),
+                    ("Context", "Toggle ON"),
+                ])
             except Exception as e:
                 logger.warning("Failed to update presence", [
                     ("Error", str(e)),
@@ -284,7 +297,10 @@ class ToggleCog(commands.Cog):
                     await self.bot.update_status_channel(online=True)
                 steps_completed.append("Status updated")
             except asyncio.TimeoutError:
-                logger.warning("Status channel update timed out")
+                logger.warning("Status Channel Update Timed Out", [
+                    ("Timeout", f"{TIMEOUT_SHORT}s"),
+                    ("Context", "Toggle ON"),
+                ])
             except Exception as e:
                 logger.warning("Failed to update status channel", [
                     ("Error", str(e)),
@@ -297,7 +313,9 @@ class ToggleCog(commands.Cog):
                         await self.bot.alert_service.send_startup_alert()
                     steps_completed.append("Startup alert")
                 except asyncio.TimeoutError:
-                    logger.warning("Startup alert timed out")
+                    logger.warning("Startup Alert Timed Out", [
+                        ("Timeout", f"{TIMEOUT_SHORT}s"),
+                    ])
                 except Exception as e:
                     logger.warning("Failed to send startup alert", [
                         ("Error", str(e)),

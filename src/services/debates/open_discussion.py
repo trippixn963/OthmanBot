@@ -57,7 +57,7 @@ This is a casual space for free-flowing conversation. Unlike regular debates, **
 
 ### How to Participate
 
-React with {emoji} below to acknowledge these guidelines and unlock posting access.
+**No verification needed!** Just start chatting - everyone can post here freely.
 
 ---
 *Your messages here won't affect your karma stats or message counts.*
@@ -203,8 +203,11 @@ class OpenDiscussionService:
                                 ("Thread ID", str(thread.id)),
                                 ("Name", thread.name),
                             ])
-                        except discord.HTTPException:
-                            pass
+                        except discord.HTTPException as e:
+                            logger.debug("Could Not Unpin Old Open Discussion Thread", [
+                                ("Thread ID", str(thread.id)),
+                                ("Error", str(e)[:50]),
+                            ])
 
             # Create the thread with starter message (rules)
             starter_embed = self._build_rules_embed()
@@ -323,19 +326,27 @@ class OpenDiscussionService:
                         logger.info("Removed Unwanted Reaction from Open Discussion", [
                             ("Emoji", str(reaction.emoji)),
                         ])
-                    except discord.HTTPException:
-                        pass
+                    except discord.HTTPException as e:
+                        logger.debug("Could Not Clear Reaction From Open Discussion", [
+                            ("Emoji", str(reaction.emoji)),
+                            ("Error", str(e)[:50]),
+                        ])
 
         except discord.NotFound:
-            pass  # Starter message not found
-        except discord.HTTPException:
-            pass  # Non-critical, ignore errors
+            logger.debug("Open Discussion Starter Message Not Found (Cleanup Reactions)", [
+                ("Thread ID", str(thread.id)),
+            ])
+        except discord.HTTPException as e:
+            logger.debug("Open Discussion Reaction Cleanup Failed", [
+                ("Thread ID", str(thread.id)),
+                ("Error", str(e)[:50]),
+            ])
 
     async def _refresh_original_embed(self, thread: discord.Thread) -> None:
         """
-        Refresh the original post embed to ensure footer has developer avatar.
+        Refresh the original post embed to ensure content and footer are current.
 
-        Called on startup to fix threads created before footer was initialized.
+        Called on startup to keep the rules embed up to date.
 
         Args:
             thread: The Open Discussion thread
@@ -344,28 +355,38 @@ class OpenDiscussionService:
             # Fetch the starter message (ID equals thread ID for forum threads)
             starter_message = await thread.fetch_message(thread.id)
 
-            # Build fresh embed with current footer
+            # Build fresh embed with current content
             new_embed = self._build_rules_embed()
 
-            # Check if embed needs updating (compare footer icon)
+            # Check if embed needs updating (compare description and footer)
             current_embeds = starter_message.embeds
-            if current_embeds:
-                current_footer = current_embeds[0].footer
-                new_footer = new_embed.footer
+            needs_update = False
 
-                # Only update if footer icon is different or missing
-                if current_footer.icon_url != new_footer.icon_url:
-                    await starter_message.edit(embed=new_embed)
-                    logger.info("Open Discussion Embed Refreshed", [
-                        ("Thread ID", str(thread.id)),
-                        ("Reason", "Footer updated with developer avatar"),
-                    ])
+            if current_embeds:
+                current_embed = current_embeds[0]
+                # Update if description or footer changed
+                if current_embed.description != new_embed.description:
+                    needs_update = True
+                elif current_embed.footer.icon_url != new_embed.footer.icon_url:
+                    needs_update = True
+            else:
+                needs_update = True
+
+            if needs_update:
+                await starter_message.edit(embed=new_embed)
+                logger.info("Open Discussion Embed Refreshed", [
+                    ("Thread ID", str(thread.id)),
+                    ("Reason", "Content updated"),
+                ])
 
         except discord.NotFound:
-            pass  # Starter message not found
+            logger.debug("Open Discussion Starter Message Not Found (Refresh Embed)", [
+                ("Thread ID", str(thread.id)),
+            ])
         except discord.HTTPException as e:
             logger.debug("Could Not Refresh Open Discussion Embed", [
-                ("Error", str(e)),
+                ("Thread ID", str(thread.id)),
+                ("Error", str(e)[:50]),
             ])
 
     async def _cleanup_system_messages(self, thread: discord.Thread) -> None:
@@ -390,8 +411,12 @@ class OpenDiscussionService:
                     try:
                         await message.delete()
                         deleted_count += 1
-                    except discord.HTTPException:
-                        pass
+                    except discord.HTTPException as e:
+                        logger.debug("Could Not Delete System Message In Open Discussion", [
+                            ("Message ID", str(message.id)),
+                            ("Type", str(message.type)),
+                            ("Error", str(e)[:50]),
+                        ])
 
             if deleted_count > 0:
                 logger.info("Open Discussion System Messages Cleaned", [
@@ -417,7 +442,7 @@ class OpenDiscussionService:
         """
         embed = discord.Embed(
             title=f"{EmbedIcons.INFO} Open Discussion Guidelines",
-            description=RULES_DESCRIPTION.format(emoji=OPEN_DISCUSSION_ACKNOWLEDGMENT_EMOJI),
+            description=RULES_DESCRIPTION,
             color=EmbedColors.GREEN,
         )
         set_footer(embed)
@@ -431,8 +456,8 @@ class OpenDiscussionService:
         """
         Handle a message in the Open Discussion thread.
 
-        Called for every message in the thread. Checks if user has acknowledged
-        the rules. If not, deletes the message and sends an ephemeral reminder.
+        Called for every message in the thread. No verification needed -
+        anyone can post freely. Only cleans up system messages.
 
         Args:
             message: The message that was sent
@@ -444,7 +469,8 @@ class OpenDiscussionService:
         if not isinstance(message.channel, discord.Thread):
             return False
 
-        if not self._db.is_open_discussion_thread(message.channel.id):
+        open_discussion_id = self._db.get_open_discussion_thread_id()
+        if not open_discussion_id or message.channel.id != open_discussion_id:
             return False
 
         # Delete system messages (e.g., "changed the post title")
@@ -458,33 +484,7 @@ class OpenDiscussionService:
                 pass
             return True
 
-        # Skip bot messages
-        if message.author.bot:
-            return True
-
-        # Bypass for developer - can always post without acknowledging
-        if message.author.id == DEVELOPER_ID:
-            return True
-
-        # Check if user has acknowledged the rules
-        has_acknowledged = await self._has_user_acknowledged(message.channel, message.author)
-
-        if not has_acknowledged:
-            # Delete the message
-            try:
-                await message.delete()
-            except discord.HTTPException:
-                pass  # Message already deleted or no permission
-
-            # Send ephemeral-style reminder in channel (auto-deletes)
-            await self._send_acknowledgment_reminder(message.channel, message.author)
-
-            logger.warning("🔐 Open Discussion Message Deleted (Not Acknowledged)", [
-                ("User", f"{message.author.name} ({message.author.id})"),
-                ("Thread", message.channel.name),
-                ("Thread ID", str(message.channel.id)),
-            ])
-
+        # No verification needed - everyone can post freely
         return True
 
     async def _has_user_acknowledged(
@@ -560,7 +560,8 @@ class OpenDiscussionService:
 
         except discord.HTTPException as e:
             logger.warning("Failed To Send Acknowledgment Reminder", [
-                ("User", f"{user.name} ({user.id})"),
+                ("User", f"{user.name} ({user.display_name})"),
+                ("ID", str(user.id)),
                 ("Error", str(e)),
             ])
         except Exception as e:
@@ -583,7 +584,8 @@ class OpenDiscussionService:
         Returns:
             True if this is the Open Discussion thread
         """
-        return self._db.is_open_discussion_thread(thread_id)
+        open_discussion_id = self._db.get_open_discussion_thread_id()
+        return open_discussion_id is not None and thread_id == open_discussion_id
 
     def get_thread_id(self) -> Optional[int]:
         """

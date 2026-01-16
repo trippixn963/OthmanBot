@@ -35,7 +35,7 @@ class DatabaseCore:
     """
 
     # Current schema version - increment when adding migrations
-    SCHEMA_VERSION = 14
+    SCHEMA_VERSION = 15
 
     # Valid table names for SQL injection prevention
     VALID_TABLES = frozenset({
@@ -303,16 +303,34 @@ class DatabaseCore:
             )
         """)
 
-        # Create indexes
+        # Create indexes for query optimization
+        # Votes table indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_votes_message ON votes(message_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_votes_author ON votes(author_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_votes_voter ON votes(voter_id)")
+
+        # Users table indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_karma ON users(total_karma DESC)")
+
+        # Debate bans indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_bans_user ON debate_bans(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_bans_expires ON debate_bans(expires_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_bans_thread ON debate_bans(thread_id)")
+
+        # Participation indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_participation_user ON debate_participation(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_participation_thread ON debate_participation(thread_id)")
+
+        # Creators indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_creators_user ON debate_creators(user_id)")
+
+        # Case logs indexes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_case_logs_case_id ON case_logs(case_id)")
+
+        # History indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ban_history_user ON ban_history(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_closure_history_thread ON closure_history(thread_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_closure_history_user ON closure_history(closed_by)")
 
     def _run_migrations(self, cursor: sqlite3.Cursor, current_version: int) -> int:
         """Run all pending migrations."""

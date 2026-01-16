@@ -14,6 +14,7 @@ import discord
 
 from src.core.logger import logger
 from src.core.config import TEASER_LENGTH, EmbedColors
+from src.core.emojis import READ_EMOJI
 from src.utils import truncate
 from src.utils.footer import set_footer
 
@@ -48,7 +49,9 @@ async def send_general_announcement(
     """
     general_channel = bot.get_channel(bot.general_channel_id)
     if not general_channel or not isinstance(general_channel, discord.TextChannel):
-        logger.warning("📣 General Channel Not Found Or Invalid")
+        logger.warning("📣 General Channel Not Found Or Invalid", [
+            ("Context", "News announcement"),
+        ])
         return
 
     try:
@@ -60,13 +63,18 @@ async def send_general_announcement(
             color=EmbedColors.INFO,
         )
 
+        # Article image as main image
+        if article.image_url:
+            embed.set_image(url=article.image_url)
+
         # Developer footer
         set_footer(embed)
 
         # Create button
         view = discord.ui.View()
         button = discord.ui.Button(
-            label="📰 Read Full Article",
+            label="Read Full Article",
+            emoji=discord.PartialEmoji.from_str(READ_EMOJI),
             style=discord.ButtonStyle.link,
             url=thread.jump_url
         )
@@ -92,7 +100,7 @@ async def send_soccer_announcement(
     bot: "OthmanBot",
     thread: discord.Thread,
     article: "SoccerArticle",
-    applied_tags: list[discord.Object]
+    applied_tags: list[discord.ForumTag]
 ) -> None:
     """
     Send soccer announcement embed to general chat channel.
@@ -109,7 +117,9 @@ async def send_soccer_announcement(
     """
     general_channel = bot.get_channel(bot.general_channel_id)
     if not general_channel or not isinstance(general_channel, discord.TextChannel):
-        logger.warning("📣 General Channel Not Found Or Invalid (Soccer)")
+        logger.warning("📣 General Channel Not Found Or Invalid", [
+            ("Context", "Soccer announcement"),
+        ])
         return
 
     try:
@@ -121,11 +131,18 @@ async def send_soccer_announcement(
             color=EmbedColors.SUCCESS,
         )
 
+        # Article image as main image
+        if article.image_url:
+            embed.set_image(url=article.image_url)
+
+        # Developer footer
         set_footer(embed)
 
+        # Create button
         view = discord.ui.View()
         button = discord.ui.Button(
-            label="⚽ Read Full Article",
+            label="Read Full Article",
+            emoji=discord.PartialEmoji.from_str(READ_EMOJI),
             style=discord.ButtonStyle.link,
             url=thread.jump_url
         )

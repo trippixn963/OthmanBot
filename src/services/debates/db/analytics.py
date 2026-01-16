@@ -9,7 +9,7 @@ Server: discord.gg/syria
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 
@@ -80,7 +80,7 @@ class AnalyticsMixin:
                     return {"current_streak": current_streak, "longest_streak": longest_streak, "streak_extended": False}
 
                 yesterday = (datetime.now(NY_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
-                           - __import__('datetime').timedelta(days=1)).strftime("%Y-%m-%d")
+                           - timedelta(days=1)).strftime("%Y-%m-%d")
 
                 if last_active_date == yesterday:
                     current_streak += 1
@@ -233,3 +233,42 @@ class AnalyticsMixin:
             unique_voters = cursor.fetchone()[0]
 
             return {"total_votes": total_votes, "unique_voters": unique_voters, "year": year, "month": month}
+
+    def get_all_time_stats(self) -> dict:
+        """
+        Get all-time statistics for presence display.
+
+        Returns:
+            Dict with total_debates, total_votes, total_karma, total_participants, total_messages
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Total debates created
+            cursor.execute("SELECT COUNT(*) FROM debate_threads")
+            total_debates = cursor.fetchone()[0] or 0
+
+            # Total votes cast
+            cursor.execute("SELECT COUNT(*) FROM votes")
+            total_votes = cursor.fetchone()[0] or 0
+
+            # Total karma earned (sum of positive karma only)
+            cursor.execute("SELECT COALESCE(SUM(CASE WHEN total_karma > 0 THEN total_karma ELSE 0 END), 0) FROM users")
+            total_karma = cursor.fetchone()[0] or 0
+
+            # Total unique participants
+            cursor.execute("SELECT COUNT(DISTINCT user_id) FROM debate_participation")
+            total_participants = cursor.fetchone()[0] or 0
+
+            # Total messages in debates
+            cursor.execute("SELECT COALESCE(SUM(message_count), 0) FROM debate_participation")
+            total_messages = cursor.fetchone()[0] or 0
+
+            return {
+                "total_debates": total_debates,
+                "total_votes": total_votes,
+                "total_karma": total_karma,
+                "total_participants": total_participants,
+                "total_messages": total_messages,
+            }

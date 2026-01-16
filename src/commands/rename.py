@@ -245,14 +245,15 @@ class RenameCog(commands.Cog):
 
             # Get thread owner for logging
             thread_owner = thread.owner
-            owner_info = f"{thread_owner.name} ({thread_owner.id})" if thread_owner else "Unknown"
 
             logger.success("Debate Thread Renamed via /rename", [
                 ("Number", f"#{debate_number}"),
                 ("Original Title", thread.name),
                 ("New Title", new_title),
-                ("Thread Owner", owner_info),
-                ("Renamed By", f"{interaction.user.name} ({interaction.user.id})"),
+                ("Thread Owner", f"{thread_owner.name} ({thread_owner.display_name})" if thread_owner else "Unknown"),
+                ("ID", str(thread_owner.id) if thread_owner else "Unknown"),
+                ("Renamed By", f"{interaction.user.name} ({interaction.user.display_name})"),
+                ("ID", str(interaction.user.id)),
                 ("Thread ID", str(thread.id)),
             ])
 

@@ -81,7 +81,7 @@ async def check_user_participation(
 
     try:
         # Get analytics message ID from database
-        analytics_message_id = bot.debates_service.db.get_analytics_message(message.channel.id)
+        analytics_message_id = await bot.debates_service.db.get_analytics_message_async(message.channel.id)
 
         if not analytics_message_id:
             return True  # No analytics message, allow posting
@@ -142,7 +142,7 @@ async def check_user_participation(
 
         except discord.NotFound:
             # Clear stale reference
-            bot.debates_service.db.clear_analytics_message(message.channel.id)
+            await bot.debates_service.db.clear_analytics_message_async(message.channel.id)
             logger.info("🔐 Cleared Stale Analytics Reference (Access Control)", [
                 ("Message ID", str(analytics_message_id)),
                 ("Thread ID", str(message.channel.id)),
