@@ -421,7 +421,7 @@ async def _number_single_thread(bot: "OthmanBot", thread: discord.Thread) -> boo
                                 break
                     except discord.HTTPException:
                         pass
-                    db.set_analytics_message(thread.id, analytics_message.id)
+                    await db.set_analytics_message_async(thread.id, analytics_message.id)
         except Exception:
             pass
 
