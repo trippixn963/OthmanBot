@@ -172,7 +172,11 @@ def list_backups() -> list[dict]:
                 "size_kb": stat.st_size / KB_DIVISOR,
                 "created": datetime.fromtimestamp(stat.st_mtime, tz=NY_TZ),
             })
-        except OSError:
+        except OSError as e:
+            logger.debug("Skipping Backup File (OSError)", [
+                ("File", backup_file.name),
+                ("Error", str(e)[:50]),
+            ])
             continue
 
     return backups
@@ -205,6 +209,17 @@ class BackupScheduler:
         self._task: Optional[asyncio.Task] = None
         self._running = False
 
+    def _handle_task_exception(self, task: asyncio.Task) -> None:
+        """Handle exceptions from the scheduler task."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.tree("Backup Scheduler Task Exception", [
+                ("Error Type", type(exc).__name__),
+                ("Error", str(exc)[:100]),
+            ], emoji="❌")
+
     async def start(self, run_immediately: bool = True) -> None:
         """
         Start the backup scheduler.
@@ -226,6 +241,7 @@ class BackupScheduler:
 
         # Start the scheduler loop
         self._task = asyncio.create_task(self._scheduler_loop())
+        self._task.add_done_callback(self._handle_task_exception)
 
         logger.tree("Backup Scheduler Started", [
             ("Schedule", f"Daily at {BACKUP_HOUR_EST}:00 AM EST"),

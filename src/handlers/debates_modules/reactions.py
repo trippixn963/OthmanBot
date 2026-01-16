@@ -123,27 +123,33 @@ async def on_debate_reaction_add(
 
             if not success:
                 logger.warning("Vote Recording Failed (No Change)", [
-                    ("Voter", str(voter_id)),
+                    ("Voter", f"{user.name} ({user.display_name})"),
+                    ("ID", str(user.id)),
                     ("Message", str(message.id)),
                     ("Type", vote_type),
                 ])
                 try:
                     await reaction.remove(user)
-                except discord.HTTPException:
-                    pass
+                except discord.HTTPException as remove_err:
+                    logger.debug("Failed To Remove Reaction After Vote Failure", [
+                        ("Error", str(remove_err)[:50]),
+                    ])
                 return
 
         except Exception as e:
             logger.error("Vote Recording Exception", [
-                ("Voter", str(voter_id)),
+                ("Voter", f"{user.name} ({user.display_name})"),
+                ("ID", str(user.id)),
                 ("Message", str(message.id)),
                 ("Type", vote_type),
                 ("Error", str(e)),
             ])
             try:
                 await reaction.remove(user)
-            except discord.HTTPException:
-                pass
+            except discord.HTTPException as remove_err:
+                logger.debug("Failed To Remove Reaction After Exception", [
+                    ("Error", str(remove_err)[:50]),
+                ])
             return
 
         # Get updated karma for logging
@@ -151,10 +157,12 @@ async def on_debate_reaction_add(
         change = 1 if emoji == UPVOTE_EMOJI else -1
 
         logger.info("⭐ Karma Changed", [
-            ("Author", f"{message.author.name} ({author_id})"),
+            ("Author", f"{message.author.name} ({message.author.display_name})"),
+            ("ID", str(author_id)),
             ("Change", f"{'+' if change > 0 else ''}{change}"),
             ("New Total", str(karma_data.total_karma)),
-            ("Voter", f"{user.name} ({user.id})"),
+            ("Voter", f"{user.name} ({user.display_name})"),
+            ("ID", str(user.id)),
             ("Thread", message.channel.name[:30]),
         ])
 
@@ -230,7 +238,8 @@ async def on_debate_reaction_remove(
 
         if not removed:
             logger.debug("Vote Already Removed Or Not Found", [
-                ("Voter", f"{user.name} ({user.id})"),
+                ("Voter", f"{user.name} ({user.display_name})"),
+                ("ID", str(user.id)),
                 ("Message", str(reaction.message.id)),
                 ("Type", vote_type),
             ])
@@ -241,10 +250,12 @@ async def on_debate_reaction_remove(
         change = -1 if emoji == UPVOTE_EMOJI else 1
 
         logger.info("⭐ Vote Removed", [
-            ("Author", f"{reaction.message.author.name} ({reaction.message.author.id})"),
+            ("Author", f"{reaction.message.author.name} ({reaction.message.author.display_name})"),
+            ("ID", str(reaction.message.author.id)),
             ("Change", f"{'+' if change > 0 else ''}{change}"),
             ("New Total", str(karma_data.total_karma)),
-            ("Voter", f"{user.name} ({user.id})"),
+            ("Voter", f"{user.name} ({user.display_name})"),
+            ("ID", str(user.id)),
             ("Thread", reaction.message.channel.name[:30]),
         ])
 

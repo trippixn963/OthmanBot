@@ -132,7 +132,9 @@ class SoccerScraper(BaseScraper):
             ])
             return new_articles[:max_articles]
         else:
-            logger.info("📭 No New Soccer Articles Found")
+            logger.info("📭 No New Soccer Articles Found", [
+                ("Status", "All articles already posted"),
+            ])
             return []
 
     async def _fetch_from_source(
@@ -256,6 +258,9 @@ class SoccerScraper(BaseScraper):
                         ("Article ID", article_id),
                     ])
 
+                # Extract key quote
+                key_quote = await self._extract_key_quote(full_content)
+
                 article = Article(
                     title=ai_title,
                     url=entry.get("link", ""),
@@ -268,6 +273,7 @@ class SoccerScraper(BaseScraper):
                     source=source_info["name"],
                     source_emoji=source_info["emoji"],
                     team_tag=team_tag,
+                    key_quote=key_quote,
                 )
 
                 articles.append(article)

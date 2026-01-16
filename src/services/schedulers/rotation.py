@@ -21,7 +21,7 @@ from enum import Enum
 
 from src.core.logger import logger
 from src.core.config import SCHEDULER_ERROR_RETRY, BOT_DISABLED_CHECK_INTERVAL, NY_TZ
-from src.core.database import get_db
+from src.services.database import get_db
 
 
 # =============================================================================
@@ -141,6 +141,21 @@ class ContentRotationScheduler:
             ])
 
     # -------------------------------------------------------------------------
+    # Task Exception Handling
+    # -------------------------------------------------------------------------
+
+    def _handle_task_exception(self, task: asyncio.Task) -> None:
+        """Handle exceptions from the scheduler task."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.tree("Rotation Scheduler Task Exception", [
+                ("Error Type", type(exc).__name__),
+                ("Error", str(exc)[:100]),
+            ], emoji="❌")
+
+    # -------------------------------------------------------------------------
     # Start/Stop Controls
     # -------------------------------------------------------------------------
 
@@ -161,13 +176,16 @@ class ContentRotationScheduler:
             await self._post_next_content()
 
         if self.task and not self.task.done():
-            logger.warning("🔄 Scheduler Already Running")
+            logger.warning("🔄 Scheduler Already Running", [
+                ("Action", "Skipping start"),
+            ])
             return False
 
         self.is_running = True
         self._save_state()
 
         self.task = asyncio.create_task(self._schedule_loop())
+        self.task.add_done_callback(self._handle_task_exception)
 
         next_post: datetime = self._calculate_next_post_time()
         logger.success("🔄 Content Rotation Scheduler Started", [
@@ -184,7 +202,9 @@ class ContentRotationScheduler:
             True if stopped successfully, False if not running
         """
         if not self.is_running:
-            logger.warning("🔄 Scheduler Not Running")
+            logger.warning("🔄 Scheduler Not Running", [
+                ("Action", "Cannot stop"),
+            ])
             return False
 
         self.is_running = False
@@ -197,7 +217,9 @@ class ContentRotationScheduler:
             except asyncio.CancelledError:
                 pass
 
-        logger.success("🔄 Content Rotation Scheduler Stopped")
+        logger.success("🔄 Content Rotation Scheduler Stopped", [
+            ("Status", "Task cancelled"),
+        ])
         return True
 
     # -------------------------------------------------------------------------

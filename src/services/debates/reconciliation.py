@@ -66,7 +66,10 @@ async def reconcile_karma(bot: "OthmanBot", days_back: int | None = 7) -> dict:
     try:
         debates_forum = bot.get_channel(DEBATES_FORUM_ID)
         if not debates_forum:
-            logger.warning("⚠️ Debates forum not found for karma reconciliation")
+            logger.warning("⚠️ Debates Forum Not Found", [
+                ("Context", "Karma reconciliation"),
+                ("Forum ID", str(DEBATES_FORUM_ID)),
+            ])
             return stats
 
         # Get cutoff time for thread scanning (None = no cutoff, scan all)
@@ -211,6 +214,9 @@ async def _ensure_starter_reactions(thread: discord.Thread, stats: dict, bot: "O
 
     # Skip archived threads - can't add reactions
     if thread.archived:
+        logger.debug("Skipping Archived Thread (Reactions)", [
+            ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+        ])
         return rate_limit_delay
 
     try:
@@ -275,9 +281,15 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
         thread: Discord thread to reconcile
         stats: Stats dict to update
     """
+    if not hasattr(bot, 'debates_service') or bot.debates_service is None:
+        logger.warning("Skipping Thread Reconciliation - Debates Service Not Available", [
+            ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+        ])
+        return
+
     db = bot.debates_service.db
 
-    async for message in thread.history(limit=None):
+    async for message in thread.history(limit=1000):
         # Skip bot messages
         if message.author.bot:
             continue
@@ -291,6 +303,9 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
 
         for reaction in message.reactions:
             emoji_str = str(reaction.emoji)
+            # Skip reactions with 0 count (shouldn't happen but safety check)
+            if reaction.count == 0:
+                continue
             if emoji_str == UPVOTE_EMOJI:
                 async for user in reaction.users():
                     if user.bot:
@@ -301,7 +316,8 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
                             await reaction.remove(user)
                             stats["self_reactions_removed"] += 1
                             logger.info("Removed Self-Reaction (Reconciliation)", [
-                                ("User", f"{user.name} ({user.id})"),
+                                ("User", f"{user.name} ({user.display_name})"),
+                                ("ID", str(user.id)),
                                 ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
                                 ("Message ID", str(message.id)),
                                 ("Emoji", "⬆️"),
@@ -323,7 +339,8 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
                             await reaction.remove(user)
                             stats["self_reactions_removed"] += 1
                             logger.info("Removed Self-Reaction (Reconciliation)", [
-                                ("User", f"{user.name} ({user.id})"),
+                                ("User", f"{user.name} ({user.display_name})"),
+                                ("ID", str(user.id)),
                                 ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
                                 ("Message ID", str(message.id)),
                                 ("Emoji", "⬇️"),
@@ -346,7 +363,7 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
                 if db.add_vote(voter_id, message.id, author_id, 1):
                     stats["votes_added"] += 1
                     logger.debug("Added Missing Upvote", [
-                        ("Voter", str(voter_id)),
+                        ("User ID", str(voter_id)),
                         ("Message", str(message.id)),
                     ])
 
@@ -357,7 +374,7 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
                 if db.add_vote(voter_id, message.id, author_id, -1):
                     stats["votes_added"] += 1
                     logger.debug("Added Missing Downvote", [
-                        ("Voter", str(voter_id)),
+                        ("User ID", str(voter_id)),
                         ("Message", str(message.id)),
                     ])
 
@@ -369,7 +386,7 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
                 if db.remove_vote(voter_id, message.id):
                     stats["votes_removed"] += 1
                     logger.debug("Removed Stale Vote", [
-                        ("Voter", str(voter_id)),
+                        ("User ID", str(voter_id)),
                         ("Message", str(message.id)),
                     ])
 
@@ -406,7 +423,10 @@ async def cleanup_orphan_votes(bot: "OthmanBot") -> dict:
         debates_forum = bot.get_channel(DEBATES_FORUM_ID)
 
         if not debates_forum:
-            logger.warning("⚠️ Debates forum not found for orphan cleanup")
+            logger.warning("⚠️ Debates Forum Not Found", [
+                ("Context", "Orphan cleanup"),
+                ("Forum ID", str(DEBATES_FORUM_ID)),
+            ])
             return stats
 
         # Get all message IDs that have votes
@@ -414,7 +434,9 @@ async def cleanup_orphan_votes(bot: "OthmanBot") -> dict:
         total_messages = len(voted_message_ids)
 
         if total_messages == 0:
-            logger.info("🧹 No votes to check for orphans")
+            logger.info("🧹 No Votes To Check For Orphans", [
+                ("Action", "Skipping orphan cleanup"),
+            ])
             return stats
 
         logger.info("🧹 Checking For Orphan Votes", [
@@ -443,7 +465,7 @@ async def cleanup_orphan_votes(bot: "OthmanBot") -> dict:
                 continue
 
             try:
-                async for message in thread.history(limit=None):
+                async for message in thread.history(limit=1000):
                     if not message.author.bot:
                         valid_message_ids.add(message.id)
                         stats["messages_checked"] += 1
@@ -454,7 +476,11 @@ async def cleanup_orphan_votes(bot: "OthmanBot") -> dict:
                 await asyncio.sleep(adaptive_delay)
 
             except discord.NotFound:
-                # Thread deleted during scan
+                # Thread deleted during scan - log and track
+                stats["threads_deleted_during_scan"] = stats.get("threads_deleted_during_scan", 0) + 1
+                logger.debug("Thread Deleted During Orphan Scan", [
+                    ("Thread ID", str(thread.id)),
+                ])
                 continue
             except discord.HTTPException as e:
                 if e.status == 429:

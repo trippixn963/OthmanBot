@@ -188,11 +188,12 @@ class CasesCog(commands.Cog):
         await interaction.followup.send(embed=embed)
 
         logger.success("📋 Case Lookup Complete", [
-            ("User", f"{display_name} ({user_id})"),
+            ("User", display_name),
+            ("ID", str(user_id)),
             ("Case ID", f"{case['case_id']:04d}"),
             ("Ban Count", str(case['ban_count'])),
             ("Looked Up By", f"{interaction.user.name} ({interaction.user.display_name})"),
-            ("Mod ID", str(interaction.user.id)),
+            ("ID", str(interaction.user.id)),
         ])
 
 

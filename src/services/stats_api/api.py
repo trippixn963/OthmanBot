@@ -562,6 +562,17 @@ class OthmanAPI:
     # Server Lifecycle
     # =========================================================================
 
+    def _handle_cleanup_task_exception(self, task: asyncio.Task) -> None:
+        """Handle exceptions from the cleanup task."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.tree("Stats API Cleanup Task Exception", [
+                ("Error Type", type(exc).__name__),
+                ("Error", str(exc)[:100]),
+            ], emoji="❌")
+
     async def start(self) -> None:
         """Start the API server."""
         self._start_time = datetime.now(NY_TZ)
@@ -572,6 +583,7 @@ class OthmanAPI:
         await site.start()
 
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+        self._cleanup_task.add_done_callback(self._handle_cleanup_task_exception)
 
         logger.success("Stats API Started", [
             ("Host", STATS_API_HOST),
@@ -590,7 +602,9 @@ class OthmanAPI:
 
         if self.runner:
             await self.runner.cleanup()
-            logger.info("Stats API Stopped")
+            logger.info("Stats API Stopped", [
+                ("Status", "Server shutdown complete"),
+            ])
 
     async def _cleanup_loop(self) -> None:
         """Periodically clean up rate limiter entries."""

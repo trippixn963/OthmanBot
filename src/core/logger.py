@@ -99,6 +99,9 @@ class Logger:
         # Error webhook (from env var)
         self._error_webhook_url: str = os.getenv("ERROR_WEBHOOK_URL", "")
 
+        # Persistent aiohttp session for webhooks (lazy initialized)
+        self._webhook_session: Optional[aiohttp.ClientSession] = None
+
         # Base logs directory
         self.logs_base_dir = Path(__file__).parent.parent.parent / "logs"
         self.logs_base_dir.mkdir(exist_ok=True)
@@ -299,9 +302,19 @@ class Logger:
 
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._async_send_live_log(formatted_tree))
+            task = loop.create_task(self._async_send_live_log(formatted_tree))
+            task.add_done_callback(self._handle_webhook_task_exception)
         except RuntimeError:
             # No event loop running yet
+            pass
+
+    def _handle_webhook_task_exception(self, task: asyncio.Task) -> None:
+        """Handle exceptions from webhook tasks silently (already logged to file)."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            # Already logged to file in _async_send_webhook, just consume the exception
             pass
 
     async def _async_send_live_log(self, formatted_tree: str) -> None:
@@ -333,29 +346,40 @@ class Logger:
 
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._async_send_webhook(payload, self._error_webhook_url))
+            task = loop.create_task(self._async_send_webhook(payload, self._error_webhook_url))
+            task.add_done_callback(self._handle_webhook_task_exception)
         except RuntimeError:
             pass
 
+    async def _get_webhook_session(self) -> aiohttp.ClientSession:
+        """Get or create persistent webhook session."""
+        if self._webhook_session is None or self._webhook_session.closed:
+            self._webhook_session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=5)
+            )
+        return self._webhook_session
+
     async def _async_send_webhook(self, payload: dict, webhook_url: str) -> None:
-        """Send webhook payload asynchronously."""
+        """Send webhook payload asynchronously using persistent session."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    webhook_url,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=5)
-                ) as response:
-                    if response.status >= 400:
-                        self._write_to_file_only(
-                            f"[WEBHOOK] HTTP {response.status} sending to webhook"
-                        )
+            session = await self._get_webhook_session()
+            async with session.post(webhook_url, json=payload) as response:
+                if response.status >= 400:
+                    self._write_to_file_only(
+                        f"[WEBHOOK] HTTP {response.status} sending to webhook"
+                    )
         except asyncio.TimeoutError:
             self._write_to_file_only("[WEBHOOK] Timeout sending to webhook")
         except aiohttp.ClientError as e:
             self._write_to_file_only(f"[WEBHOOK] Client error: {type(e).__name__}")
         except Exception as e:
             self._write_to_file_only(f"[WEBHOOK] Error: {type(e).__name__}: {e}")
+
+    async def close_webhook_session(self) -> None:
+        """Close the persistent webhook session (call on shutdown)."""
+        if self._webhook_session and not self._webhook_session.closed:
+            await self._webhook_session.close()
+            self._webhook_session = None
 
     def _format_tree_for_live(
         self,

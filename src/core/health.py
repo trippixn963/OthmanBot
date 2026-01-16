@@ -69,7 +69,9 @@ class HealthCheckServer:
         """Stop the health check HTTP server."""
         if self._runner:
             await self._runner.cleanup()
-            logger.info("Health Check Server Stopped")
+            logger.info("Health Check Server Stopped", [
+                ("Status", "Server shutdown complete"),
+            ])
 
     async def _handle_root(self, request: web.Request) -> web.Response:
         """Handle root endpoint - simple OK response."""

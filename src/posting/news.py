@@ -16,7 +16,8 @@ import discord
 
 from src.core.logger import logger
 from src.core.config import NY_TZ
-from src.core.presence import update_presence
+from src.core.emojis import UPVOTE_EMOJI
+from src.services.database import get_db
 from src.posting.poster import download_image, download_video, cleanup_temp_file, build_forum_content
 from src.posting.announcements import send_general_announcement
 from src.services import Article as NewsArticle
@@ -43,19 +44,27 @@ async def post_news(bot: "OthmanBot") -> None:
     Handles all errors gracefully to keep scheduler running
     """
     if not bot.news_channel_id:
-        logger.error("📰 NEWS_CHANNEL_ID Not Configured")
+        logger.error("📰 NEWS_CHANNEL_ID Not Configured", [
+            ("Action", "Skipping news post"),
+        ])
         return
 
     if not bot.news_scraper:
-        logger.error("📰 News Scraper Not Initialized")
+        logger.error("📰 News Scraper Not Initialized", [
+            ("Action", "Skipping news post"),
+        ])
         return
 
     try:
-        logger.info("📰 Fetching Latest News Articles")
+        logger.info("📰 Fetching Latest News Articles", [
+            ("Max Articles", "1"),
+        ])
         articles = await bot.news_scraper.fetch_latest_news(max_articles=1)
 
         if not articles:
-            logger.warning("📰 No New Articles Found To Post")
+            logger.warning("📰 No New Articles Found To Post", [
+                ("Action", "Skipping post"),
+            ])
             return
 
         article = articles[0]
@@ -77,7 +86,6 @@ async def post_news(bot: "OthmanBot") -> None:
         logger.success("📰 Posted News Article", [
             ("Count", "1"),
         ])
-        await update_presence(bot)
 
     except discord.HTTPException as e:
         logger.error("📰 Discord API Error Posting News", [
@@ -171,6 +179,7 @@ async def post_article_to_forum(
             published_date=article.published_date,
             arabic_summary=article.arabic_summary,
             english_summary=article.english_summary,
+            key_quote=article.key_quote,
         )
 
         # Format thread name
@@ -204,12 +213,30 @@ async def post_article_to_forum(
         )
         thread = thread_with_msg.thread
 
+        # Add upvote reaction for community engagement
+        if thread_with_msg.message:
+            try:
+                await thread_with_msg.message.add_reaction(UPVOTE_EMOJI)
+            except discord.HTTPException as e:
+                logger.debug("Could Not Add Upvote Reaction To News Post", [
+                    ("Thread ID", str(thread.id)),
+                    ("Error", str(e)[:50]),
+                ])
+
         # Mark as posted (saves to database)
         if bot.news_scraper:
+            article_id = bot.news_scraper._extract_article_id(article.url)
             bot.news_scraper.add_posted_url(article.url)
-            logger.info("📰 Marked Article As Posted", [
-                ("Article ID", bot.news_scraper._extract_article_id(article.url)),
-            ])
+
+            # Track engagement for this article
+            db = get_db()
+            db.track_article_engagement(
+                content_type="news",
+                article_id=article_id,
+                thread_id=thread.id,
+                thread_url=thread.jump_url,
+                title=article.title,
+            )
 
         logger.success("📰 Posted Forum Thread", [
             ("Title", article.title[:50]),

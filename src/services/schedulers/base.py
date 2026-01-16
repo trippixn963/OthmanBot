@@ -99,6 +99,22 @@ class BaseScheduler:
             ], emoji="⚠️")
 
     # -------------------------------------------------------------------------
+    # Task Exception Handling
+    # -------------------------------------------------------------------------
+
+    def _handle_task_exception(self, task: asyncio.Task) -> None:
+        """Handle exceptions from the scheduler task."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.tree("Scheduler Task Exception", [
+                ("Type", self.content_type.capitalize()),
+                ("Error Type", type(exc).__name__),
+                ("Error", str(exc)[:100]),
+            ], emoji="❌")
+
+    # -------------------------------------------------------------------------
     # Start/Stop Controls
     # -------------------------------------------------------------------------
 
@@ -129,6 +145,7 @@ class BaseScheduler:
         self._save_state()
 
         self.task = asyncio.create_task(self._schedule_loop())
+        self.task.add_done_callback(self._handle_task_exception)
 
         next_post: datetime = self._calculate_next_post_time()
         logger.tree("Scheduler Started", [

@@ -109,7 +109,9 @@ class NewsScraper(BaseScraper):
             ])
             return new_articles[:max_articles]
         else:
-            logger.info("📭 No New Articles Found")
+            logger.info("📭 No New Articles Found", [
+                ("Status", "All articles already posted"),
+            ])
             return []
 
     async def _fetch_from_source(
@@ -119,7 +121,9 @@ class NewsScraper(BaseScraper):
         cutoff_time: datetime,
         max_articles: int,
     ) -> list[Article]:
-        """Fetch articles from a single RSS source."""
+        """Fetch articles from a single RSS source with parallel content extraction."""
+        import asyncio
+
         articles: list[Article] = []
 
         feed = feedparser.parse(source_info["rss_url"])
@@ -130,36 +134,93 @@ class NewsScraper(BaseScraper):
             ])
             return articles
 
+        # Phase 1: Filter entries that pass initial checks
+        valid_entries: list[tuple] = []  # (entry, published_date, image_url, summary)
+
         for entry in feed.entries[: max_articles * 2]:
+            article_url = entry.get("link", "")
+
+            # Check if article is quarantined (too many failures)
+            if self.is_quarantined(article_url):
+                logger.tree("Skipping Quarantined Article", [
+                    ("URL", article_url[:60]),
+                ], emoji="⏭️")
+                continue
+
+            # Parse date
+            published_date = self._parse_date(entry)
+            if not published_date or published_date < cutoff_time:
+                continue
+
+            # Extract image from RSS
+            image_url = await self._extract_image(entry)
+
+            # Get summary - handle content field which can be list or dict
+            content_field = entry.get("content", [{}])
+            content_value = ""
+            if isinstance(content_field, list) and content_field:
+                content_value = content_field[0].get("value", "")
+            elif isinstance(content_field, dict):
+                content_value = content_field.get("value", "")
+
+            summary = (
+                entry.get("summary", "")
+                or entry.get("description", "")
+                or content_value
+            )
+            summary = BeautifulSoup(summary, "html.parser").get_text()
+            summary = summary[:500] + "..." if len(summary) > 500 else summary
+
+            valid_entries.append((entry, published_date, image_url, summary))
+
+        if not valid_entries:
+            return articles
+
+        # Phase 2: Extract content in parallel (batch of 5)
+        PARALLEL_BATCH_SIZE = 5
+        logger.tree("Parallel Content Extraction Starting", [
+            ("Valid Entries", str(len(valid_entries))),
+            ("Batch Size", str(PARALLEL_BATCH_SIZE)),
+        ], emoji="⚡")
+
+        async def extract_content_wrapper(entry_data: tuple) -> Optional[tuple]:
+            """Wrapper to extract content and return with entry data."""
+            entry, published_date, image_url, summary = entry_data
+            article_url = entry.get("link", "")
             try:
-                # Parse date
-                published_date = self._parse_date(entry)
-                if not published_date or published_date < cutoff_time:
-                    continue
-
-                # Extract image from RSS
-                image_url = await self._extract_image(entry)
-
-                # Get summary - handle content field which can be list or dict
-                content_field = entry.get("content", [{}])
-                content_value = ""
-                if isinstance(content_field, list) and content_field:
-                    content_value = content_field[0].get("value", "")
-                elif isinstance(content_field, dict):
-                    content_value = content_field.get("value", "")
-
-                summary = (
-                    entry.get("summary", "")
-                    or entry.get("description", "")
-                    or content_value
-                )
-                summary = BeautifulSoup(summary, "html.parser").get_text()
-                summary = summary[:500] + "..." if len(summary) > 500 else summary
-
-                # Extract full content, image, and video
                 full_content, scraped_image, scraped_video = await self._extract_full_content(
-                    entry.get("link", ""), source_key
+                    article_url, source_key
                 )
+                return (entry, published_date, image_url, summary, full_content, scraped_image, scraped_video)
+            except Exception as e:
+                logger.tree("Content Extraction Failed", [
+                    ("URL", article_url[:50]),
+                    ("Error", str(e)[:50]),
+                ], emoji="❌")
+                return None
+
+        # Process in batches
+        extracted_results: list[tuple] = []
+        for i in range(0, len(valid_entries), PARALLEL_BATCH_SIZE):
+            batch = valid_entries[i:i + PARALLEL_BATCH_SIZE]
+            batch_results = await asyncio.gather(
+                *[extract_content_wrapper(entry_data) for entry_data in batch],
+                return_exceptions=True
+            )
+            for result in batch_results:
+                if result and not isinstance(result, Exception):
+                    extracted_results.append(result)
+
+        logger.tree("Parallel Content Extraction Complete", [
+            ("Extracted", str(len(extracted_results))),
+            ("Failed", str(len(valid_entries) - len(extracted_results))),
+        ], emoji="✅")
+
+        # Phase 3: Process extracted content sequentially (AI calls)
+        for result in extracted_results:
+            try:
+                entry, published_date, image_url, summary, full_content, scraped_image, scraped_video = result
+                article_url = entry.get("link", "")
 
                 # Prefer scraped image
                 if not image_url and scraped_image:
@@ -220,10 +281,19 @@ class NewsScraper(BaseScraper):
                 if is_garbage:
                     logger.warning("📰 Skipping Article With Garbage Content", [
                         ("Title", entry.get('title', 'Untitled')[:50]),
-                        ("URL", entry.get('link', '')[:60]),
+                        ("URL", article_url[:60]),
                         ("Reason", garbage_reason),
                         ("Content Preview", full_content[:150].replace('\n', ' ')),
                         ("Content Length", str(len(full_content))),
+                    ])
+                    continue
+
+                # Check for content-based duplicates
+                is_dup, similarity = self.is_duplicate_content(full_content, article_url)
+                if is_dup:
+                    logger.warning("📰 Skipping Duplicate Content", [
+                        ("Title", entry.get('title', 'Untitled')[:50]),
+                        ("Similarity", f"{similarity:.2%}"),
                     ])
                     continue
 
@@ -269,9 +339,12 @@ class NewsScraper(BaseScraper):
                 # Categorize article
                 category_tag_id = await self._categorize_article(ai_title, full_content)
 
+                # Extract key quote from article
+                key_quote = await self._extract_key_quote(full_content)
+
                 article = Article(
                     title=ai_title,
-                    url=entry.get("link", ""),
+                    url=article_url,
                     summary=summary,
                     full_content=full_content,
                     arabic_summary=arabic_summary,
@@ -282,7 +355,17 @@ class NewsScraper(BaseScraper):
                     source=source_info["name"],
                     source_emoji=source_info["emoji"],
                     category_tag_id=category_tag_id,
+                    key_quote=key_quote,
                 )
+
+                # Store content for future similarity checks
+                self.store_content_for_similarity(full_content, article_url)
+
+                # Record successful processing metric
+                self.record_metric("articles_processed", 1)
+
+                # Clear any previous failures for this article
+                self.clear_failure(article_url)
 
                 articles.append(article)
 
@@ -290,9 +373,17 @@ class NewsScraper(BaseScraper):
                     break
 
             except Exception as e:
+                # Record failure to dead letter queue
+                error_msg = str(e)[:200]
+                failure_count = self.record_failure(article_url, error_msg)
+
                 logger.warning(
-                    f"Failed to parse article from {source_info['name']}: {str(e)[:100]}"
+                    f"Failed to parse article from {source_info['name']}: {error_msg[:100]}"
                 )
+
+                # Record failure metric
+                self.record_metric("article_failures", 1)
+
                 continue
 
         return articles

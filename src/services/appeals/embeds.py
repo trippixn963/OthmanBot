@@ -40,14 +40,17 @@ async def post_appeal_to_case_thread(
     db = bot.debates_service.db if bot.debates_service else None
 
     if not bot.case_log_service or not db:
-        logger.warning("Case log service not available for appeal posting")
+        logger.warning("Case Log Service Not Available For Appeal Posting", [
+            ("Action", "Skipping appeal embed"),
+        ])
         return
 
     # Get or create case thread
     case = db.get_case_log(user.id)
     if not case:
         logger.info("No case thread exists for appeal user", [
-            ("User ID", str(user.id)),
+            ("User", f"{user.name} ({user.display_name})"),
+            ("ID", str(user.id)),
         ])
         return
 

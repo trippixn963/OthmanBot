@@ -388,7 +388,9 @@ class WebhookAlertService:
 
     async def send_startup_alert(self) -> None:
         """Send startup alert immediately when bot starts."""
-        logger.info("Sending Startup Alert")
+        logger.info("Sending Startup Alert", [
+            ("Status", "Bot online"),
+        ])
         embed = self._create_status_embed("Online", COLOR_ONLINE, include_health=True)
         # Await directly to ensure startup alert is sent before continuing
         await self._send_webhook(embed)

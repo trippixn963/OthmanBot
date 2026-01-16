@@ -119,7 +119,9 @@ class AppealModal(discord.ui.Modal):
 
         # Get appeal service
         if not self.bot.appeal_service:
-            logger.error("Appeal service not initialized")
+            logger.error("Appeal Service Not Initialized", [
+                ("Context", "Appeal modal submission"),
+            ])
             await interaction.followup.send(
                 "The appeal system is currently unavailable. Please try again later.",
                 ephemeral=True
@@ -186,8 +188,10 @@ class AppealModal(discord.ui.Modal):
                     "An error occurred while submitting your appeal. Please try again.",
                     ephemeral=True
                 )
-        except discord.HTTPException:
-            pass
+        except discord.HTTPException as e:
+            logger.debug("Appeal Error Response Failed", [
+                ("Error", str(e)[:50]),
+            ])
 
 
 # =============================================================================
@@ -243,7 +247,9 @@ class DenyReasonModal(discord.ui.Modal):
 
         # Get appeal service
         if not self.bot.appeal_service:
-            logger.error("Appeal service not initialized")
+            logger.error("Appeal Service Not Initialized", [
+                ("Context", "Deny reason modal submission"),
+            ])
             await interaction.followup.send(
                 "The appeal system is currently unavailable.",
                 ephemeral=True
@@ -410,8 +416,8 @@ class AppealButton(discord.ui.Button):
         if interaction.user.id != expected_user_id:
             logger.warning("⛔ Appeal Button Rejected - Wrong User", [
                 ("Clicked By", f"{interaction.user.name} ({interaction.user.display_name})"),
-            ("ID", str(interaction.user.id)),
-                ("Expected User", str(expected_user_id)),
+                ("ID", str(interaction.user.id)),
+                ("Expected User ID", str(expected_user_id)),
                 ("Action Type", action_type),
                 ("Source", source),
             ])
@@ -464,8 +470,11 @@ class AppealButton(discord.ui.Button):
                         "Please try clicking the Appeal button again.",
                         ephemeral=True
                     )
-                except discord.HTTPException:
-                    pass  # Silently fail if followup also fails
+                except discord.HTTPException as followup_err:
+                    logger.debug("Appeal Modal Followup Also Failed", [
+                        ("Original Error Code", str(e.code)),
+                        ("Followup Error", str(followup_err)[:50]),
+                    ])
             else:
                 raise
 
@@ -607,7 +616,7 @@ async def _handle_review_button(
 
     logger.info("Appeal Review Button Clicked", [
         ("Moderator", f"{interaction.user.name} ({interaction.user.display_name})"),
-            ("ID", str(interaction.user.id)),
+        ("ID", str(interaction.user.id)),
         ("Appeal ID", str(appeal_id)),
         ("Action", action),
     ])
@@ -633,7 +642,9 @@ async def _handle_review_button(
 
     # Get appeal service
     if not bot.appeal_service:
-        logger.error("Appeal service not initialized")
+        logger.error("Appeal Service Not Initialized", [
+            ("Context", "Review button handler"),
+        ])
         await interaction.followup.send(
             "The appeal system is currently unavailable.",
             ephemeral=True
@@ -738,10 +749,10 @@ async def handle_appeal_button_interaction(
 
     logger.info("Appeal Button Clicked", [
         ("User", f"{interaction.user.name} ({interaction.user.display_name})"),
-            ("ID", str(interaction.user.id)),
+        ("ID", str(interaction.user.id)),
         ("Action Type", action_type),
         ("Action ID", str(action_id)),
-        ("Expected User", str(expected_user_id)),
+        ("Expected User ID", str(expected_user_id)),
         ("Source", source),
     ])
 
@@ -754,7 +765,7 @@ async def handle_appeal_button_interaction(
         logger.warning("Appeal Button Rejected - Wrong User", [
             ("Clicked By", f"{interaction.user.name} ({interaction.user.display_name})"),
             ("ID", str(interaction.user.id)),
-            ("Expected User", str(expected_user_id)),
+            ("Expected User ID", str(expected_user_id)),
             ("Action Type", action_type),
         ])
         await interaction.response.send_message(
@@ -832,7 +843,7 @@ async def handle_review_button_interaction(
 
     logger.info("Appeal Review Button Clicked", [
         ("Moderator", f"{interaction.user.name} ({interaction.user.display_name})"),
-            ("ID", str(interaction.user.id)),
+        ("ID", str(interaction.user.id)),
         ("Appeal ID", str(appeal_id)),
         ("Action", action),
     ])
@@ -869,7 +880,9 @@ async def handle_review_button_interaction(
 
     # Get appeal service
     if not bot.appeal_service:
-        logger.error("Appeal service not initialized")
+        logger.error("Appeal Service Not Initialized", [
+            ("Context", "Review button v2 handler"),
+        ])
         await interaction.followup.send(
             "The appeal system is currently unavailable.",
             ephemeral=True
@@ -958,7 +971,7 @@ async def handle_info_button_interaction(
 
     logger.info("More Info Button Clicked", [
         ("Moderator", f"{interaction.user.name} ({interaction.user.display_name})"),
-            ("ID", str(interaction.user.id)),
+        ("ID", str(interaction.user.id)),
         ("Appeal ID", str(appeal_id)),
     ])
 

@@ -137,8 +137,9 @@ class OpenCog(commands.Cog):
             if owner_member and any(role.id == DEBATES_MANAGEMENT_ROLE_ID for role in owner_member.roles):
                 logger.warning("/open Command Rejected - Protected User", [
                     ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
-            ("ID", str(interaction.user.id)),
-                    ("Thread Owner", f"{owner.name} ({owner.id})"),
+                    ("ID", str(interaction.user.id)),
+                    ("Thread Owner", f"{owner.name} ({owner.display_name})"),
+                    ("ID", str(owner.id)),
                     ("Thread", f"{thread.name} ({thread.id})"),
                     ("Reason", "Owner has Debates Management role"),
                 ])
@@ -166,6 +167,15 @@ class OpenCog(commands.Cog):
         next_num = 1
         if self.bot.debates_service and self.bot.debates_service.db:
             next_num = self.bot.debates_service.db.get_next_debate_number()
+            logger.debug("Assigned Debate Number", [
+                ("Thread ID", str(thread.id)),
+                ("Number", str(next_num)),
+            ])
+        else:
+            logger.warning("Debates Service Not Available", [
+                ("Thread ID", str(thread.id)),
+                ("Fallback Number", "1"),
+            ])
 
         # Rename thread with new number: N | Title
         new_name = f"{next_num} | {title}"
@@ -224,8 +234,19 @@ class OpenCog(commands.Cog):
                 ])
 
             # Rename and unlock the thread
+            rename_success = False
             try:
-                await edit_thread_with_retry(thread, name=new_name, archived=False, locked=False)
+                rename_success = await edit_thread_with_retry(thread, name=new_name, archived=False, locked=False)
+                if rename_success:
+                    logger.tree("Thread Renamed & Unlocked", [
+                        ("Thread ID", str(thread.id)),
+                        ("New Name", new_name[:50]),
+                    ], emoji="✏️")
+                else:
+                    logger.tree("Thread Rename/Unlock Failed", [
+                        ("Thread", f"{original_name} ({thread.id})"),
+                        ("Target Name", new_name[:50]),
+                    ], emoji="⚠️")
             except Exception as e:
                 logger.warning("/open Thread Edit Failed", [
                     ("Thread", f"{original_name} ({thread.id})"),
@@ -235,15 +256,17 @@ class OpenCog(commands.Cog):
             # Log success
             logger.tree("Debate Reopened", [
                 ("Thread", f"{new_name} ({thread.id})"),
-                ("Reopened By", f"{reopened_by.name} ({reopened_by.id})"),
-                ("Owner", f"{owner.name} ({owner.id})" if owner else "Unknown"),
+                ("Reopened By", f"{reopened_by.name} ({reopened_by.display_name})"),
+                ("ID", str(reopened_by.id)),
+                ("Owner", f"{owner.name} ({owner.display_name})" if owner else "Unknown"),
+                ("ID", str(owner.id) if owner else "Unknown"),
                 ("Reason", reason),
             ], emoji="🔓")
 
             # Log to case system (if owner has a case)
             if owner:
-                try:
-                    if self.bot.case_log_service:
+                if self.bot.case_log_service:
+                    try:
                         await self.bot.case_log_service.log_debate_reopened(
                             thread=thread,
                             reopened_by=reopened_by,
@@ -252,10 +275,28 @@ class OpenCog(commands.Cog):
                             new_name=new_name,
                             reason=reason
                         )
-                except Exception as e:
-                    logger.warning("Failed to log debate reopen to case system", [
-                        ("Error", str(e)),
+                        logger.debug("Case Log Updated (Debate Reopened)", [
+                            ("Thread ID", str(thread.id)),
+                            ("Owner", f"{owner.name} ({owner.display_name})"),
+                            ("ID", str(owner.id)),
+                        ])
+                    except Exception as e:
+                        logger.tree("Failed to Update Case Log (Debate Reopened)", [
+                            ("Thread ID", str(thread.id)),
+                            ("Owner", f"{owner.name} ({owner.display_name})"),
+                            ("ID", str(owner.id)),
+                            ("Error", str(e)[:80]),
+                        ], emoji="⚠️")
+                else:
+                    logger.debug("Case Log Service Not Available", [
+                        ("Thread ID", str(thread.id)),
+                        ("Event", "Debate Reopened"),
                     ])
+            else:
+                logger.debug("No Owner Found for Case Log", [
+                    ("Thread ID", str(thread.id)),
+                    ("Event", "Debate Reopened"),
+                ])
 
         except Exception as e:
             logger.error("/open Background Task Failed", [

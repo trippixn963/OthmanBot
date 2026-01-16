@@ -122,7 +122,11 @@ async def add_reactions_with_delay(
                 try:
                     await message.add_reaction(emoji)
                     results.append(True)
-                except discord.HTTPException:
+                except discord.HTTPException as retry_err:
+                    logger.debug("Reaction Retry Failed After Rate Limit", [
+                        ("Emoji", str(emoji)),
+                        ("Error", str(retry_err)[:50]),
+                    ])
                     results.append(False)
             else:
                 logger.warning("Failed to Add Reaction", [
@@ -346,7 +350,8 @@ async def remove_reaction_safe(
     except discord.HTTPException as e:
         if e.status != 429:  # Don't log rate limits
             logger.warning("Failed to Remove Reaction", [
-                ("User", str(user.id)),
+                ("User", f"{user.name} ({user.display_name})"),
+                ("ID", str(user.id)),
                 ("Emoji", str(reaction.emoji)),
                 ("Error", str(e)),
             ])

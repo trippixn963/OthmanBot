@@ -89,23 +89,34 @@ class ThreadsMixin:
             return result
 
     def get_next_debate_number(self) -> int:
-        """Get and increment the debate counter atomically."""
+        """
+        Get and increment the debate counter atomically.
+
+        Uses BEGIN IMMEDIATE to acquire exclusive lock at transaction start,
+        preventing race conditions when multiple threads are created simultaneously.
+        """
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            cursor.execute("SELECT counter FROM debate_counter WHERE id = 1")
-            row = cursor.fetchone()
-            if row:
-                current = row[0]
-                next_num = current + 1
-                cursor.execute("UPDATE debate_counter SET counter = ? WHERE id = 1", (next_num,))
-            else:
-                next_num = 1
-                cursor.execute("INSERT INTO debate_counter (id, counter) VALUES (1, 1)")
+            # BEGIN IMMEDIATE acquires exclusive lock immediately
+            cursor.execute("BEGIN IMMEDIATE")
+            try:
+                cursor.execute("SELECT counter FROM debate_counter WHERE id = 1")
+                row = cursor.fetchone()
+                if row:
+                    current = row[0]
+                    next_num = current + 1
+                    cursor.execute("UPDATE debate_counter SET counter = ? WHERE id = 1", (next_num,))
+                else:
+                    next_num = 1
+                    cursor.execute("INSERT INTO debate_counter (id, counter) VALUES (1, 1)")
 
-            conn.commit()
-            return next_num
+                conn.commit()
+                return next_num
+            except Exception:
+                conn.rollback()
+                raise
 
     def set_debate_counter(self, value: int) -> None:
         """Set the debate counter to a specific value."""
@@ -150,6 +161,17 @@ class ThreadsMixin:
                 (limit,)
             )
             return [{"user_id": r[0], "debate_count": r[1]} for r in cursor.fetchall()]
+
+    def get_threads_by_creator(self, user_id: int) -> list[int]:
+        """Get all thread IDs created by a user."""
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT thread_id FROM debate_creators WHERE user_id = ?",
+                (user_id,)
+            )
+            return [row[0] for row in cursor.fetchall()]
 
     def add_to_closure_history(
         self,

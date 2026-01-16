@@ -74,7 +74,7 @@ class DebatesService:
         result = self.db.add_vote(voter_id, message_id, author_id, 1)
         if result:
             logger.debug("⬆️ Upvote Recorded", [
-                ("Voter", str(voter_id)),
+                ("User ID", str(voter_id)),
                 ("Message", str(message_id)),
             ])
         return result
@@ -102,7 +102,7 @@ class DebatesService:
         result = self.db.add_vote(voter_id, message_id, author_id, -1)
         if result:
             logger.debug("⬇️ Downvote Recorded", [
-                ("Voter", str(voter_id)),
+                ("User ID", str(voter_id)),
                 ("Message", str(message_id)),
             ])
         return result
@@ -122,7 +122,7 @@ class DebatesService:
         result = await self.db.add_vote_async(voter_id, message_id, author_id, 1)
         if result:
             logger.debug("⬆️ Upvote Recorded (Async)", [
-                ("Voter", str(voter_id)),
+                ("User ID", str(voter_id)),
                 ("Message", str(message_id)),
             ])
         return result
@@ -142,7 +142,7 @@ class DebatesService:
         result = await self.db.add_vote_async(voter_id, message_id, author_id, -1)
         if result:
             logger.debug("⬇️ Downvote Recorded (Async)", [
-                ("Voter", str(voter_id)),
+                ("User ID", str(voter_id)),
                 ("Message", str(message_id)),
             ])
         return result
@@ -165,7 +165,7 @@ class DebatesService:
         author_id = self.db.remove_vote(voter_id, message_id)
         if author_id:
             logger.debug("🗑️ Vote Removed", [
-                ("Voter", str(voter_id)),
+                ("User ID", str(voter_id)),
                 ("Message", str(message_id)),
             ])
             return True
@@ -239,7 +239,9 @@ class DebatesService:
             # Get all active threads
             threads = forum.threads
             if not threads:
-                logger.info("No threads found in debates forum")
+                logger.info("No Threads Found In Debates Forum", [
+                    ("Forum ID", str(forum_id)),
+                ])
                 return None
 
             hot_debates: list[HotDebate] = []
@@ -259,7 +261,7 @@ class DebatesService:
                     total_karma = 0
                     top_contributor: Optional[tuple[int, str, int]] = None  # (user_id, name, karma)
 
-                    async for message in thread.history(limit=None):
+                    async for message in thread.history(limit=500):
                         # Discord message times are UTC-aware, convert for comparison
                         msg_time = message.created_at.astimezone(NY_TZ)
                         if msg_time > cutoff_time:
@@ -316,7 +318,9 @@ class DebatesService:
                     continue
 
             if not hot_debates:
-                logger.info("No active debates found")
+                logger.info("No Active Debates Found", [
+                    ("Forum ID", str(forum_id)),
+                ])
                 return None
 
             # Sort by hotness score and return the hottest

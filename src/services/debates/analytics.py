@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 from src.core.logger import logger
 from src.core.config import NY_TZ, LOG_TITLE_PREVIEW_LENGTH, EmbedColors
 from src.core.colors import EmbedIcons
+from src.core.emojis import UPVOTE_EMOJI, DOWNVOTE_EMOJI
 from src.utils.footer import set_footer
 
 import math
@@ -108,7 +109,7 @@ def _calculate_diversity_score(reply_counts: Dict[int, int]) -> Optional[float]:
 async def _collect_messages_with_timeout(
     thread: discord.Thread,
     timeout: float = THREAD_HISTORY_TIMEOUT
-) -> List[discord.Message]:
+) -> tuple[List[discord.Message], bool]:
     """
     Collect all messages from a thread with a timeout.
 
@@ -117,24 +118,28 @@ async def _collect_messages_with_timeout(
         timeout: Maximum seconds to wait
 
     Returns:
-        List of messages, or empty list on timeout
+        Tuple of (messages, is_complete) where is_complete is False on timeout
 
     DESIGN: Prevents bot from hanging indefinitely on large threads
     or slow Discord API responses. Returns partial results on timeout.
     """
     messages = []
+    is_complete = True
+    max_messages = 1000  # Reasonable limit to prevent memory issues
     try:
         async def collect():
-            async for message in thread.history(limit=None):
+            async for message in thread.history(limit=max_messages):
                 messages.append(message)
         await asyncio.wait_for(collect(), timeout=timeout)
     except asyncio.TimeoutError:
+        is_complete = False
         logger.warning("Thread History Fetch Timed Out", [
             ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
             ("Timeout", f"{timeout}s"),
             ("Messages Collected", str(len(messages))),
+            ("Data Complete", "No"),
         ])
-    return messages
+    return messages, is_complete
 
 
 # =============================================================================
@@ -151,7 +156,8 @@ class DebateAnalytics:
         total_karma: int,
         last_activity: datetime,
         created_at: Optional[datetime] = None,
-        top_contributor: Optional[tuple[str, int]] = None,  # (username, reply_count)
+        top_contributor: Optional[tuple[str, int]] = None,  # (username, reply_count) - legacy
+        top_contributors: Optional[List[tuple[int, int]]] = None,  # Top 3: [(user_id, reply_count), ...]
         activity_graph: str = "",
         avg_response_minutes: Optional[float] = None,  # Average time between posts
         diversity_score: Optional[float] = None,  # How evenly distributed participation is (0-1)
@@ -165,7 +171,8 @@ class DebateAnalytics:
             total_karma: Sum of all karma earned in this debate.
             last_activity: Timestamp of the most recent message.
             created_at: When the debate thread was created.
-            top_contributor: Tuple of (username, reply_count) for top participant.
+            top_contributor: Tuple of (username, reply_count) for top participant (legacy).
+            top_contributors: List of top 3 contributors as [(user_id, reply_count), ...].
             activity_graph: ASCII representation of activity over time.
             avg_response_minutes: Average time between consecutive posts in minutes.
             diversity_score: Participation diversity (0-1, higher = more evenly distributed).
@@ -176,6 +183,7 @@ class DebateAnalytics:
         self.last_activity = last_activity
         self.created_at = created_at
         self.top_contributor = top_contributor
+        self.top_contributors = top_contributors or []
         self.activity_graph = activity_graph
         self.avg_response_minutes = avg_response_minutes
         self.diversity_score = diversity_score
@@ -209,7 +217,12 @@ async def calculate_debate_analytics(
         total_thread_karma = 0  # Track karma earned from votes in THIS thread
 
         # Get all messages from the thread (with timeout)
-        messages = await _collect_messages_with_timeout(thread)
+        messages, data_complete = await _collect_messages_with_timeout(thread)
+        if not data_complete:
+            logger.debug("Analytics Using Partial Data", [
+                ("Thread", thread.name[:LOG_TITLE_PREVIEW_LENGTH]),
+                ("Messages", str(len(messages))),
+            ])
         for message in messages:
             # Skip bot messages (analytics embed)
             if message.author.bot:
@@ -227,11 +240,11 @@ async def calculate_debate_analytics(
             downvotes = 0
             for reaction in message.reactions:
                 emoji_str = str(reaction.emoji)
-                if emoji_str == "\u2b06\ufe0f":  # ⬆️
+                if emoji_str == UPVOTE_EMOJI:
                     async for user in reaction.users():
                         if not user.bot:
                             upvotes += 1
-                elif emoji_str == "\u2b07\ufe0f":  # ⬇️
+                elif emoji_str == DOWNVOTE_EMOJI:
                     async for user in reaction.users():
                         if not user.bot:
                             downvotes += 1
@@ -257,17 +270,28 @@ async def calculate_debate_analytics(
         if last_activity == datetime.min.replace(tzinfo=NY_TZ):
             last_activity = datetime.now(NY_TZ)
 
-        # Find top contributor (by reply count, not including OP's starter message)
+        # Find top 3 contributors (by reply count, not including OP's starter message)
         top_contributor = None
+        top_contributors: List[tuple[str, int]] = []
         if reply_counts:
-            top_user_id = max(reply_counts, key=reply_counts.get)
-            top_reply_count = reply_counts[top_user_id]
+            # Sort by reply count descending
+            sorted_contributors = sorted(reply_counts.items(), key=lambda x: x[1], reverse=True)[:3]
 
-            # Get username from already-collected messages (no need to re-fetch)
+            # Build user_id -> username mapping from messages
+            user_names: Dict[int, str] = {}
             for message in messages:
-                if message.author.id == top_user_id:
-                    top_contributor = (message.author.name, top_reply_count)
-                    break
+                if message.author.id not in user_names:
+                    user_names[message.author.id] = message.author.display_name
+
+            # Build top contributors list (store user IDs for mention format)
+            for user_id, count in sorted_contributors:
+                top_contributors.append((user_id, count))
+
+            # Legacy: set top_contributor to the #1 contributor (username format)
+            if top_contributors:
+                first_user_id, first_count = top_contributors[0]
+                username = user_names.get(first_user_id, f"User {first_user_id}")
+                top_contributor = (username, first_count)
 
         # Generate activity graph
         activity_graph = generate_activity_graph(hourly_activity)
@@ -285,6 +309,7 @@ async def calculate_debate_analytics(
             last_activity=last_activity,
             created_at=thread.created_at,
             top_contributor=top_contributor,
+            top_contributors=top_contributors,
             activity_graph=activity_graph,
             avg_response_minutes=avg_response_minutes,
             diversity_score=diversity_score,
@@ -367,6 +392,15 @@ async def generate_analytics_embed(bot: "OthmanBot", analytics: DebateAnalytics)
         f"📅 {created_str}"
     )
     embed.add_field(name="📊 Stats", value=stats, inline=True)
+
+    # Top Contributors field (show top 3 with mentions)
+    if analytics.top_contributors:
+        medals = ["🥇", "🥈", "🥉"]
+        contributor_lines = []
+        for i, (user_id, count) in enumerate(analytics.top_contributors[:3]):
+            medal = medals[i] if i < len(medals) else "•"
+            contributor_lines.append(f"{medal} <@{user_id}> `{count}`")
+        embed.add_field(name="🏆 Top Contributors", value="\n".join(contributor_lines), inline=True)
 
     # Quality metrics field
     quality_lines = []

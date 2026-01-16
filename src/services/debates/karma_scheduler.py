@@ -53,18 +53,32 @@ class KarmaReconciliationScheduler:
         self._task: asyncio.Task | None = None
         self._running = False
 
-        # Schedule time: 00:00 EST (midnight)
+        # Schedule time: 00:10 EST
         self.schedule_hour = 0
-        self.schedule_minute = 0
+        self.schedule_minute = 10
+
+    def _handle_task_exception(self, task: asyncio.Task) -> None:
+        """Handle exceptions from the scheduler task."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.tree("Karma Scheduler Task Exception", [
+                ("Error Type", type(exc).__name__),
+                ("Error", str(exc)[:100]),
+            ], emoji="❌")
 
     async def start(self) -> None:
         """Start the scheduler."""
         if self._running:
-            logger.warning("Karma reconciliation scheduler already running")
+            logger.warning("Karma Reconciliation Scheduler Already Running", [
+                ("Action", "Skipping start"),
+            ])
             return
 
         self._running = True
         self._task = asyncio.create_task(self._scheduler_loop())
+        self._task.add_done_callback(self._handle_task_exception)
         logger.info("🔄 Karma Reconciliation Scheduler Started", [
             ("Schedule", "nightly at 00:00 EST (full scan)"),
         ])
@@ -79,7 +93,9 @@ class KarmaReconciliationScheduler:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        logger.info("🛑 Karma reconciliation scheduler stopped")
+        logger.info("🛑 Karma Reconciliation Scheduler Stopped", [
+            ("Status", "Task cancelled"),
+        ])
 
     async def _scheduler_loop(self) -> None:
         """Main scheduler loop."""
@@ -110,7 +126,9 @@ class KarmaReconciliationScheduler:
 
                 # Run reconciliation
                 if self._running:
-                    logger.info("🔄 Starting nightly karma reconciliation (full scan)...")
+                    logger.info("🔄 Starting Nightly Karma Reconciliation", [
+                        ("Mode", "Full scan"),
+                    ])
                     try:
                         stats = await self.callback()
                         logger.success("✅ Nightly Karma Reconciliation Complete", [
@@ -167,7 +185,9 @@ class KarmaReconciliationScheduler:
     async def _run_orphan_cleanup(self) -> None:
         """Run orphan vote cleanup and log results."""
         try:
-            logger.info("🧹 Starting orphan vote cleanup...")
+            logger.info("🧹 Starting Orphan Vote Cleanup", [
+                ("Context", "Post-reconciliation cleanup"),
+            ])
             orphan_stats = await cleanup_orphan_votes(self.bot)
 
             if orphan_stats.get("orphans_found", 0) > 0:
@@ -177,7 +197,9 @@ class KarmaReconciliationScheduler:
                     ("Karma Reversed", str(orphan_stats.get("karma_reversed", 0))),
                 ])
             else:
-                logger.info("🧹 Orphan Vote Cleanup Complete - No Orphans Found")
+                logger.info("🧹 Orphan Vote Cleanup Complete", [
+                    ("Orphans Found", "0"),
+                ])
 
             # Send to webhook
             await self._send_orphan_cleanup_webhook(orphan_stats)

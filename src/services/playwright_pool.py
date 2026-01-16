@@ -118,8 +118,71 @@ async def _check_render_restart():
 # Context Management
 # =============================================================================
 
+async def _force_reset_state():
+    """Force reset all state variables without cleanup (for crash recovery)."""
+    global _browser, _context, _playwright, _page_pool, _render_count, _last_activity
+
+    _browser = None
+    _context = None
+    _playwright = None
+    _page_pool.clear()
+    _render_count = 0
+    _last_activity = 0
+
+    # Kill any orphaned chrome processes
+    _sync_cleanup()
+
+
+async def _launch_browser(width: int, height: int) -> BrowserContext:
+    """Launch browser and create context."""
+    global _browser, _context, _playwright
+
+    logger.tree("Playwright Starting", [
+        ("Action", "Launching Chromium"),
+        ("Viewport", f"{width}x{height}"),
+    ], emoji="🚀")
+
+    _playwright = await async_playwright().start()
+    _browser = await _playwright.chromium.launch(
+        headless=True,
+        args=[
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-extensions',
+            '--disable-background-networking',
+            '--disable-sync',
+            '--disable-translate',
+            '--hide-scrollbars',
+            '--metrics-recording-only',
+            '--mute-audio',
+            '--no-first-run',
+            # Additional memory optimization flags
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-component-update',
+            '--disable-default-apps',
+            '--disable-hang-monitor',
+            '--disable-popup-blocking',
+            '--disable-prompt-on-repost',
+            '--js-flags=--max-old-space-size=128',
+        ]
+    )
+    _context = await _browser.new_context(
+        viewport={'width': width, 'height': height},
+        device_scale_factor=1,
+    )
+    logger.tree("Playwright Ready", [
+        ("Viewport", f"{width}x{height}"),
+    ], emoji="✅")
+
+    return _context
+
+
 async def get_context(width: int = 940, height: int = 300) -> BrowserContext:
-    """Get or create browser context (reusable)."""
+    """Get or create browser context (reusable) with crash recovery."""
     global _browser, _context, _playwright, _last_activity
 
     # Check if we should close idle browser first
@@ -129,46 +192,34 @@ async def get_context(width: int = 940, height: int = 300) -> BrowserContext:
     await _check_render_restart()
 
     if _context is None:
-        logger.tree("Playwright Starting", [
-            ("Action", "Launching Chromium"),
-            ("Viewport", f"{width}x{height}"),
-        ], emoji="🚀")
-
-        _playwright = await async_playwright().start()
-        _browser = await _playwright.chromium.launch(
-            headless=True,
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--disable-extensions',
-                '--disable-background-networking',
-                '--disable-sync',
-                '--disable-translate',
-                '--hide-scrollbars',
-                '--metrics-recording-only',
-                '--mute-audio',
-                '--no-first-run',
-                # Additional memory optimization flags
-                '--disable-background-timer-throttling',
-                '--disable-backgrounding-occluded-windows',
-                '--disable-renderer-backgrounding',
-                '--disable-component-update',
-                '--disable-default-apps',
-                '--disable-hang-monitor',
-                '--disable-popup-blocking',
-                '--disable-prompt-on-repost',
-                '--js-flags=--max-old-space-size=128',
-            ]
-        )
-        _context = await _browser.new_context(
-            viewport={'width': width, 'height': height},
-            device_scale_factor=1,
-        )
-        logger.tree("Playwright Ready", [
-            ("Viewport", f"{width}x{height}"),
-        ], emoji="✅")
+        try:
+            await _launch_browser(width, height)
+        except Exception as e:
+            logger.tree("Playwright Launch Failed", [
+                ("Error", str(e)[:100]),
+                ("Action", "Resetting state and retrying"),
+            ], emoji="❌")
+            # Reset all state and try again
+            await _force_reset_state()
+            try:
+                await _launch_browser(width, height)
+            except Exception as retry_error:
+                logger.tree("Playwright Retry Failed", [
+                    ("Error", str(retry_error)[:100]),
+                ], emoji="💀")
+                raise
+    else:
+        # Verify existing context is still valid
+        try:
+            # Simple health check - try to get pages
+            _ = _context.pages
+        except Exception as e:
+            logger.tree("Playwright Context Invalid", [
+                ("Error", str(e)[:50]),
+                ("Action", "Recovering"),
+            ], emoji="⚠️")
+            await _force_reset_state()
+            await _launch_browser(width, height)
 
     _last_activity = time.time()
     return _context

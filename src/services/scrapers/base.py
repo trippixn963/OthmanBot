@@ -17,6 +17,8 @@ Server: discord.gg/syria
 import os
 import re
 import asyncio
+import time
+import random
 import aiohttp
 from types import TracebackType
 from typing import Optional, Type
@@ -25,9 +27,10 @@ from datetime import datetime
 from openai import OpenAI, APIError, RateLimitError, APIConnectionError, AuthenticationError
 
 from src.core.logger import logger
-from src.core.database import get_db
+from src.services.database import get_db
 from src.utils import AICache
 from src.utils.language import is_english_only
+from src.utils.similarity import cosine_similarity, SIMILARITY_THRESHOLD
 
 
 # =============================================================================
@@ -40,6 +43,90 @@ class OpenAIRetryConfig:
     BASE_DELAY: float = 1.0  # seconds
     MAX_DELAY: float = 60.0  # seconds
     EXPONENTIAL_BASE: float = 2.0
+    JITTER_RANGE: float = 0.1  # 10% jitter
+
+
+class AdaptiveRateLimiter:
+    """
+    Adaptive rate limiter that adjusts based on API response times and errors.
+
+    Tracks latency and automatically throttles when API is slow or returns errors.
+    """
+
+    def __init__(self) -> None:
+        self._retry_after: float = 0.0  # Timestamp when retry is allowed
+        self._latency_samples: list[float] = []
+        self._max_samples: int = 10
+        self._throttle_threshold_ms: float = 2000.0  # Throttle if latency > 2s
+        self._throttle_multiplier: float = 1.0  # Current throttle level (1.0 = normal)
+
+    def record_latency(self, latency_ms: float) -> None:
+        """Record API call latency and adjust throttle."""
+        self._latency_samples.append(latency_ms)
+        if len(self._latency_samples) > self._max_samples:
+            self._latency_samples.pop(0)
+
+        # Calculate average latency
+        avg_latency = sum(self._latency_samples) / len(self._latency_samples)
+
+        # Adjust throttle based on latency
+        if avg_latency > self._throttle_threshold_ms:
+            self._throttle_multiplier = min(3.0, self._throttle_multiplier * 1.2)
+        elif avg_latency < self._throttle_threshold_ms / 2:
+            self._throttle_multiplier = max(1.0, self._throttle_multiplier * 0.9)
+
+    def set_retry_after(self, seconds: float) -> None:
+        """Set retry-after from API header."""
+        self._retry_after = time.time() + seconds
+        logger.tree("Rate Limiter - Retry After Set", [
+            ("Wait Seconds", f"{seconds:.1f}"),
+            ("Current Throttle", f"{self._throttle_multiplier:.1f}x"),
+            ("Avg Latency", f"{self.avg_latency_ms:.0f}ms"),
+        ], emoji="⏳")
+
+    async def wait_if_needed(self) -> None:
+        """Wait if rate limited or throttled."""
+        # Check retry-after
+        now = time.time()
+        if self._retry_after > now:
+            wait_time = self._retry_after - now
+            logger.tree("Rate Limiter - Waiting (Retry-After)", [
+                ("Wait Time", f"{wait_time:.1f}s"),
+                ("Avg Latency", f"{self.avg_latency_ms:.0f}ms"),
+            ], emoji="⏸️")
+            await asyncio.sleep(wait_time)
+
+        # Apply throttle multiplier
+        if self._throttle_multiplier > 1.0:
+            throttle_wait = (self._throttle_multiplier - 1.0) * 0.5
+            if throttle_wait > 0.1:  # Only log if significant wait
+                logger.tree("Rate Limiter - Throttling Active", [
+                    ("Throttle Level", f"{self._throttle_multiplier:.1f}x"),
+                    ("Extra Wait", f"{throttle_wait:.2f}s"),
+                    ("Avg Latency", f"{self.avg_latency_ms:.0f}ms"),
+                ], emoji="🐌")
+            await asyncio.sleep(throttle_wait)
+
+    def get_delay_with_jitter(self, base_delay: float) -> float:
+        """Get delay with random jitter."""
+        jitter = base_delay * OpenAIRetryConfig.JITTER_RANGE * random.random()
+        return base_delay + jitter
+
+    @property
+    def throttle_level(self) -> float:
+        """Current throttle multiplier."""
+        return self._throttle_multiplier
+
+    @property
+    def avg_latency_ms(self) -> float:
+        """Average latency in milliseconds."""
+        if not self._latency_samples:
+            return 0.0
+        return sum(self._latency_samples) / len(self._latency_samples)
+
+
+# Global rate limiter instance
+_rate_limiter = AdaptiveRateLimiter()
 
 
 # =============================================================================
@@ -68,6 +155,7 @@ class Article:
     category_tag_id: Optional[int] = None  # News forum tag
     team_tag: Optional[str] = None  # Soccer team tag
     game_category: Optional[str] = None  # Reserved for future use
+    key_quote: Optional[str] = None  # Extracted quote from article
 
 
 # =============================================================================
@@ -201,6 +289,138 @@ class BaseScraper:
         return article_id in self.fetched_urls
 
     # -------------------------------------------------------------------------
+    # Content-Based Duplicate Detection
+    # -------------------------------------------------------------------------
+
+    def is_duplicate_content(self, content: str, url: str) -> tuple[bool, float]:
+        """
+        Check if content is similar to recently posted articles.
+
+        Args:
+            content: Article content to check
+            url: Article URL (for logging)
+
+        Returns:
+            Tuple of (is_duplicate, similarity_score)
+        """
+        article_id = self._extract_article_id(url)
+
+        # Get recent content from database
+        recent_content = self._db.get_recent_content(self.content_type, limit=50)
+
+        if not recent_content:
+            return (False, 0.0)
+
+        # Check similarity against each recent article
+        highest_similarity = 0.0
+        matching_id = None
+
+        for existing_id, existing_content in recent_content:
+            # Skip self
+            if existing_id == article_id:
+                continue
+
+            similarity = cosine_similarity(content, existing_content)
+            if similarity > highest_similarity:
+                highest_similarity = similarity
+                matching_id = existing_id
+
+        is_duplicate = highest_similarity >= SIMILARITY_THRESHOLD
+
+        if is_duplicate:
+            logger.tree(f"{self.log_emoji} Duplicate Content Detected", [
+                ("Article ID", article_id),
+                ("Similarity", f"{highest_similarity:.2%}"),
+                ("Matches Article", matching_id or "Unknown"),
+                ("Threshold", f"{SIMILARITY_THRESHOLD:.0%}"),
+                ("Compared Against", f"{len(recent_content)} articles"),
+            ], emoji="🔍")
+
+        return (is_duplicate, highest_similarity)
+
+    def store_content_for_similarity(self, content: str, url: str) -> None:
+        """
+        Store content for future similarity checks.
+
+        Args:
+            content: Article content
+            url: Article URL
+        """
+        article_id = self._extract_article_id(url)
+        self._db.store_content_hash(self.content_type, article_id, content)
+
+    # -------------------------------------------------------------------------
+    # Dead Letter Queue
+    # -------------------------------------------------------------------------
+
+    def is_quarantined(self, url: str) -> bool:
+        """
+        Check if an article is quarantined due to repeated failures.
+
+        Args:
+            url: Article URL to check
+
+        Returns:
+            True if quarantined and should be skipped
+        """
+        article_id = self._extract_article_id(url)
+        return self._db.is_quarantined(self.content_type, article_id)
+
+    def record_failure(self, url: str, error: str) -> int:
+        """
+        Record an article processing failure.
+
+        Args:
+            url: Article URL
+            error: Error message
+
+        Returns:
+            Current failure count
+        """
+        article_id = self._extract_article_id(url)
+        failure_count = self._db.add_to_dead_letter(
+            self.content_type, article_id, url, error
+        )
+        # Logging handled by database method
+        return failure_count
+
+    def clear_failure(self, url: str) -> None:
+        """
+        Clear failure record after successful processing.
+
+        Args:
+            url: Article URL
+        """
+        article_id = self._extract_article_id(url)
+        self._db.clear_dead_letter(self.content_type, article_id)
+
+    # -------------------------------------------------------------------------
+    # Metrics Recording
+    # -------------------------------------------------------------------------
+
+    def record_metric(self, metric_name: str, value: float) -> None:
+        """
+        Record a scraper metric.
+
+        Args:
+            metric_name: Name of metric (e.g., 'ai_latency_ms', 'articles_processed')
+            value: Metric value
+        """
+        self._db.record_metric(self.content_type, metric_name, value)
+
+    def get_metrics_summary(self, hours_back: int = 24) -> dict:
+        """
+        Get metrics summary for this scraper.
+
+        Args:
+            hours_back: Number of hours to look back
+
+        Returns:
+            Dict with metric statistics
+        """
+        return self._db.get_metrics_summary(self.content_type, hours_back)
+
+    # -------------------------------------------------------------------------
     # AI Generation Methods
     # -------------------------------------------------------------------------
 
@@ -294,6 +514,104 @@ CRITICAL RULES:
                 ("Action", "Skipping article"),
             ])
             # Return None to signal that this article should be skipped
+            return None
+
+    async def _extract_key_quote(self, content: str) -> Optional[str]:
+        """
+        Extract a compelling key quote from article content using AI.
+
+        Args:
+            content: Full article content
+
+        Returns:
+            Extracted quote in English, or None if extraction fails
+        """
+        if not self.openai_client:
+            logger.tree("Key Quote Extraction Skipped", [
+                ("Reason", "OpenAI client not initialized"),
+                ("Content Length", f"{len(content)} chars"),
+            ], emoji="⏭️")
+            return None
+
+        # Check cache first (v2 = English-only validation added)
+        cache_key: str = f"quote_v2_{content[:100]}"
+        cached: Optional[str] = self.ai_cache.get(cache_key)
+        if cached:
+            # Double-check cached quote is English (safety net)
+            if is_english_only(cached):
+                logger.tree("Key Quote Cache Hit", [
+                    ("Quote", cached[:50]),
+                    ("Source", "AI Cache"),
+                ], emoji="💾")
+                return cached
+            else:
+                logger.tree("Key Quote Cache Invalidated", [
+                    ("Reason", "Cached quote not English"),
+                    ("Quote Preview", cached[:30]),
+                ], emoji="🔄")
+
+        logger.tree("Extracting Key Quote", [
+            ("Content Length", f"{len(content)} chars"),
+            ("Method", "OpenAI API"),
+        ], emoji="🔍")
+
+        try:
+            response = await self._call_openai(
+                system_prompt="""You are a news editor. Extract the most compelling quote or statement from this article and OUTPUT IN ENGLISH ONLY.
+
+CRITICAL RULES:
+1. OUTPUT MUST BE IN ENGLISH - translate Arabic content to English
+2. Find an actual statement, fact, or quote from the article - NOT a summary
+3. Keep it concise: 1-2 sentences maximum (under 200 characters)
+4. Choose something impactful that captures the essence of the news
+5. Do NOT add quotation marks - return just the text
+6. Prefer direct quotes from officials, witnesses, or key figures if available
+7. NEVER output Arabic text - always translate to English
+
+Examples of CORRECT output:
+- The Ministry of Health prioritizes cancer patients due to the severity of their condition
+- Over 500 families have been displaced from the region since Monday
+- This marks the first diplomatic meeting between the two countries in 12 years
+
+Return ONLY the extracted quote IN ENGLISH, nothing else.""",
+                user_prompt=f"Extract a key quote IN ENGLISH from this article:\n\n{content[:2000]}",
+                max_tokens=100,
+                temperature=0.3,
+            )
+
+            quote = response.strip().strip('"').strip("'")
+
+            # Validate quote is reasonable length
+            if len(quote) < 20 or len(quote) > 250:
+                logger.tree("Key Quote Validation Failed", [
+                    ("Reason", "Invalid length"),
+                    ("Length", f"{len(quote)} chars"),
+                    ("Quote Preview", quote[:50] if quote else "empty"),
+                ], emoji="❌")
+                return None
+
+            # Validate quote is in English
+            if not is_english_only(quote):
+                logger.tree("Key Quote Validation Failed", [
+                    ("Reason", "Not in English"),
+                    ("Quote Preview", quote[:50]),
+                ], emoji="❌")
+                return None
+
+            self.ai_cache.set(cache_key, quote)
+            logger.tree("Key Quote Extracted Successfully", [
+                ("Quote", quote[:60]),
+                ("Length", f"{len(quote)} chars"),
+                ("Cached", "Yes"),
+            ], emoji="✅")
+            return quote
+
+        except Exception as e:
+            logger.tree("Key Quote Extraction Failed", [
+                ("Error Type", type(e).__name__),
+                ("Error", str(e)[:80]),
+                ("Content Length", f"{len(content)} chars"),
+            ], emoji="❌")
             return None
 
     def _truncate_at_sentence(self, text: str, max_length: int) -> str:
@@ -573,7 +891,7 @@ Example format:
         temperature: float = 0.7,
     ) -> str:
         """
-        Make an OpenAI API call with exponential backoff retry.
+        Make an OpenAI API call with exponential backoff retry and adaptive rate limiting.
 
         Args:
             system_prompt: System message for context
@@ -593,8 +911,14 @@ Example format:
 
         last_exception: Optional[Exception] = None
 
+        # Wait if rate limited
+        await _rate_limiter.wait_if_needed()
+
         for attempt in range(OpenAIRetryConfig.MAX_RETRIES):
             try:
+                # Track latency
+                start_time = time.time()
+
                 # Use asyncio.to_thread to make synchronous OpenAI call non-blocking
                 response = await asyncio.to_thread(
                     self.openai_client.chat.completions.create,
@@ -606,6 +930,12 @@ Example format:
                     max_tokens=max_tokens,
                     temperature=temperature,
                 )
+
+                # Record latency
+                latency_ms = (time.time() - start_time) * 1000
+                _rate_limiter.record_latency(latency_ms)
+                self.record_metric("ai_latency_ms", latency_ms)
+
                 return response.choices[0].message.content.strip()
 
             except AuthenticationError as e:
@@ -617,56 +947,62 @@ Example format:
                 raise
 
             except RateLimitError as e:
-                # Rate limited - retry with exponential backoff
-                delay = min(
-                    OpenAIRetryConfig.BASE_DELAY * (OpenAIRetryConfig.EXPONENTIAL_BASE ** attempt),
-                    OpenAIRetryConfig.MAX_DELAY
-                )
+                # Parse Retry-After header if available
+                retry_after = getattr(e, 'retry_after', None)
+                if retry_after:
+                    _rate_limiter.set_retry_after(float(retry_after))
+                    delay = float(retry_after)
+                else:
+                    base_delay = OpenAIRetryConfig.BASE_DELAY * (OpenAIRetryConfig.EXPONENTIAL_BASE ** attempt)
+                    delay = _rate_limiter.get_delay_with_jitter(min(base_delay, OpenAIRetryConfig.MAX_DELAY))
+
                 logger.warning("OpenAI Rate Limited", [
                     ("Attempt", f"{attempt + 1}/{OpenAIRetryConfig.MAX_RETRIES}"),
                     ("Retry In", f"{delay:.1f}s"),
+                    ("Throttle Level", f"{_rate_limiter.throttle_level:.1f}x"),
                 ])
+                self.record_metric("ai_rate_limit", 1)
                 last_exception = e
                 await asyncio.sleep(delay)
 
             except APIConnectionError as e:
-                # Network error - retry with backoff
-                delay = min(
-                    OpenAIRetryConfig.BASE_DELAY * (OpenAIRetryConfig.EXPONENTIAL_BASE ** attempt),
-                    OpenAIRetryConfig.MAX_DELAY
-                )
+                # Network error - retry with backoff + jitter
+                base_delay = OpenAIRetryConfig.BASE_DELAY * (OpenAIRetryConfig.EXPONENTIAL_BASE ** attempt)
+                delay = _rate_limiter.get_delay_with_jitter(min(base_delay, OpenAIRetryConfig.MAX_DELAY))
+
                 logger.warning("OpenAI Connection Error", [
                     ("Attempt", f"{attempt + 1}/{OpenAIRetryConfig.MAX_RETRIES}"),
                     ("Error", str(e)[:100]),
                     ("Retry In", f"{delay:.1f}s"),
                 ])
+                self.record_metric("ai_connection_error", 1)
                 last_exception = e
                 await asyncio.sleep(delay)
 
             except APIError as e:
-                # Other API error - retry with backoff
-                delay = min(
-                    OpenAIRetryConfig.BASE_DELAY * (OpenAIRetryConfig.EXPONENTIAL_BASE ** attempt),
-                    OpenAIRetryConfig.MAX_DELAY
-                )
+                # Other API error - retry with backoff + jitter
+                base_delay = OpenAIRetryConfig.BASE_DELAY * (OpenAIRetryConfig.EXPONENTIAL_BASE ** attempt)
+                delay = _rate_limiter.get_delay_with_jitter(min(base_delay, OpenAIRetryConfig.MAX_DELAY))
+
                 logger.warning("OpenAI API Error", [
                     ("Attempt", f"{attempt + 1}/{OpenAIRetryConfig.MAX_RETRIES}"),
                     ("Error", str(e)[:100]),
                     ("Retry In", f"{delay:.1f}s"),
                 ])
+                self.record_metric("ai_api_error", 1)
                 last_exception = e
                 await asyncio.sleep(delay)
 
             except TimeoutError as e:
-                # Timeout - retry with backoff
-                delay = min(
-                    OpenAIRetryConfig.BASE_DELAY * (OpenAIRetryConfig.EXPONENTIAL_BASE ** attempt),
-                    OpenAIRetryConfig.MAX_DELAY
-                )
+                # Timeout - retry with backoff + jitter
+                base_delay = OpenAIRetryConfig.BASE_DELAY * (OpenAIRetryConfig.EXPONENTIAL_BASE ** attempt)
+                delay = _rate_limiter.get_delay_with_jitter(min(base_delay, OpenAIRetryConfig.MAX_DELAY))
+
                 logger.warning("OpenAI Timeout", [
                     ("Attempt", f"{attempt + 1}/{OpenAIRetryConfig.MAX_RETRIES}"),
                     ("Retry In", f"{delay:.1f}s"),
                 ])
+                self.record_metric("ai_timeout", 1)
                 last_exception = e
                 await asyncio.sleep(delay)
 
@@ -675,6 +1011,7 @@ Example format:
             ("Retries", str(OpenAIRetryConfig.MAX_RETRIES)),
             ("Last Error", str(last_exception)[:100] if last_exception else "Unknown"),
         ])
+        self.record_metric("ai_total_failure", 1)
         return ""
 
 

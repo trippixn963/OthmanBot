@@ -12,7 +12,7 @@ import asyncio
 from typing import TYPE_CHECKING, List, Tuple, Any
 
 from src.core.logger import logger
-from src.core.presence import stop_promo_scheduler
+from src.core.presence import stop_presence
 from src.services.webhook_alerts import get_alert_service
 from src.services import playwright_pool
 
@@ -110,11 +110,9 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
                 task.cancel()
                 cleanup_tasks.append((f"Background Task ({task.get_name()})", _cancel_task(task)))
 
-    # 2. Stop presence update loop and promo scheduler
-    if bot.presence_task and not bot.presence_task.done():
-        bot.presence_task.cancel()
-        cleanup_tasks.append(("Presence Task", _cancel_task(bot.presence_task)))
-    cleanup_tasks.append(("Promo Scheduler", stop_promo_scheduler()))
+    # 2. Stop presence handler
+    if hasattr(bot, 'presence_handler') and bot.presence_handler:
+        cleanup_tasks.append(("Presence Handler", bot.presence_handler.stop()))
 
     # 3. Stop content rotation scheduler
     if bot.content_rotation_scheduler:
@@ -137,6 +135,10 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
     # 8. Stop hot tag manager
     if hasattr(bot, 'hot_tag_manager') and bot.hot_tag_manager:
         cleanup_tasks.append(("Hot Tag Manager", bot.hot_tag_manager.stop()))
+
+    # 8b. Stop stale archive manager
+    if hasattr(bot, 'stale_archive_manager') and bot.stale_archive_manager:
+        cleanup_tasks.append(("Stale Archive Manager", bot.stale_archive_manager.stop()))
 
     # 9. Stop karma reconciliation scheduler
     if hasattr(bot, 'karma_reconciliation_scheduler') and bot.karma_reconciliation_scheduler:
@@ -200,7 +202,9 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
                 ("Note", "Some tasks may not have completed"),
             ])
     else:
-        logger.info("No Cleanup Tasks Required")
+        logger.info("No Cleanup Tasks Required", [
+            ("Status", "All services already stopped"),
+        ])
 
     logger.tree("Bot Shutdown Complete", [
         ("Status", "All services stopped"),

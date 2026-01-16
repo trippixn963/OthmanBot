@@ -43,9 +43,11 @@ async def get_next_debate_number(bot: "OthmanBot") -> int:
     """
     try:
         if hasattr(bot, 'debates_service') and bot.debates_service is not None:
-            return bot.debates_service.db.get_next_debate_number()
+            return await asyncio.to_thread(bot.debates_service.db.get_next_debate_number)
         else:
-            logger.warning("🔢 Debates service not available - using fallback")
+            logger.warning("🔢 Debates Service Not Available", [
+                ("Action", "Using timestamp-based fallback"),
+            ])
             import time
             return int(time.time()) % 100000
     except Exception as e:
@@ -168,7 +170,7 @@ async def renumber_debates_after_deletion(bot: "OthmanBot", deleted_number: int)
 
             try:
                 if hasattr(bot, 'debates_service') and bot.debates_service is not None:
-                    bot.debates_service.db.set_debate_counter(max_number)
+                    await asyncio.to_thread(bot.debates_service.db.set_debate_counter, max_number)
                 logger.info("🔢 Debate Counter Updated", [
                     ("New Count", str(max_number)),
                     ("Renamed", str(len(successfully_renamed))),
@@ -246,6 +248,217 @@ async def on_thread_delete_handler(bot: "OthmanBot", thread: discord.Thread) -> 
 
 
 # =============================================================================
+# Starter Message Delete Handler
+# =============================================================================
+
+async def on_message_delete_handler(
+    bot: "OthmanBot",
+    payload: discord.RawMessageDeleteEvent
+) -> None:
+    """
+    Handle when any message in a debate thread is deleted.
+
+    Cleans up votes for the deleted message and updates karma accordingly.
+
+    Args:
+        bot: The OthmanBot instance
+        payload: Raw message delete event payload
+    """
+    # Check if this is in the debates forum
+    channel = bot.get_channel(payload.channel_id)
+    if not channel:
+        logger.debug("Message Delete Handler Skipped (Channel Not Found)", [
+            ("Channel ID", str(payload.channel_id)),
+            ("Message ID", str(payload.message_id)),
+        ])
+        return
+
+    # Check if channel is a thread in the debates forum
+    if not isinstance(channel, discord.Thread):
+        # Not a thread - skip silently (normal for non-thread channels)
+        return
+
+    if channel.parent_id != DEBATES_FORUM_ID:
+        # Not in debates forum - skip silently (normal for other forums)
+        return
+
+    # Clean up votes for this message
+    if hasattr(bot, 'debates_service') and bot.debates_service is not None:
+        try:
+            db = bot.debates_service.db
+            # Check if message had any votes
+            votes = db.get_message_votes(payload.message_id)
+            if votes:
+                # Clean up orphaned votes for this specific message
+                result = db.cleanup_orphaned_votes({payload.message_id})
+                if result.get("votes_deleted", 0) > 0:
+                    logger.tree("Cleaned Up Votes For Deleted Message", [
+                        ("Message ID", str(payload.message_id)),
+                        ("Votes Removed", str(result["votes_deleted"])),
+                        ("Karma Reversed", str(result["karma_reversed"])),
+                    ], emoji="🧹")
+        except Exception as e:
+            logger.warning("Failed To Cleanup Votes For Deleted Message", [
+                ("Message ID", str(payload.message_id)),
+                ("Error", str(e)[:50]),
+            ])
+
+
+async def on_starter_message_delete_handler(
+    bot: "OthmanBot",
+    payload: discord.RawMessageDeleteEvent
+) -> None:
+    """
+    Handle when a thread's starter message is deleted.
+
+    When the original post of a debate thread is deleted, automatically
+    delete the orphaned thread since there's nothing left to debate.
+
+    Args:
+        bot: The OthmanBot instance
+        payload: Raw message delete event payload
+    """
+    # First, handle vote cleanup for any deleted message
+    await on_message_delete_handler(bot, payload)
+
+    # Check if this is in the debates forum
+    channel = bot.get_channel(payload.channel_id)
+    if not channel:
+        # Channel not in cache - already logged by on_message_delete_handler
+        return
+
+    # Check if channel is a thread in the debates forum
+    if not isinstance(channel, discord.Thread):
+        # Not a thread - normal for non-thread channels
+        return
+
+    if channel.parent_id != DEBATES_FORUM_ID:
+        # Not in debates forum - normal for other forums
+        return
+
+    # Check if the deleted message was the starter message
+    # For threads, the starter message ID equals the thread ID
+    if payload.message_id != channel.id:
+        # Not the starter message - just a regular reply deletion (already handled above)
+        return
+
+    # Skip closed/deprecated threads
+    if channel.name.startswith("[CLOSED]") or channel.name.startswith("[DEPRECATED]"):
+        logger.debug("Starter Deleted In Closed Thread (Skipping)", [
+            ("Thread", channel.name[:50]),
+            ("Thread ID", str(channel.id)),
+        ])
+        return
+
+    # This is an orphaned thread - the starter message was deleted
+    thread_name = channel.name
+    thread_id = channel.id
+
+    logger.tree("Starter Message Deleted - Deleting Orphaned Thread", [
+        ("Thread", thread_name[:50]),
+        ("Thread ID", str(thread_id)),
+    ], emoji="🗑️")
+
+    try:
+        # Delete the orphaned thread
+        await channel.delete()
+        logger.tree("Orphaned Thread Deleted", [
+            ("Thread", thread_name[:50]),
+            ("Thread ID", str(thread_id)),
+        ], emoji="✅")
+
+        # Clean up database records
+        if hasattr(bot, 'debates_service') and bot.debates_service is not None:
+            try:
+                bot.debates_service.db.delete_thread_data(thread_id)
+                logger.debug("Thread Database Records Cleaned", [
+                    ("Thread ID", str(thread_id)),
+                ])
+            except Exception as db_err:
+                logger.warning("Failed To Clean Thread Database", [
+                    ("Thread ID", str(thread_id)),
+                    ("Error", str(db_err)[:50]),
+                ])
+
+    except discord.Forbidden:
+        logger.tree("Cannot Delete Orphaned Thread (No Permission)", [
+            ("Thread", thread_name[:50]),
+            ("Thread ID", str(thread_id)),
+        ], emoji="🚫")
+    except discord.NotFound:
+        logger.debug("Orphaned Thread Already Deleted", [
+            ("Thread", thread_name[:50]),
+            ("Thread ID", str(thread_id)),
+        ])
+    except discord.HTTPException as e:
+        log_http_error(e, "Delete Orphaned Thread", [
+            ("Thread", thread_name[:50]),
+            ("Thread ID", str(thread_id)),
+        ])
+    except Exception as e:
+        logger.tree("Unexpected Error Deleting Orphaned Thread", [
+            ("Thread", thread_name[:50]),
+            ("Thread ID", str(thread_id)),
+            ("Error Type", type(e).__name__),
+            ("Error", str(e)[:80]),
+        ], emoji="❌")
+
+
+# =============================================================================
+# Thread Update Handler (Archive Detection)
+# =============================================================================
+
+async def on_thread_update_handler(
+    bot: "OthmanBot",
+    before: discord.Thread,
+    after: discord.Thread
+) -> None:
+    """
+    Handle thread updates in the debates forum.
+
+    Detects when threads are auto-archived by Discord and logs the event.
+    Also triggers orphan vote cleanup for archived threads.
+
+    Args:
+        bot: The OthmanBot instance
+        before: Thread state before the update
+        after: Thread state after the update
+    """
+    # Only handle debates forum threads
+    if after.parent_id != DEBATES_FORUM_ID:
+        return
+
+    # Detect archive state change (was active, now archived)
+    if not before.archived and after.archived:
+        # Check if this was auto-archived (not manually via stale manager or close)
+        # Stale manager adds [STALE] prefix, close adds [CLOSED] prefix
+        is_manual_archive = (
+            after.name.startswith("[STALE]") or
+            after.name.startswith("[CLOSED]") or
+            after.name.startswith("[DEPRECATED]")
+        )
+
+        if is_manual_archive:
+            logger.debug("Thread Archive Detected (Manual)", [
+                ("Thread", after.name[:50]),
+                ("Thread ID", str(after.id)),
+            ])
+        else:
+            logger.tree("Thread Auto-Archived By Discord", [
+                ("Thread", after.name[:50]),
+                ("Thread ID", str(after.id)),
+                ("Reason", "Inactivity timeout"),
+            ], emoji="📦")
+
+    # Detect unarchive (thread restored)
+    if before.archived and not after.archived:
+        logger.tree("Thread Unarchived", [
+            ("Thread", after.name[:50]),
+            ("Thread ID", str(after.id)),
+        ], emoji="📂")
+
+
+# =============================================================================
 # Module Export
 # =============================================================================
 
@@ -254,4 +467,7 @@ __all__ = [
     "extract_debate_number",
     "renumber_debates_after_deletion",
     "on_thread_delete_handler",
+    "on_starter_message_delete_handler",
+    "on_message_delete_handler",
+    "on_thread_update_handler",
 ]

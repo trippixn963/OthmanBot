@@ -145,10 +145,10 @@ class OthmanBot(commands.Bot):
         self.stats_api = None         # Stats API for dashboard
 
         # =================================================================
-        # Background Tasks
-        # DESIGN: Tracked for proper cleanup on shutdown
+        # Presence Handler
+        # DESIGN: Manages rotating presence and hourly promo
         # =================================================================
-        self.presence_task: Optional[asyncio.Task] = None
+        self.presence_handler = None  # Set by ready handler
 
         # =================================================================
         # Ready State Guard
@@ -236,7 +236,9 @@ class OthmanBot(commands.Bot):
         await self.load_extension("src.handlers.reactions")
         await self.load_extension("src.handlers.debates")
 
-        logger.info("Bot setup complete - commands and handlers loaded")
+        logger.info("Bot Setup Complete", [
+            ("Status", "Commands and handlers loaded"),
+        ])
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
         """Event handler for all interactions.

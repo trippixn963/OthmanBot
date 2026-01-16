@@ -39,20 +39,16 @@ class KarmaCog(commands.Cog):
         self.bot = bot
 
     def _get_member_status(self, member: discord.Member) -> str:
-        """Get the Discord status of a member."""
-        if member.status == discord.Status.online:
-            return "online"
-        elif member.status == discord.Status.idle:
-            return "idle"
-        elif member.status == discord.Status.dnd:
-            return "dnd"
-        elif member.status == discord.Status.offline:
-            return "offline"
-        else:
-            # Streaming or other
+        """Get the Discord status of a member (matches SyriaBot)."""
+        # Check for streaming activity first
+        if member.activities:
             if any(isinstance(a, discord.Streaming) for a in member.activities):
                 return "streaming"
-            return "online"
+
+        # Simple conversion like SyriaBot - str(Status.dnd) returns "dnd"
+        if member.status:
+            return str(member.status)
+        return "offline"
 
     @app_commands.command(name="karma", description="Check karma points for yourself or another user")
     @app_commands.describe(user="User to check karma for (leave empty for yourself)")
@@ -70,7 +66,8 @@ class KarmaCog(commands.Cog):
             ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
             ("ID", str(interaction.user.id)),
             ("Channel", f"#{interaction.channel.name if interaction.channel else 'Unknown'} ({interaction.channel_id})"),
-            ("Target User", f"{user.name} ({user.id})" if user else "Self"),
+            ("Target User", f"{user.name} ({user.display_name})" if user else "Self"),
+            ("ID", str(user.id) if user else "Self"),
         ])
 
         if not hasattr(self.bot, 'debates_service') or self.bot.debates_service is None:
@@ -89,9 +86,16 @@ class KarmaCog(commands.Cog):
         karma_data = self.bot.debates_service.get_karma(target.id)
         rank = self.bot.debates_service.get_rank(target.id)
 
-        # Get member status
-        member = target if isinstance(target, discord.Member) else interaction.guild.get_member(target.id)
+        # Get member status - always fetch from guild cache for latest presence data
+        member = interaction.guild.get_member(target.id) if interaction.guild else None
         status = self._get_member_status(member) if member else "online"
+
+        logger.debug("Member Status Retrieved", [
+            ("User", f"{target.name} ({target.display_name})"),
+            ("ID", str(target.id)),
+            ("Raw Status", str(member.raw_status) if member else "No member"),
+            ("Status", status),
+        ])
 
         # Get avatar URL (high resolution)
         avatar_url = target.display_avatar.with_size(256).url
@@ -128,8 +132,10 @@ class KarmaCog(commands.Cog):
             ))
 
             logger.success("/karma Command Completed", [
-                ("Requested By", f"{interaction.user.name} ({interaction.user.id})"),
-                ("Target User", f"{target.name} ({target.id})"),
+                ("Requested By", f"{interaction.user.name} ({interaction.user.display_name})"),
+                ("ID", str(interaction.user.id)),
+                ("Target User", f"{target.name} ({target.display_name})"),
+                ("ID", str(target.id)),
                 ("Karma", str(karma_data.total_karma)),
                 ("Rank", f"#{rank}"),
             ])

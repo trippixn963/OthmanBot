@@ -264,7 +264,8 @@ class CaseThreadManager:
                     await thread_with_msg.message.pin()
                     logger.info("Pinned User Profile In Case Thread", [
                         ("Case ID", str(case_id)),
-                        ("User", f"{user.display_name} ({user.id})"),
+                        ("User", f"{user.name} ({user.display_name})"),
+                        ("ID", str(user.id)),
                     ])
             except Exception as pin_error:
                 logger.warning("Failed To Pin User Profile", [
@@ -275,7 +276,8 @@ class CaseThreadManager:
             return thread_with_msg.thread
         except Exception as e:
             logger.error("Failed To Create Case Thread", [
-                ("User", f"{user.display_name} ({user.id})"),
+                ("User", f"{user.name} ({user.display_name})"),
+                ("ID", str(user.id)),
                 ("Case ID", str(case_id)),
                 ("Error", str(e)),
             ])
@@ -327,7 +329,8 @@ class CaseThreadManager:
             return thread_with_msg.thread
         except Exception as e:
             logger.error("Failed To Create Case Thread For Debate Close", [
-                ("User", f"{owner.display_name} ({owner.id})"),
+                ("User", f"{owner.name} ({owner.display_name})"),
+                ("ID", str(owner.id)),
                 ("Case ID", str(case_id)),
                 ("Error", str(e)),
             ])

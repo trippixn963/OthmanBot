@@ -66,6 +66,8 @@ from src.handlers.debates_modules.member_lifecycle import (
 from src.handlers.debates_modules.thread_management import (
     get_next_debate_number,
     on_thread_delete_handler,
+    on_starter_message_delete_handler,
+    on_thread_update_handler,
 )
 
 if TYPE_CHECKING:
@@ -243,7 +245,9 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                 break
 
         if starter_message is None:
-            logger.warning("🔍 Could Not Find Starter Message For Debate Thread")
+            logger.warning("🔍 Could Not Find Starter Message For Debate Thread", [
+                ("Thread ID", str(thread.id)),
+            ])
             return
 
         if starter_message.author.bot:
@@ -358,14 +362,24 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                     except discord.HTTPException as e:
                         log_http_error(e, "Pin Analytics Message", [("Thread", str(thread.id))])
 
-                    bot.debates_service.db.set_analytics_message(thread.id, analytics_message.id)
+                    try:
+                        await bot.debates_service.db.set_analytics_message_async(thread.id, analytics_message.id)
+                    except Exception as e:
+                        logger.warning("Failed To Set Analytics Message", [
+                            ("Thread ID", str(thread.id)),
+                            ("Error", str(e)[:50]),
+                        ])
 
                     try:
                         await bot.debates_service.db.set_debate_creator_async(
                             thread.id, starter_message.author.id
                         )
                     except Exception as e:
-                        logger.warning("📊 Failed To Track Debate Creator", [("Error", str(e))])
+                        logger.warning("Failed To Track Debate Creator", [
+                            ("Thread ID", str(thread.id)),
+                            ("OP ID", str(starter_message.author.id)),
+                            ("Error", str(e)[:50]),
+                        ])
 
                     logger.success("📊 New Debate Created", [
                         ("Number", f"#{debate_number}"),
@@ -438,6 +452,20 @@ class DebatesHandler(commands.Cog):
         if getattr(self.bot, 'disabled', False):
             return
         await on_member_join_handler(self.bot, member)
+
+    @commands.Cog.listener()
+    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
+        """Route raw message delete events (for starter message deletion detection)."""
+        if getattr(self.bot, 'disabled', False):
+            return
+        await on_starter_message_delete_handler(self.bot, payload)
+
+    @commands.Cog.listener()
+    async def on_thread_update(self, before: discord.Thread, after: discord.Thread) -> None:
+        """Route thread update events (for auto-archive detection)."""
+        if getattr(self.bot, 'disabled', False):
+            return
+        await on_thread_update_handler(self.bot, before, after)
 
 
 async def setup(bot: "OthmanBot") -> None:

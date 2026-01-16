@@ -52,7 +52,10 @@ async def detect_debate_tags(title: str, description: str = "") -> List[int]:
     try:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            logger.error("OPENAI_API_KEY not found - cannot detect tags")
+            logger.error("OPENAI_API_KEY Not Found", [
+                ("Feature", "Tag detection"),
+                ("Action", "Returning empty tags"),
+            ])
             return []
 
         client = OpenAI(api_key=api_key, timeout=30.0)
