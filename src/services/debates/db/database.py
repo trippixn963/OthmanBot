@@ -15,6 +15,7 @@ from src.services.debates.db.leaderboard import LeaderboardMixin
 from src.services.debates.db.analytics import AnalyticsMixin
 from src.services.debates.db.threads import ThreadsMixin
 from src.services.debates.db.cases import CasesMixin, CacheMixin
+from src.services.debates.db.appeals import AppealsMixin
 
 
 class DebatesDatabase(
@@ -25,6 +26,7 @@ class DebatesDatabase(
     ThreadsMixin,
     CasesMixin,
     CacheMixin,
+    AppealsMixin,
     DatabaseCore
 ):
     """
@@ -39,6 +41,7 @@ class DebatesDatabase(
     - ThreadsMixin: Thread data management
     - CasesMixin: Case log operations
     - CacheMixin: User cache operations
+    - AppealsMixin: Appeal management operations
     """
 
     def __init__(self, db_path: str = "data/othman.db") -> None:

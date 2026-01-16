@@ -190,7 +190,7 @@ async def check_user_ban(bot: "OthmanBot", message: discord.Message) -> bool:
     if not hasattr(bot, 'debates_service') or bot.debates_service is None:
         return True
 
-    is_banned = bot.debates_service.db.is_user_banned(message.author.id, message.channel.id)
+    is_banned = await bot.debates_service.db.is_user_banned_async(message.author.id, message.channel.id)
 
     if is_banned:
         try:

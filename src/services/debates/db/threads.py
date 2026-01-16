@@ -178,24 +178,33 @@ class ThreadsMixin:
         thread_id: int,
         thread_name: str,
         closed_by: int,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
+        user_id: Optional[int] = None
     ) -> None:
-        """Add a thread closure to history."""
+        """Add a thread closure to history.
+
+        Args:
+            thread_id: The thread ID that was closed
+            thread_name: The name of the thread
+            closed_by: The moderator who closed it
+            reason: The reason for closing
+            user_id: The debate owner's user ID (whose debate was closed)
+        """
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO closure_history (thread_id, thread_name, closed_by, reason) VALUES (?, ?, ?, ?)",
-                (thread_id, thread_name, closed_by, reason)
+                "INSERT INTO closure_history (thread_id, thread_name, closed_by, reason, user_id) VALUES (?, ?, ?, ?, ?)",
+                (thread_id, thread_name, closed_by, reason, user_id)
             )
             conn.commit()
 
     def get_user_closure_count(self, user_id: int) -> int:
-        """Get number of debates closed by a user."""
+        """Get number of times a user's debates have been closed."""
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM closure_history WHERE closed_by = ?", (user_id,))
+            cursor.execute("SELECT COUNT(*) FROM closure_history WHERE user_id = ?", (user_id,))
             return cursor.fetchone()[0]
 
     def get_user_closure_history(self, user_id: int, limit: int = 10) -> list[dict]:

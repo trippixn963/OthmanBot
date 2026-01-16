@@ -297,11 +297,11 @@ class CloseCog(commands.Cog):
                 if self.bot.debates_service and self.bot.debates_service.db:
                     try:
                         self.bot.debates_service.db.add_to_closure_history(
-                            user_id=owner.id,
                             thread_id=thread.id,
                             thread_name=original_name,
                             closed_by=closed_by.id,
-                            reason=reason
+                            reason=reason,
+                            user_id=owner.id
                         )
                         # Get count (subtract 1 since we just added this one)
                         past_closure_count = max(0, self.bot.debates_service.db.get_user_closure_count(owner.id) - 1)
