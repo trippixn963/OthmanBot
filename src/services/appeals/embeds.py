@@ -142,7 +142,7 @@ async def post_appeal_to_case_thread(
 
     # Store message ID so we can edit it when approved/denied
     if message and db:
-        db.set_appeal_case_message_id(appeal_id, message.id)
+        db.set_appeal_message_id(appeal_id, message.id)
 
     logger.info("Appeal Posted to Case Thread", [
         ("Appeal ID", str(appeal_id)),
@@ -175,7 +175,7 @@ async def update_appeal_embed_status(
     if not db:
         return False
 
-    # Get the appeal with case_message_id
+    # Get the appeal with message_id
     appeal = db.get_appeal(appeal_id)
     if not appeal:
         logger.warning("Cannot update appeal embed - appeal not found", [
@@ -183,9 +183,9 @@ async def update_appeal_embed_status(
         ])
         return False
 
-    case_message_id = appeal.get("case_message_id")
-    if not case_message_id:
-        logger.warning("Cannot update appeal embed - no case_message_id stored", [
+    message_id = appeal.get("message_id")
+    if not message_id:
+        logger.warning("Cannot update appeal embed - no message_id stored", [
             ("Appeal ID", str(appeal_id)),
         ])
         return False
@@ -205,10 +205,10 @@ async def update_appeal_embed_status(
         return False
 
     try:
-        message = await case_thread.fetch_message(case_message_id)
+        message = await case_thread.fetch_message(message_id)
         if not message or not message.embeds:
             logger.warning("Cannot update appeal embed - message has no embeds", [
-                ("Message ID", str(case_message_id)),
+                ("Message ID", str(message_id)),
             ])
             return False
 
@@ -282,7 +282,7 @@ async def update_appeal_embed_status(
 
     except discord.NotFound:
         logger.warning("Cannot update appeal embed - message not found", [
-            ("Message ID", str(case_message_id)),
+            ("Message ID", str(message_id)),
         ])
         return False
     except discord.HTTPException as e:
