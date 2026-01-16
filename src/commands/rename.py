@@ -340,7 +340,7 @@ class RenameCog(commands.Cog):
                                 break
 
                         # Store analytics message ID in database
-                        self.bot.debates_service.db.set_analytics_message(thread.id, analytics_message.id)
+                        await self.bot.debates_service.db.set_analytics_message_async(thread.id, analytics_message.id)
 
                         logger.success("Analytics Embed Posted For Renamed Debate", [
                             ("Debate", f"#{debate_number}"),
