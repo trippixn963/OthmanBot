@@ -220,9 +220,14 @@ async def on_thread_delete_handler(bot: "OthmanBot", thread: discord.Thread) -> 
         return
 
     # Get thread owner info
-    owner_info = "Unknown"
-    if thread.owner_id:
-        owner_info = f"<@{thread.owner_id}> ({thread.owner_id})"
+    owner_name = "Unknown"
+    owner_id = None
+    if thread.owner:
+        owner_name = f"{thread.owner.name} ({thread.owner.display_name})"
+        owner_id = thread.owner_id
+    elif thread.owner_id:
+        owner_name = "Not in cache"
+        owner_id = thread.owner_id
 
     # Get thread age
     thread_age = "Unknown"
@@ -234,17 +239,23 @@ async def on_thread_delete_handler(bot: "OthmanBot", thread: discord.Thread) -> 
         else:
             thread_age = f"{age_delta.seconds // 3600}h {(age_delta.seconds % 3600) // 60}m"
 
-    logger.warning("🗑️ Debate Thread Deleted", [
+    log_fields = [
         ("Number", f"#{deleted_number}"),
         ("Thread", thread.name),
         ("Thread ID", str(thread.id)),
-        ("Owner", owner_info),
+        ("Owner", owner_name),
+    ]
+    if owner_id:
+        log_fields.append(("ID", str(owner_id)))
+    log_fields.extend([
         ("Thread Age", thread_age),
         ("Was Archived", str(thread.archived)),
         ("Was Locked", str(thread.locked)),
         ("Member Count", str(thread.member_count) if thread.member_count else "Unknown"),
         ("Message Count", str(thread.message_count) if thread.message_count else "Unknown"),
     ])
+
+    logger.warning("🗑️ Debate Thread Deleted", log_fields)
 
     # Clean up database records
     if hasattr(bot, 'debates_service') and bot.debates_service is not None:
@@ -376,9 +387,14 @@ async def on_starter_message_delete_handler(
     thread_id = channel.id
 
     # Get thread owner info
-    owner_info = "Unknown"
-    if channel.owner_id:
-        owner_info = f"<@{channel.owner_id}> ({channel.owner_id})"
+    owner_name = "Unknown"
+    owner_id = None
+    if channel.owner:
+        owner_name = f"{channel.owner.name} ({channel.owner.display_name})"
+        owner_id = channel.owner_id
+    elif channel.owner_id:
+        owner_name = "Not in cache"
+        owner_id = channel.owner_id
 
     # Get thread age
     thread_age = "Unknown"
@@ -393,15 +409,21 @@ async def on_starter_message_delete_handler(
     # Extract debate number
     debate_number = extract_debate_number(thread_name)
 
-    logger.tree("Starter Message Deleted - Deleting Orphaned Thread", [
+    log_fields = [
         ("Number", f"#{debate_number}" if debate_number else "Unnumbered"),
         ("Thread", thread_name[:50]),
         ("Thread ID", str(thread_id)),
-        ("Owner", owner_info),
+        ("Owner", owner_name),
+    ]
+    if owner_id:
+        log_fields.append(("ID", str(owner_id)))
+    log_fields.extend([
         ("Thread Age", thread_age),
         ("Reason", "Original post was deleted - thread is now orphaned"),
         ("Action", "Auto-deleting thread"),
-    ], emoji="🗑️")
+    ])
+
+    logger.tree("Starter Message Deleted - Deleting Orphaned Thread", log_fields, emoji="🗑️")
 
     try:
         # Delete the orphaned thread
