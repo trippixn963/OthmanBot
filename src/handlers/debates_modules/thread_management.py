@@ -219,10 +219,31 @@ async def on_thread_delete_handler(bot: "OthmanBot", thread: discord.Thread) -> 
         ])
         return
 
+    # Get thread owner info
+    owner_info = "Unknown"
+    if thread.owner_id:
+        owner_info = f"<@{thread.owner_id}> ({thread.owner_id})"
+
+    # Get thread age
+    thread_age = "Unknown"
+    if thread.created_at:
+        from datetime import datetime, timezone
+        age_delta = datetime.now(timezone.utc) - thread.created_at
+        if age_delta.days > 0:
+            thread_age = f"{age_delta.days}d {age_delta.seconds // 3600}h"
+        else:
+            thread_age = f"{age_delta.seconds // 3600}h {(age_delta.seconds % 3600) // 60}m"
+
     logger.warning("🗑️ Debate Thread Deleted", [
         ("Number", f"#{deleted_number}"),
         ("Thread", thread.name),
         ("Thread ID", str(thread.id)),
+        ("Owner", owner_info),
+        ("Thread Age", thread_age),
+        ("Was Archived", str(thread.archived)),
+        ("Was Locked", str(thread.locked)),
+        ("Member Count", str(thread.member_count) if thread.member_count else "Unknown"),
+        ("Message Count", str(thread.message_count) if thread.message_count else "Unknown"),
     ])
 
     # Clean up database records
@@ -354,9 +375,32 @@ async def on_starter_message_delete_handler(
     thread_name = channel.name
     thread_id = channel.id
 
+    # Get thread owner info
+    owner_info = "Unknown"
+    if channel.owner_id:
+        owner_info = f"<@{channel.owner_id}> ({channel.owner_id})"
+
+    # Get thread age
+    thread_age = "Unknown"
+    if channel.created_at:
+        from datetime import datetime, timezone
+        age_delta = datetime.now(timezone.utc) - channel.created_at
+        if age_delta.days > 0:
+            thread_age = f"{age_delta.days}d {age_delta.seconds // 3600}h"
+        else:
+            thread_age = f"{age_delta.seconds // 3600}h {(age_delta.seconds % 3600) // 60}m"
+
+    # Extract debate number
+    debate_number = extract_debate_number(thread_name)
+
     logger.tree("Starter Message Deleted - Deleting Orphaned Thread", [
+        ("Number", f"#{debate_number}" if debate_number else "Unnumbered"),
         ("Thread", thread_name[:50]),
         ("Thread ID", str(thread_id)),
+        ("Owner", owner_info),
+        ("Thread Age", thread_age),
+        ("Reason", "Original post was deleted - thread is now orphaned"),
+        ("Action", "Auto-deleting thread"),
     ], emoji="🗑️")
 
     try:
