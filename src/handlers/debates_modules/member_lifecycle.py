@@ -8,6 +8,7 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import asyncio
 import re
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -54,7 +55,8 @@ async def on_member_remove_handler(bot: "OthmanBot", member: discord.Member) -> 
     db = bot.debates_service.db
 
     # Check if this user is a debate participant
-    if not db.has_debate_participation(member.id):
+    has_participation = await asyncio.to_thread(db.has_debate_participation, member.id)
+    if not has_participation:
         logger.debug("Member Left (Not A Debate Participant)", [
             ("User", f"{member.name} ({member.display_name})"),
             ("ID", str(member.id)),
@@ -62,16 +64,16 @@ async def on_member_remove_handler(bot: "OthmanBot", member: discord.Member) -> 
         return
 
     # Get user stats
-    user_analytics = db.get_user_analytics(member.id)
+    user_analytics = await asyncio.to_thread(db.get_user_analytics, member.id)
     debates_participated = user_analytics.get('debates_participated', 0)
     debates_created = user_analytics.get('debates_created', 0)
 
     # Get current karma
-    karma_data = db.get_user_karma(member.id)
+    karma_data = await asyncio.to_thread(db.get_user_karma, member.id)
     current_karma = karma_data.total_karma
 
     # Check if user has a case log
-    case_log = db.get_case_log(member.id)
+    case_log = await asyncio.to_thread(db.get_case_log, member.id)
     case_id = case_log.get('case_id') if case_log else None
 
     # NOTE: We do NOT remove votes when a member leaves.
@@ -146,7 +148,7 @@ async def _close_user_debate_threads(bot: "OthmanBot", member: discord.Member) -
     db = bot.debates_service.db
 
     # Get all thread IDs created by this user from database
-    thread_ids = db.get_threads_by_creator(member.id)
+    thread_ids = await asyncio.to_thread(db.get_threads_by_creator, member.id)
 
     if not thread_ids:
         logger.tree("No Debates to Auto-Close", [
@@ -298,7 +300,8 @@ async def on_member_join_handler(bot: "OthmanBot", member: discord.Member) -> No
     db = bot.debates_service.db
 
     # Check if this user is a debate participant
-    if not db.has_debate_participation(member.id):
+    has_participation = await asyncio.to_thread(db.has_debate_participation, member.id)
+    if not has_participation:
         logger.debug("Member Joined (Not A Debate Participant)", [
             ("User", f"{member.name} ({member.display_name})"),
             ("ID", str(member.id)),
@@ -306,12 +309,12 @@ async def on_member_join_handler(bot: "OthmanBot", member: discord.Member) -> No
         return
 
     # Get user stats
-    user_analytics = db.get_user_analytics(member.id)
+    user_analytics = await asyncio.to_thread(db.get_user_analytics, member.id)
     debates_participated = user_analytics.get('debates_participated', 0)
     debates_created = user_analytics.get('debates_created', 0)
 
     # Check if user has a case log
-    case_log = db.get_case_log(member.id)
+    case_log = await asyncio.to_thread(db.get_case_log, member.id)
     case_id = case_log.get('case_id') if case_log else None
 
     # Log to main logs

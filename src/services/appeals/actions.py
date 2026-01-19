@@ -8,6 +8,7 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import asyncio
 import re
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -59,7 +60,7 @@ async def undo_disallow(
         return False
 
     # Remove all bans for this user
-    success = db.remove_debate_ban(user_id=user_id, thread_id=None)
+    success = await asyncio.to_thread(db.remove_debate_ban, user_id, None)
 
     if success:
         logger.info("Appeal: Disallow Undone", [
@@ -70,10 +71,11 @@ async def undo_disallow(
 
         # Update ban_history to mark as removed via appeal
         try:
-            db.update_ban_history_removal(
-                user_id=user_id,
-                removed_by=reviewed_by.id,
-                removal_reason="Appeal approved"
+            await asyncio.to_thread(
+                db.update_ban_history_removal,
+                user_id,
+                reviewed_by.id,
+                "Appeal approved"
             )
         except Exception as e:
             logger.warning("Failed to update ban history for appeal", [
@@ -153,7 +155,7 @@ async def undo_close(
     original_name = None
     original_num = None
     if db:
-        closure_record = db.get_closure_by_thread_id(thread_id)
+        closure_record = await asyncio.to_thread(db.get_closure_by_thread_id, thread_id)
         if closure_record and closure_record.get("thread_name"):
             original_name = closure_record["thread_name"]
             num_match = re.match(r'^(\d+)\s*\|\s*(.+)$', original_name)
@@ -183,7 +185,7 @@ async def undo_close(
         # Get next debate number
         next_num = 1
         if db:
-            next_num = db.get_next_debate_number()
+            next_num = await asyncio.to_thread(db.get_next_debate_number)
 
         new_name = f"{next_num} | {title}"
 
@@ -201,9 +203,10 @@ async def undo_close(
         # Update closure_history to mark as reopened via appeal
         if db:
             try:
-                db.update_closure_history_reopened(
-                    thread_id=thread_id,
-                    reopened_by=reviewed_by.id
+                await asyncio.to_thread(
+                    db.update_closure_history_reopened,
+                    thread_id,
+                    reviewed_by.id
                 )
             except Exception as e:
                 logger.warning("Failed to update closure history for appeal", [

@@ -180,11 +180,12 @@ class DisallowCog(commands.Cog):
             expires_at_str = None
 
         # Add the ban
-        success = self.bot.debates_service.db.add_debate_ban(
-            user_id=user.id,
-            thread_id=target_thread_id,
-            banned_by=interaction.user.id,
-            expires_at=expires_at_str
+        success = await asyncio.to_thread(
+            self.bot.debates_service.db.add_debate_ban,
+            user.id,
+            target_thread_id,
+            interaction.user.id,
+            expires_at_str
         )
 
         if success:
@@ -254,7 +255,8 @@ class DisallowCog(commands.Cog):
                     past_ban_count = 0
                     if self.bot.debates_service and self.bot.debates_service.db:
                         # Count is already +1 from the ban we just added, so subtract 1
-                        past_ban_count = max(0, self.bot.debates_service.db.get_user_ban_count(user.id) - 1)
+                        ban_count = await asyncio.to_thread(self.bot.debates_service.db.get_user_ban_count, user.id)
+                        past_ban_count = max(0, ban_count - 1)
 
                     await self.bot.ban_notifier.notify_ban(
                         user=user,
@@ -314,7 +316,7 @@ class DisallowCog(commands.Cog):
                         ("Action", "Skipping cleanup"),
                     ])
                     return
-                thread_ids = self.bot.debates_service.db.get_all_debate_thread_ids()
+                thread_ids = await asyncio.to_thread(self.bot.debates_service.db.get_all_debate_thread_ids)
 
             logger.info("Reaction Cleanup Starting", [
                 ("User", f"{user.name} ({user.display_name})"),

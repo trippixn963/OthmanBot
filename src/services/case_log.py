@@ -15,6 +15,7 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import asyncio
 from typing import TYPE_CHECKING, Optional
 
 import discord
@@ -127,7 +128,7 @@ class CaseLogService:
                 return
 
             # Existing case - increment ban count and send ban embed
-            ban_count = self.db.increment_ban_count(user.id)
+            ban_count = await asyncio.to_thread(self.db.increment_ban_count, user.id)
 
             case_thread = await self.thread_manager.get_case_thread(case['thread_id'])
             if case_thread:
@@ -195,13 +196,13 @@ class CaseLogService:
             return
 
         try:
-            case = self.db.get_case_log(user_id)
+            case = await asyncio.to_thread(self.db.get_case_log, user_id)
             if not case:
                 # No case exists, nothing to log
                 return
 
             # Update last unban timestamp
-            self.db.update_last_unban(user_id)
+            await asyncio.to_thread(self.db.update_last_unban, user_id)
 
             # Build scope with clickable thread link if applicable
             display_scope = await self.thread_manager.build_scope_with_link(scope, thread_id)
@@ -262,13 +263,13 @@ class CaseLogService:
             return
 
         try:
-            case = self.db.get_case_log(user_id)
+            case = await asyncio.to_thread(self.db.get_case_log, user_id)
             if not case:
                 # No case exists, nothing to log
                 return
 
             # Update last unban timestamp
-            self.db.update_last_unban(user_id)
+            await asyncio.to_thread(self.db.update_last_unban, user_id)
 
             # Build scope with clickable thread link if applicable
             display_scope = await self.thread_manager.build_scope_with_link(scope, thread_id)
@@ -317,7 +318,7 @@ class CaseLogService:
             return
 
         try:
-            case = self.db.get_case_log(user_id)
+            case = await asyncio.to_thread(self.db.get_case_log, user_id)
             if not case:
                 return  # No case thread for this user
 
@@ -356,14 +357,14 @@ class CaseLogService:
             return
 
         try:
-            case = self.db.get_case_log(member.id)
+            case = await asyncio.to_thread(self.db.get_case_log, member.id)
             if not case:
                 return  # No case thread for this user
 
             case_thread = await self.thread_manager.get_case_thread(case['thread_id'])
             if case_thread:
                 # Check if user is still disallowed
-                active_restrictions = self.db.get_user_bans(member.id)
+                active_restrictions = await asyncio.to_thread(self.db.get_user_bans, member.id)
                 is_still_disallowed = len(active_restrictions) > 0
 
                 # Get the moderator(s) who disallowed them
@@ -432,17 +433,17 @@ class CaseLogService:
             return
 
         try:
-            case = self.db.get_case_log(owner.id)
+            case = await asyncio.to_thread(self.db.get_case_log, owner.id)
 
             # If no case exists, create one with this close action
             if not case:
-                case_id = self.db.get_next_case_id()
+                case_id = await asyncio.to_thread(self.db.get_next_case_id)
                 case_thread = await self.thread_manager.create_debate_close_case_thread(
                     owner, case_id, closed_by, thread, original_name, reason
                 )
 
                 if case_thread:
-                    self.db.create_case_log(owner.id, case_id, case_thread.id)
+                    await asyncio.to_thread(self.db.create_case_log, owner.id, case_id, case_thread.id)
                     logger.tree("Case Log: New Case Created With Debate Close", [
                         ("User", f"{owner.name} ({owner.display_name})"),
                         ("ID", str(owner.id)),
@@ -504,7 +505,7 @@ class CaseLogService:
             return
 
         try:
-            case = self.db.get_case_log(owner.id)
+            case = await asyncio.to_thread(self.db.get_case_log, owner.id)
             if not case:
                 # No case exists, nothing to log
                 return

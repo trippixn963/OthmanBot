@@ -79,7 +79,7 @@ class PresenceHandler:
     # Status Messages
     # -------------------------------------------------------------------------
 
-    def _get_status_messages(self) -> List[str]:
+    async def _get_status_messages(self) -> List[str]:
         """
         Get list of status messages with all-time stats.
 
@@ -91,7 +91,7 @@ class PresenceHandler:
         try:
             # Get all-time stats from database
             if self.bot.debates_service and self.bot.debates_service.db:
-                stats = self.bot.debates_service.db.get_all_time_stats()
+                stats = await asyncio.to_thread(self.bot.debates_service.db.get_all_time_stats)
 
                 total_debates = stats.get("total_debates", 0)
                 total_votes = stats.get("total_votes", 0)
@@ -148,7 +148,7 @@ class PresenceHandler:
                     continue
 
                 # Get status messages and rotate
-                messages = self._get_status_messages()
+                messages = await self._get_status_messages()
                 if messages:
                     self._current_index = self._current_index % len(messages)
                     status_text = messages[self._current_index]
