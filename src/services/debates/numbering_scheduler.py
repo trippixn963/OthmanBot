@@ -364,7 +364,7 @@ async def _number_single_thread(bot: "OthmanBot", thread: discord.Thread) -> boo
 
     try:
         # Get next debate number
-        debate_number = db.get_next_debate_number()
+        debate_number = await asyncio.to_thread(db.get_next_debate_number)
 
         # Build new name
         original_name = thread.name

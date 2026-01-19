@@ -260,7 +260,7 @@ async def on_thread_delete_handler(bot: "OthmanBot", thread: discord.Thread) -> 
     # Clean up database records
     if hasattr(bot, 'debates_service') and bot.debates_service is not None:
         try:
-            bot.debates_service.db.delete_thread_data(thread.id)
+            await asyncio.to_thread(bot.debates_service.db.delete_thread_data, thread.id)
             logger.debug("🗄️ Thread Database Records Cleaned", [
                 ("Thread ID", str(thread.id)),
             ])
@@ -319,10 +319,10 @@ async def on_message_delete_handler(
         try:
             db = bot.debates_service.db
             # Check if message had any votes
-            votes = db.get_message_votes(payload.message_id)
+            votes = await asyncio.to_thread(db.get_message_votes, payload.message_id)
             if votes:
                 # Clean up orphaned votes for this specific message
-                result = db.cleanup_orphaned_votes({payload.message_id})
+                result = await asyncio.to_thread(db.cleanup_orphaned_votes, {payload.message_id})
                 if result.get("votes_deleted", 0) > 0:
                     logger.tree("Cleaned Up Votes For Deleted Message", [
                         ("Message ID", str(payload.message_id)),
@@ -436,7 +436,7 @@ async def on_starter_message_delete_handler(
         # Clean up database records
         if hasattr(bot, 'debates_service') and bot.debates_service is not None:
             try:
-                bot.debates_service.db.delete_thread_data(thread_id)
+                await asyncio.to_thread(bot.debates_service.db.delete_thread_data, thread_id)
                 logger.debug("Thread Database Records Cleaned", [
                     ("Thread ID", str(thread_id)),
                 ])

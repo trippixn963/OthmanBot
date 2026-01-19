@@ -81,14 +81,14 @@ class AppealService:
             return {"success": False, "error": "Appeal system is unavailable."}
 
         # Check if appeal already exists
-        if self.db.has_appeal(user.id, action_type, action_id):
+        if await self.db.has_appeal_async(user.id, action_type, action_id):
             return {
                 "success": False,
                 "error": "You have already submitted an appeal for this action."
             }
 
         # Create the appeal
-        appeal_id = self.db.create_appeal(
+        appeal_id = await self.db.create_appeal_async(
             user_id=user.id,
             action_type=action_type,
             action_id=action_id,
@@ -153,7 +153,7 @@ class AppealService:
         if not self.db:
             return {"success": False, "error": "Appeal system is unavailable."}
 
-        appeal = self.db.get_appeal(appeal_id)
+        appeal = await self.db.get_appeal_async(appeal_id)
         if not appeal:
             return {"success": False, "error": "Appeal not found."}
 
@@ -161,7 +161,7 @@ class AppealService:
             return {"success": False, "error": f"Appeal already {appeal['status']}."}
 
         # Update status
-        if not self.db.update_appeal_status(appeal_id, "approved", reviewed_by.id):
+        if not await self.db.update_appeal_status_async(appeal_id, "approved", reviewed_by.id):
             return {"success": False, "error": "Failed to update appeal status."}
 
         # Undo the action
@@ -234,7 +234,7 @@ class AppealService:
         if not self.db:
             return {"success": False, "error": "Appeal system is unavailable."}
 
-        appeal = self.db.get_appeal(appeal_id)
+        appeal = await self.db.get_appeal_async(appeal_id)
         if not appeal:
             return {"success": False, "error": "Appeal not found."}
 
@@ -242,7 +242,7 @@ class AppealService:
             return {"success": False, "error": f"Appeal already {appeal['status']}."}
 
         # Update status with denial reason
-        if not self.db.update_appeal_status(appeal_id, "denied", reviewed_by.id, denial_reason):
+        if not await self.db.update_appeal_status_async(appeal_id, "denied", reviewed_by.id, denial_reason):
             return {"success": False, "error": "Failed to update appeal status."}
 
         # Notify user

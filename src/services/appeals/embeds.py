@@ -8,6 +8,7 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -46,7 +47,7 @@ async def post_appeal_to_case_thread(
         return
 
     # Get or create case thread
-    case = db.get_case_log(user.id)
+    case = await asyncio.to_thread(db.get_case_log, user.id)
     if not case:
         logger.info("No case thread exists for appeal user", [
             ("User", f"{user.name} ({user.display_name})"),
@@ -65,11 +66,11 @@ async def post_appeal_to_case_thread(
     # Get the original moderator who took the action
     action_by_id: Optional[int] = None
     if action_type == "disallow":
-        ban_history = db.get_user_ban_history(user.id, limit=1)
+        ban_history = await asyncio.to_thread(db.get_user_ban_history, user.id, 1)
         if ban_history:
             action_by_id = ban_history[0].get("banned_by")
     elif action_type == "close":
-        closure = db.get_closure_by_thread_id(action_id)
+        closure = await asyncio.to_thread(db.get_closure_by_thread_id, action_id)
         if closure:
             action_by_id = closure.get("closed_by")
 
@@ -142,7 +143,7 @@ async def post_appeal_to_case_thread(
 
     # Store message ID so we can edit it when approved/denied
     if message and db:
-        db.set_appeal_message_id(appeal_id, message.id)
+        await asyncio.to_thread(db.set_appeal_message_id, appeal_id, message.id)
 
     logger.info("Appeal Posted to Case Thread", [
         ("Appeal ID", str(appeal_id)),
@@ -176,7 +177,7 @@ async def update_appeal_embed_status(
         return False
 
     # Get the appeal with message_id
-    appeal = db.get_appeal(appeal_id)
+    appeal = await asyncio.to_thread(db.get_appeal, appeal_id)
     if not appeal:
         logger.warning("Cannot update appeal embed - appeal not found", [
             ("Appeal ID", str(appeal_id)),
@@ -193,7 +194,7 @@ async def update_appeal_embed_status(
     if not bot.case_log_service:
         return False
 
-    case = db.get_case_log(appeal["user_id"])
+    case = await asyncio.to_thread(db.get_case_log, appeal["user_id"])
     if not case:
         return False
 

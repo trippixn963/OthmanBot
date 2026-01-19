@@ -296,15 +296,17 @@ class CloseCog(commands.Cog):
                 # Add to closure history
                 if self.bot.debates_service and self.bot.debates_service.db:
                     try:
-                        self.bot.debates_service.db.add_to_closure_history(
-                            thread_id=thread.id,
-                            thread_name=original_name,
-                            closed_by=closed_by.id,
-                            reason=reason,
-                            user_id=owner.id
+                        await asyncio.to_thread(
+                            self.bot.debates_service.db.add_to_closure_history,
+                            thread.id,
+                            original_name,
+                            closed_by.id,
+                            reason,
+                            owner.id
                         )
                         # Get count (subtract 1 since we just added this one)
-                        past_closure_count = max(0, self.bot.debates_service.db.get_user_closure_count(owner.id) - 1)
+                        closure_count = await asyncio.to_thread(self.bot.debates_service.db.get_user_closure_count, owner.id)
+                        past_closure_count = max(0, closure_count - 1)
                         logger.debug("Closure History Recorded", [
                             ("Thread ID", str(thread.id)),
                             ("Owner", f"{owner.name} ({owner.display_name})"),

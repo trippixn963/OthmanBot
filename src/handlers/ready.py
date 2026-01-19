@@ -443,12 +443,22 @@ class ReadyHandler(commands.Cog):
                 logger.error("Failed To Leave Guild", [("Guild", guild.name), ("Error", str(e))])
 
     async def _sync_commands(self) -> None:
-        """Sync slash commands to Syria guild."""
+        """Sync slash commands to Syria guild only (not globally)."""
         try:
+            # First, clear any global commands so they don't appear in other servers
+            self.bot.tree.clear_commands(guild=None)
+            await self.bot.tree.sync()  # Sync empty global commands
+            logger.debug("Cleared Global Commands")
+
+            # Now sync commands only to the main Syria guild
             guild = discord.Object(id=SYRIA_GUILD_ID)
             self.bot.tree.copy_global_to(guild=guild)
             synced = await self.bot.tree.sync(guild=guild)
-            logger.tree("Synced Commands To Syria Guild", [("Commands", str(len(synced)))], emoji="⚡")
+            logger.tree("Synced Commands To Syria Guild Only", [
+                ("Commands", str(len(synced))),
+                ("Guild ID", str(SYRIA_GUILD_ID)),
+                ("Global Commands", "Cleared"),
+            ], emoji="⚡")
         except Exception as e:
             logger.error("Failed To Sync Commands", [("Error", str(e))])
 

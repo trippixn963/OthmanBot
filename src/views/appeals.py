@@ -17,6 +17,7 @@ Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
+import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
@@ -438,11 +439,13 @@ class AppealButton(discord.ui.Button):
 
         # Check if appeal already exists
         if bot.debates_service and bot.debates_service.db:
-            if bot.debates_service.db.has_appeal(
-                user_id=interaction.user.id,
-                action_type=action_type,
-                action_id=action_id
-            ):
+            has_appeal = await asyncio.to_thread(
+                bot.debates_service.db.has_appeal,
+                interaction.user.id,
+                action_type,
+                action_id
+            )
+            if has_appeal:
                 await interaction.response.send_message(
                     "You have already submitted an appeal for this action. "
                     "Please wait for a moderator to review it.",
@@ -776,11 +779,13 @@ async def handle_appeal_button_interaction(
 
     # Check if appeal already exists
     if bot.debates_service and bot.debates_service.db:
-        if bot.debates_service.db.has_appeal(
-            user_id=interaction.user.id,
-            action_type=action_type,
-            action_id=action_id
-        ):
+        has_appeal = await asyncio.to_thread(
+            bot.debates_service.db.has_appeal,
+            interaction.user.id,
+            action_type,
+            action_id
+        )
+        if has_appeal:
             await interaction.response.send_message(
                 "You have already submitted an appeal for this action. "
                 "Please wait for a moderator to review it.",
@@ -1003,7 +1008,7 @@ async def handle_info_button_interaction(
         )
         return
 
-    appeal = bot.debates_service.db.get_appeal(appeal_id)
+    appeal = await asyncio.to_thread(bot.debates_service.db.get_appeal, appeal_id)
     if not appeal:
         await interaction.followup.send(
             "This appeal was not found in the database.",
@@ -1049,10 +1054,10 @@ async def handle_info_button_interaction(
         appeal_created_at = appeal.get("created_at")
         ban = None
         if appeal_created_at:
-            ban = bot.debates_service.db.get_ban_history_at_time(user_id, appeal_created_at)
+            ban = await asyncio.to_thread(bot.debates_service.db.get_ban_history_at_time, user_id, appeal_created_at)
         if not ban:
             # Fallback to current bans if history lookup fails
-            bans = bot.debates_service.db.get_user_bans(user_id)
+            bans = await asyncio.to_thread(bot.debates_service.db.get_user_bans, user_id)
             if bans:
                 ban = bans[0]
 
