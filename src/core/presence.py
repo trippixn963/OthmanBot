@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 PROMO_DURATION_MINUTES = 10
 """Duration of promo presence at the top of each hour."""
 
-PROMO_TEXT = "trippixn.com/othman"
+PROMO_TEXT = "🌐 trippixn.com/othman"
 """Promotional text shown during promo hour."""
 
 
