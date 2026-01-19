@@ -404,8 +404,13 @@ async def _number_single_thread(bot: "OthmanBot", thread: discord.Thread) -> boo
 
         # Add analytics embed if missing
         try:
-            analytics_msg_id = db.get_analytics_message(thread.id)
+            analytics_msg_id = await db.get_analytics_message_async(thread.id)
             if not analytics_msg_id:
+                logger.info("Adding Missing Analytics Embed (Hourly Check)", [
+                    ("Thread", thread.name[:THREAD_NAME_PREVIEW_LENGTH]),
+                    ("Thread ID", str(thread.id)),
+                    ("Reason", "No analytics_message_id in database"),
+                ])
                 analytics = await calculate_debate_analytics(thread, db)
                 embed = await generate_analytics_embed(bot, analytics)
                 analytics_message = await send_message_with_retry(thread, embed=embed)
@@ -422,8 +427,15 @@ async def _number_single_thread(bot: "OthmanBot", thread: discord.Thread) -> boo
                     except discord.HTTPException:
                         pass
                     await db.set_analytics_message_async(thread.id, analytics_message.id)
-        except Exception:
-            pass
+                    logger.debug("Analytics Embed Added And Stored", [
+                        ("Thread ID", str(thread.id)),
+                        ("Message ID", str(analytics_message.id)),
+                    ])
+        except Exception as e:
+            logger.warning("Failed To Add Analytics Embed", [
+                ("Thread ID", str(thread.id)),
+                ("Error", str(e)[:50]),
+            ])
 
         return True
 
