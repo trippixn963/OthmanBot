@@ -23,10 +23,10 @@ from src.services.schedulers import (
     ContentType,
 )
 
-# Webhook Alerts
-from src.services.webhook_alerts import (
-    WebhookAlertService,
-    get_alert_service,
+# Status Webhook
+from src.services.status_webhook import (
+    StatusWebhookService,
+    get_status_service,
 )
 
 # Case Log
@@ -42,9 +42,9 @@ __all__ = [
     "BaseScheduler",
     "ContentRotationScheduler",
     "ContentType",
-    # Webhook Alerts
-    "WebhookAlertService",
-    "get_alert_service",
+    # Status Webhook
+    "StatusWebhookService",
+    "get_status_service",
     # Case Log
     "CaseLogService",
 ]

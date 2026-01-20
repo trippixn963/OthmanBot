@@ -64,9 +64,9 @@ async def undo_disallow(
 
     if success:
         logger.info("Appeal: Disallow Undone", [
-            ("User ID", str(user_id)),
+            ("ID", str(user_id)),
             ("Reviewed By", f"{reviewed_by.name} ({reviewed_by.display_name})"),
-            ("ID", str(reviewed_by.id)),
+            ("Reviewer ID", str(reviewed_by.id)),
         ])
 
         # Update ban_history to mark as removed via appeal
@@ -79,7 +79,7 @@ async def undo_disallow(
             )
         except Exception as e:
             logger.warning("Failed to update ban history for appeal", [
-                ("User ID", str(user_id)),
+                ("ID", str(user_id)),
                 ("Error", str(e)),
             ])
 

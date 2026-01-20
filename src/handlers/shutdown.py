@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, List, Tuple, Any
 
 from src.core.logger import logger
 from src.core.presence import stop_presence
-from src.services.webhook_alerts import get_alert_service
+from src.services.status_webhook import get_status_service
 from src.services import playwright_pool
 
 if TYPE_CHECKING:
@@ -92,10 +92,11 @@ async def shutdown_handler(bot: "OthmanBot") -> None:
             ("Error", str(e)),
         ])
 
-    # Stop hourly alerts (shutdown alert not needed - crash alerts are sufficient)
+    # Stop hourly alerts and send shutdown notification
     try:
-        alert_service = get_alert_service()
-        alert_service.stop_hourly_alerts()
+        status_service = get_status_service()
+        await status_service.send_shutdown_alert()
+        status_service.stop_hourly_alerts()
     except Exception as e:
         logger.debug("Failed To Stop Hourly Alerts", [
             ("Error", str(e)),

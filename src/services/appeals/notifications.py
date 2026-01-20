@@ -41,7 +41,7 @@ async def send_appeal_result_dm(
         user = await bot.fetch_user(user_id)
     except discord.NotFound:
         logger.warning("Appeal: Could not find user for DM", [
-            ("User ID", str(user_id)),
+            ("ID", str(user_id)),
         ])
         return False
 

@@ -191,9 +191,9 @@ class AppealService:
 
         logger.success("✅ Appeal Approved", [
             ("Appeal ID", str(appeal_id)),
-            ("User ID", str(appeal["user_id"])),
+            ("ID", str(appeal["user_id"])),
             ("Reviewed By", f"{reviewed_by.name} ({reviewed_by.display_name})"),
-            ("ID", str(reviewed_by.id)),
+            ("Reviewer ID", str(reviewed_by.id)),
             ("Action Undone", str(undo_success)),
         ])
 
@@ -258,9 +258,9 @@ class AppealService:
 
         logger.warning("❌ Appeal Denied", [
             ("Appeal ID", str(appeal_id)),
-            ("User ID", str(appeal["user_id"])),
+            ("ID", str(appeal["user_id"])),
             ("Reviewed By", f"{reviewed_by.name} ({reviewed_by.display_name})"),
-            ("ID", str(reviewed_by.id)),
+            ("Reviewer ID", str(reviewed_by.id)),
             ("Reason", denial_reason[:50] + "..." if denial_reason and len(denial_reason) > 50 else denial_reason or "None"),
         ])
 

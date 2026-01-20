@@ -213,7 +213,7 @@ class AllowCog(commands.Cog):
                     )
             except Exception as e:
                 logger.warning("Failed to send unban notification DM", [
-                    ("User ID", str(user_id)),
+                    ("ID", str(user_id)),
                     ("Error", str(e)),
                 ])
         else:

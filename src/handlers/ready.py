@@ -95,16 +95,16 @@ class ReadyHandler(commands.Cog):
                 ("Action", "Continuing startup"),
             ])
 
-        logger.tree(
-            f"Bot Ready: {bot.user.name}",
-            [
-                ("Bot ID", str(bot.user.id)),
-                ("Guilds", str(len(bot.guilds))),
+        logger.startup_banner(
+            bot_name=bot.user.name,
+            bot_id=bot.user.id,
+            guilds=len(bot.guilds),
+            latency=bot.latency * 1000,
+            extra=[
                 ("Mode", "Fully Automated"),
                 ("News Channel", str(bot.news_channel_id) if bot.news_channel_id else "Not Set"),
                 ("Soccer Channel", str(bot.soccer_channel_id) if bot.soccer_channel_id else "Not Set"),
             ],
-            emoji="✅",
         )
 
         # Sync slash commands
@@ -172,7 +172,7 @@ class ReadyHandler(commands.Cog):
             init_results.append(("Stats API", False))
 
         # Initialize webhook alerts
-        init_results.append(("Webhook Alerts", await self._safe_init("Webhook Alerts", self._init_webhook_alerts)))
+        init_results.append(("Status Webhook", await self._safe_init("Status Webhook", self._init_status_webhook)))
 
         # Update status channel
         try:
@@ -383,14 +383,14 @@ class ReadyHandler(commands.Cog):
         self.bot.backup_scheduler = BackupScheduler()
         await self.bot.backup_scheduler.start(run_immediately=True)
 
-    async def _init_webhook_alerts(self) -> None:
-        """Initialize webhook alert service."""
+    async def _init_status_webhook(self) -> None:
+        """Initialize status webhook service."""
         bot = self.bot
-        bot.alert_service.set_bot(bot)
-        await bot.alert_service.send_startup_alert()
-        await bot.alert_service.start_hourly_alerts()
-        logger.tree("Webhook Alerts Initialized", [
-            ("Status", "Enabled" if bot.alert_service.enabled else "Disabled"),
+        bot.status_service.set_bot(bot)
+        await bot.status_service.send_startup_alert()
+        await bot.status_service.start_hourly_alerts()
+        logger.tree("Status Webhook Initialized", [
+            ("Status", "Enabled" if bot.status_service.enabled else "Disabled"),
         ], emoji="🔔")
 
     async def _init_ban_expiry_scheduler(self) -> None:

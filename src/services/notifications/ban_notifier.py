@@ -240,7 +240,7 @@ class BanNotifier:
             True if DM was sent successfully, False otherwise
         """
         logger.info("Attempting Ban Expiry Notification DM", [
-            ("User ID", str(user_id)),
+            ("ID", str(user_id)),
             ("Scope", scope),
             ("Thread ID", str(thread_id) if thread_id else "Global"),
         ])
@@ -253,7 +253,7 @@ class BanNotifier:
                 user = await self.bot.fetch_user(user_id)
             except discord.NotFound:
                 logger.warning("Ban Expiry Notification Failed - User Not Found", [
-                    ("User ID", str(user_id)),
+                    ("ID", str(user_id)),
                 ])
                 return False
 
@@ -278,21 +278,21 @@ class BanNotifier:
 
         except discord.Forbidden:
             logger.warning("Ban Expiry Notification DM Failed - DMs Disabled", [
-                ("User ID", str(user_id)),
+                ("ID", str(user_id)),
                 ("Scope", scope),
             ])
             return False
 
         except discord.HTTPException as e:
             log_http_error(e, "Ban Expiry Notification DM", [
-                ("User ID", str(user_id)),
+                ("ID", str(user_id)),
                 ("Scope", scope),
             ])
             return False
 
         except Exception as e:
             logger.error("Ban Expiry Notification DM Failed - Unexpected Error", [
-                ("User ID", str(user_id)),
+                ("ID", str(user_id)),
                 ("Error Type", type(e).__name__),
                 ("Error", str(e)),
             ])

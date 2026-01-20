@@ -141,7 +141,7 @@ class CasesCog(commands.Cog):
                 display_name = fetched_user.display_name if fetched_user else f"User {user_id}"
                 avatar_url = fetched_user.display_avatar.url if fetched_user else None
             except discord.HTTPException as e:
-                logger.debug("Failed to fetch user for case lookup", [("User ID", str(user_id)), ("Error", str(e))])
+                logger.debug("Failed to fetch user for case lookup", [("ID", str(user_id)), ("Error", str(e))])
                 display_name = f"User {user_id}"
                 avatar_url = None
 

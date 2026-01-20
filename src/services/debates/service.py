@@ -74,7 +74,7 @@ class DebatesService:
         result = self.db.add_vote(voter_id, message_id, author_id, 1)
         if result:
             logger.debug("⬆️ Upvote Recorded", [
-                ("User ID", str(voter_id)),
+                ("ID", str(voter_id)),
                 ("Message", str(message_id)),
             ])
         return result
@@ -102,7 +102,7 @@ class DebatesService:
         result = self.db.add_vote(voter_id, message_id, author_id, -1)
         if result:
             logger.debug("⬇️ Downvote Recorded", [
-                ("User ID", str(voter_id)),
+                ("ID", str(voter_id)),
                 ("Message", str(message_id)),
             ])
         return result
@@ -122,7 +122,7 @@ class DebatesService:
         result = await self.db.add_vote_async(voter_id, message_id, author_id, 1)
         if result:
             logger.debug("⬆️ Upvote Recorded (Async)", [
-                ("User ID", str(voter_id)),
+                ("ID", str(voter_id)),
                 ("Message", str(message_id)),
             ])
         return result
@@ -142,7 +142,7 @@ class DebatesService:
         result = await self.db.add_vote_async(voter_id, message_id, author_id, -1)
         if result:
             logger.debug("⬇️ Downvote Recorded (Async)", [
-                ("User ID", str(voter_id)),
+                ("ID", str(voter_id)),
                 ("Message", str(message_id)),
             ])
         return result
@@ -165,7 +165,7 @@ class DebatesService:
         author_id = self.db.remove_vote(voter_id, message_id)
         if author_id:
             logger.debug("🗑️ Vote Removed", [
-                ("User ID", str(voter_id)),
+                ("ID", str(voter_id)),
                 ("Message", str(message_id)),
             ])
             return True

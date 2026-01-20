@@ -363,7 +363,7 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
                 if db.add_vote(voter_id, message.id, author_id, 1):
                     stats["votes_added"] += 1
                     logger.debug("Added Missing Upvote", [
-                        ("User ID", str(voter_id)),
+                        ("ID", str(voter_id)),
                         ("Message", str(message.id)),
                     ])
 
@@ -374,7 +374,7 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
                 if db.add_vote(voter_id, message.id, author_id, -1):
                     stats["votes_added"] += 1
                     logger.debug("Added Missing Downvote", [
-                        ("User ID", str(voter_id)),
+                        ("ID", str(voter_id)),
                         ("Message", str(message.id)),
                     ])
 
@@ -386,7 +386,7 @@ async def _reconcile_thread(bot: "OthmanBot", thread: discord.Thread, stats: dic
                 if db.remove_vote(voter_id, message.id):
                     stats["votes_removed"] += 1
                     logger.debug("Removed Stale Vote", [
-                        ("User ID", str(voter_id)),
+                        ("ID", str(voter_id)),
                         ("Message", str(message.id)),
                     ])
 

@@ -1,6 +1,6 @@
 """
-OthmanBot - Logger
-==================
+Unified Tree Logger
+===================
 
 Custom logging system with tree-style formatting and EST timezone support.
 Provides structured logging for Discord bot events with visual formatting
@@ -16,6 +16,21 @@ Features:
 - Automatic cleanup of old logs (7+ days)
 - Live logs streaming to Discord webhook in tree format
 - Separate error webhook for error-only logs
+- Persistent aiohttp session for efficient webhook delivery
+- Proper session cleanup on shutdown
+
+Log Structure:
+    logs/
+    ├── 2025-12-06/
+    │   ├── {BOT_NAME}-2025-12-06.log
+    │   └── {BOT_NAME}-Errors-2025-12-06.log
+    └── ...
+
+Environment Variables:
+    BOT_NAME          - Name for log files and webhook usernames (default: Bot)
+    LOGS_WEBHOOK_URL  - Discord webhook URL for live logs
+    ERROR_WEBHOOK_URL - Discord webhook URL for error-only logs
+    DEBUG             - Enable debug logging (1/true/yes)
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
@@ -43,6 +58,9 @@ TIMEZONE = ZoneInfo("America/New_York")
 
 # Log retention period in days
 LOG_RETENTION_DAYS = 7
+
+# Bot name for log files and webhook usernames
+BOT_NAME = os.getenv("BOT_NAME", "Bot")
 
 # Regex to match emojis (for stripping from file logs)
 EMOJI_PATTERN = re.compile(
@@ -89,11 +107,14 @@ class Logger:
         # Unique run ID for this session
         self.run_id: str = str(uuid.uuid4())[:8]
 
+        # Track start time for uptime calculation
+        self._start_time: datetime = datetime.now(TIMEZONE)
+
         # Track last log type for spacing between trees
         self._last_was_tree: bool = False
 
         # Live logs Discord webhook streaming (from env var)
-        self._live_logs_webhook_url: str = os.getenv("LOG_WEBHOOK_URL", "")
+        self._live_logs_webhook_url: str = os.getenv("LOGS_WEBHOOK_URL", "")
         self._live_logs_enabled: bool = bool(self._live_logs_webhook_url)
 
         # Error webhook (from env var)
@@ -114,8 +135,8 @@ class Logger:
         self.log_dir.mkdir(exist_ok=True)
 
         # Create log files inside daily folder
-        self.log_file: Path = self.log_dir / f"Othman-{self.current_date}.log"
-        self.error_file: Path = self.log_dir / f"Othman-Errors-{self.current_date}.log"
+        self.log_file: Path = self.log_dir / f"{BOT_NAME}-{self.current_date}.log"
+        self.error_file: Path = self.log_dir / f"{BOT_NAME}-Errors-{self.current_date}.log"
 
         # Clean up old log folders (older than 7 days)
         self._cleanup_old_logs()
@@ -134,6 +155,7 @@ class Logger:
             cutoff_date = now - timedelta(days=LOG_RETENTION_DAYS)
             deleted_count = 0
 
+            # Use glob pattern to only match date-formatted folders (YYYY-MM-DD)
             for folder in self.logs_base_dir.glob("????-??-??"):
                 if not folder.is_dir():
                     continue
@@ -158,12 +180,14 @@ class Logger:
         current_date = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
 
         if current_date != self.current_date:
+            # Date has changed - rotate to new folder
             self.current_date = current_date
             self.log_dir = self.logs_base_dir / self.current_date
             self.log_dir.mkdir(exist_ok=True)
-            self.log_file = self.log_dir / f"Othman-{self.current_date}.log"
-            self.error_file = self.log_dir / f"Othman-Errors-{self.current_date}.log"
+            self.log_file = self.log_dir / f"{BOT_NAME}-{self.current_date}.log"
+            self.error_file = self.log_dir / f"{BOT_NAME}-Errors-{self.current_date}.log"
 
+            # Write continuation header to new log files
             header = (
                 f"\n{'='*60}\n"
                 f"LOG ROTATION - Continuing session {self.run_id}\n"
@@ -221,6 +245,62 @@ class Logger:
             prefix = TreeSymbols.LAST if is_last else TreeSymbols.BRANCH
             lines.append(f"  {prefix} {key}: {value}")
         return "\n".join(lines)
+
+    def _format_duration(self, seconds: float) -> str:
+        """Format seconds into human-readable duration (e.g., '2d 5h 30m')."""
+        if seconds < 0:
+            return "0s"
+
+        days, remainder = divmod(int(seconds), 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, secs = divmod(remainder, 60)
+
+        parts = []
+        if days > 0:
+            parts.append(f"{days}d")
+        if hours > 0:
+            parts.append(f"{hours}h")
+        if minutes > 0:
+            parts.append(f"{minutes}m")
+        if secs > 0 and not parts:  # Only show seconds if no larger units
+            parts.append(f"{secs}s")
+
+        return " ".join(parts) if parts else "0s"
+
+    def _format_user(self, user: Any) -> Tuple[str, str]:
+        """
+        Extract user info for consistent logging.
+
+        Returns:
+            Tuple of (display_string, user_id_string)
+
+        Handles discord.User, discord.Member, and Interaction objects.
+        """
+        try:
+            # Handle Interaction objects
+            if hasattr(user, "user"):
+                user = user.user
+
+            # Extract name and display name
+            name = getattr(user, "name", "Unknown")
+            display_name = getattr(user, "display_name", name)
+            user_id = getattr(user, "id", "Unknown")
+
+            # Format: "username (display_name)" or just "username" if same
+            if name != display_name:
+                display_str = f"{name} ({display_name})"
+            else:
+                display_str = name
+
+            return (display_str, str(user_id))
+        except Exception:
+            return ("Unknown", "Unknown")
+
+    def _get_uptime(self) -> str:
+        """Get formatted uptime since logger initialization."""
+        now = datetime.now(TIMEZONE)
+        delta = now - self._start_time
+        return self._format_duration(delta.total_seconds())
 
     # =========================================================================
     # Private Methods - File Writing
@@ -321,12 +401,13 @@ class Logger:
         """Send a single tree log to Discord webhook."""
         payload = {
             "content": f"```\n{formatted_tree}\n```",
-            "username": "OthmanBot Logs",
+            "username": f"{BOT_NAME} Logs",
         }
         try:
             await self._async_send_webhook(payload, self._live_logs_webhook_url)
-        except Exception:
-            pass
+        except Exception as e:
+            # Log to file only to avoid recursion
+            self._write_to_file_only(f"[LIVE LOG WEBHOOK] Failed: {type(e).__name__}: {e}")
 
     def _send_error_webhook(
         self,
@@ -338,10 +419,11 @@ class Logger:
         if not self._error_webhook_url:
             return
 
+        # Format as tree (same as live logs)
         formatted = self._format_tree_for_live(title, items, emoji)
         payload = {
             "content": f"```\n{formatted}\n```",
-            "username": "OthmanBot Errors",
+            "username": f"{BOT_NAME} Errors",
         }
 
         try:
@@ -365,6 +447,7 @@ class Logger:
             session = await self._get_webhook_session()
             async with session.post(webhook_url, json=payload) as response:
                 if response.status >= 400:
+                    # Log to file only (avoid recursion)
                     self._write_to_file_only(
                         f"[WEBHOOK] HTTP {response.status} sending to webhook"
                     )
@@ -419,6 +502,7 @@ class Logger:
             prefix = TreeSymbols.LAST if is_last else TreeSymbols.BRANCH
             self._write_raw(f"  {prefix} {key}: {value}", also_to_error=True)
 
+        # Add empty line after error tree for readability
         self._write_raw("", also_to_error=True)
         self._last_was_tree = True
 
@@ -528,6 +612,7 @@ class Logger:
         is_error = emoji in self.ERROR_EMOJIS
 
         if is_error:
+            # Use error tree path (writes to error log + error webhook)
             self._tree_error(title, items, emoji)
             return
 
@@ -555,7 +640,24 @@ class Logger:
         emoji: str = "📦",
         indent: int = 0
     ) -> None:
-        """Log nested/hierarchical data in tree format."""
+        """
+        Log nested/hierarchical data in tree format.
+
+        Example output:
+            [12:00:00 PM EST] 📦 Channel State
+              ├─ Voice
+              │   ├─ Connected: True
+              │   └─ Members: 5
+              └─ Settings
+                  ├─ Locked: False
+                  └─ Limit: 10
+
+        Args:
+            title: Tree title/header
+            data: Nested dictionary
+            emoji: Emoji prefix for title
+            indent: Current indentation level
+        """
         if indent == 0:
             if not self._last_was_tree:
                 self._write_raw("")
@@ -597,7 +699,20 @@ class Logger:
         items: List[str],
         emoji: str = "📋"
     ) -> None:
-        """Log a simple list in tree format."""
+        """
+        Log a simple list in tree format.
+
+        Example output:
+            [12:00:00 PM EST] 📋 Trusted Users
+              ├─ John#1234
+              ├─ Jane#5678
+              └─ Bob#9012
+
+        Args:
+            title: Tree title/header
+            items: List of string items
+            emoji: Emoji prefix for title
+        """
         if not self._last_was_tree:
             self._write_raw("")
 
@@ -611,13 +726,71 @@ class Logger:
         self._write_raw("")
         self._last_was_tree = True
 
+    def tree_section(
+        self,
+        title: str,
+        sections: Dict[str, List[Tuple[str, Any]]],
+        emoji: str = "📊"
+    ) -> None:
+        """
+        Log multiple sections in tree format.
+
+        Example output:
+            [12:00:00 PM EST] 📊 Bot Stats
+              ├─ TempVoice
+              │   ├─ Active Channels: 5
+              │   └─ Total Created: 100
+              └─ XP System
+                  ├─ Users: 500
+                  └─ Total XP: 1.2M
+
+        Args:
+            title: Tree title/header
+            sections: Dict of section_name -> [(key, value), ...]
+            emoji: Emoji prefix for title
+        """
+        if not self._last_was_tree:
+            self._write_raw("")
+
+        self._write(title, emoji)
+
+        section_names = list(sections.keys())
+        for si, section_name in enumerate(section_names):
+            section_is_last = si == len(section_names) - 1
+            section_prefix = TreeSymbols.LAST if section_is_last else TreeSymbols.BRANCH
+            self._write_raw(f"  {section_prefix} {section_name}")
+
+            items = sections[section_name]
+            for ii, (key, value) in enumerate(items):
+                item_is_last = ii == len(items) - 1
+                item_prefix = TreeSymbols.LAST if item_is_last else TreeSymbols.BRANCH
+                continuation = TreeSymbols.SPACE if section_is_last else TreeSymbols.PIPE
+                self._write_raw(f"  {continuation} {item_prefix} {key}: {value}")
+
+        self._write_raw("")
+        self._last_was_tree = True
+
     def error_tree(
         self,
         title: str,
         error: Exception,
         context: Optional[List[Tuple[str, Any]]] = None
     ) -> None:
-        """Log an error with context in tree format."""
+        """
+        Log an error with context in tree format.
+
+        Example output:
+            [12:00:00 PM EST] ❌ Channel Error
+              ├─ Type: PermissionError
+              ├─ Message: Cannot modify channel
+              ├─ Channel: 123456789
+              └─ User: John#1234
+
+        Args:
+            title: Error title/description
+            error: The exception that occurred
+            context: Additional context as (key, value) tuples
+        """
         items: List[Tuple[str, Any]] = [
             ("Type", type(error).__name__),
             ("Message", str(error)),
@@ -628,6 +801,69 @@ class Logger:
 
         self._tree_error(title, items, emoji="❌")
 
+    def startup_banner(
+        self,
+        bot_name: str,
+        bot_id: int,
+        guilds: int,
+        latency: float,
+        extra: Optional[List[Tuple[str, Any]]] = None
+    ) -> None:
+        """
+        Log bot startup with a banner and tree format.
+
+        Example output:
+            ═══════════════════════════════════════
+                    SyriaBot │ Run: a1b2c3d4
+            ═══════════════════════════════════════
+
+            [12:00:00 PM EST] 🤖 Bot Ready
+              ├─ Bot ID: 123456789
+              ├─ Guilds: 5
+              └─ Latency: 50ms
+
+        Args:
+            bot_name: Name of the bot
+            bot_id: Discord bot ID
+            guilds: Number of guilds
+            latency: WebSocket latency in ms
+            extra: Additional startup info
+        """
+        # Build the banner
+        banner_text = f"{bot_name} │ Run: {self.run_id}"
+        banner_width = 43
+        padding = (banner_width - len(banner_text)) // 2
+        centered_text = " " * padding + banner_text
+
+        banner = (
+            f"{'═' * banner_width}\n"
+            f"{centered_text}\n"
+            f"{'═' * banner_width}"
+        )
+
+        # Print banner to console and file
+        print(f"\n{banner}\n")
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(f"\n{banner}\n\n")
+        except (OSError, IOError):
+            pass
+
+        # Send banner to webhook
+        self._send_live_log(banner)
+
+        # Now log the tree with details
+        items: List[Tuple[str, Any]] = [
+            ("Bot ID", bot_id),
+            ("Guilds", guilds),
+            ("Latency", f"{latency:.0f}ms"),
+        ]
+
+        if extra:
+            items.extend(extra)
+
+        self.tree("Bot Ready", items, emoji="🤖")
+
     def startup_tree(
         self,
         bot_name: str,
@@ -636,7 +872,17 @@ class Logger:
         latency: float,
         extra: Optional[List[Tuple[str, Any]]] = None
     ) -> None:
-        """Log bot startup information in tree format."""
+        """
+        Log bot startup information in tree format (legacy method).
+        Consider using startup_banner() for a nicer output.
+
+        Args:
+            bot_name: Name of the bot
+            bot_id: Discord bot ID
+            guilds: Number of guilds
+            latency: WebSocket latency in ms
+            extra: Additional startup info
+        """
         items: List[Tuple[str, Any]] = [
             ("Bot ID", bot_id),
             ("Guilds", guilds),
@@ -648,6 +894,140 @@ class Logger:
             items.extend(extra)
 
         self.tree(f"Bot Ready: {bot_name}", items, emoji="🤖")
+
+    def shutdown_tree(
+        self,
+        bot_name: str,
+        reason: str = "Shutdown requested",
+        extra: Optional[List[Tuple[str, Any]]] = None
+    ) -> None:
+        """
+        Log bot shutdown with banner and tree format.
+
+        Example output:
+            ═══════════════════════════════════════════
+               SyriaBot │ Shutdown │ Run: a1b2c3d4
+            ═══════════════════════════════════════════
+
+            [12:00:00 PM EST] 👋 Bot Shutting Down
+              ├─ Reason: Restart requested
+              └─ Uptime: 3d 12h 5m
+
+        Args:
+            bot_name: Name of the bot
+            reason: Reason for shutdown
+            extra: Additional context as (key, value) tuples
+        """
+        # Build the shutdown banner
+        banner_text = f"{bot_name} │ Shutdown │ Run: {self.run_id}"
+        banner_width = max(43, len(banner_text) + 4)
+        padding = (banner_width - len(banner_text)) // 2
+        centered_text = " " * padding + banner_text
+
+        banner = (
+            f"{'═' * banner_width}\n"
+            f"{centered_text}\n"
+            f"{'═' * banner_width}"
+        )
+
+        # Print banner to console and file
+        print(f"\n{banner}\n")
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(f"\n{banner}\n\n")
+        except (OSError, IOError):
+            pass
+
+        # Send banner to webhook
+        self._send_live_log(banner)
+
+        # Now log the tree with details
+        items: List[Tuple[str, Any]] = [
+            ("Reason", reason),
+            ("Uptime", self._get_uptime()),
+        ]
+
+        if extra:
+            items.extend(extra)
+
+        self.tree("Bot Shutting Down", items, emoji="👋")
+
+    def cooldown(
+        self,
+        user: Any,
+        command: str,
+        remaining: float,
+        extra: Optional[List[Tuple[str, Any]]] = None
+    ) -> None:
+        """
+        Log a command cooldown event.
+
+        Example output:
+            [12:00:00 PM EST] ⏳ Command Cooldown
+              ├─ User: john (Johnny)
+              ├─ ID: 123456789
+              ├─ Command: daily
+              └─ Remaining: 2h 30m
+
+        Args:
+            user: Discord User, Member, or Interaction object
+            command: Name of the command on cooldown
+            remaining: Remaining cooldown in seconds
+            extra: Additional context as (key, value) tuples
+        """
+        user_str, user_id = self._format_user(user)
+
+        items: List[Tuple[str, Any]] = [
+            ("User", user_str),
+            ("ID", user_id),
+            ("Command", command),
+            ("Remaining", self._format_duration(remaining)),
+        ]
+
+        if extra:
+            items.extend(extra)
+
+        self.tree("Command Cooldown", items, emoji="⏳")
+
+    def command_blocked(
+        self,
+        user: Any,
+        reason: str,
+        command: Optional[str] = None,
+        extra: Optional[List[Tuple[str, Any]]] = None
+    ) -> None:
+        """
+        Log a blocked command attempt.
+
+        Example output:
+            [12:00:00 PM EST] 🚫 Command Blocked
+              ├─ User: john (Johnny)
+              ├─ ID: 123456789
+              ├─ Command: daily
+              └─ Reason: DM not allowed
+
+        Args:
+            user: Discord User, Member, or Interaction object
+            reason: Why the command was blocked
+            command: Optional command name
+            extra: Additional context as (key, value) tuples
+        """
+        user_str, user_id = self._format_user(user)
+
+        items: List[Tuple[str, Any]] = [
+            ("User", user_str),
+            ("ID", user_id),
+        ]
+
+        if command:
+            items.append(("Command", command))
+
+        items.append(("Reason", reason))
+
+        if extra:
+            items.extend(extra)
+
+        self.tree("Command Blocked", items, emoji="🚫")
 
 
 # =============================================================================

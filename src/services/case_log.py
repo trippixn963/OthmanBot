@@ -239,7 +239,7 @@ class CaseLogService:
 
         except Exception as e:
             logger.error("Case Log: Failed To Log Unban", [
-                ("User ID", str(user_id)),
+                ("ID", str(user_id)),
                 ("Error", str(e)),
             ])
 
@@ -296,7 +296,7 @@ class CaseLogService:
 
         except Exception as e:
             logger.error("Case Log: Failed To Log Ban Expiry", [
-                ("User ID", str(user_id)),
+                ("ID", str(user_id)),
                 ("Error", str(e)),
             ])
 
@@ -336,7 +336,7 @@ class CaseLogService:
 
         except Exception as e:
             logger.warning("Case Log: Failed To Log Member Left", [
-                ("User ID", str(user_id)),
+                ("ID", str(user_id)),
                 ("Error", str(e)),
             ])
 
@@ -474,7 +474,7 @@ class CaseLogService:
 
         except Exception as e:
             logger.error("Case Log: Failed To Log Debate Close", [
-                ("User ID", str(owner.id) if owner else "Unknown"),
+                ("ID", str(owner.id) if owner else "Unknown"),
                 ("Error", str(e)),
             ])
 
@@ -528,7 +528,7 @@ class CaseLogService:
 
         except Exception as e:
             logger.error("Case Log: Failed To Log Debate Reopen", [
-                ("User ID", str(owner.id) if owner else "Unknown"),
+                ("ID", str(owner.id) if owner else "Unknown"),
                 ("Error", str(e)),
             ])
 

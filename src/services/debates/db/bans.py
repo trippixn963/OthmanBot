@@ -41,7 +41,7 @@ class BansMixin:
             except sqlite3.IntegrityError as e:
                 conn.rollback()
                 logger.debug("Ban Already Exists", [
-                    ("User ID", str(user_id)),
+                    ("ID", str(user_id)),
                     ("Thread ID", str(thread_id) if thread_id else "Global"),
                     ("Error", str(e)),
                 ])
@@ -187,7 +187,7 @@ class BansMixin:
             except Exception as e:
                 conn.rollback()
                 logger.debug("Ban History Insert Failed", [
-                    ("User ID", str(user_id)),
+                    ("ID", str(user_id)),
                     ("Thread ID", str(thread_id) if thread_id else "Global"),
                     ("Error", str(e)),
                 ])

@@ -33,7 +33,7 @@ from src.core.config import (
 )
 from src.handlers.shutdown import shutdown_handler
 from src.services.debates import DebatesService, OpenDiscussionService
-from src.services.webhook_alerts import get_alert_service
+from src.services.status_webhook import get_status_service
 from src.services.case_log import CaseLogService
 from src.services.ban_notifier import BanNotifier
 from src.services.appeal_service import AppealService
@@ -165,10 +165,10 @@ class OthmanBot(commands.Bot):
         self.disabled: bool = False
 
         # =================================================================
-        # Webhook Alerts Service
+        # Status Webhook Service
         # DESIGN: Singleton service for Discord webhook notifications
         # =================================================================
-        self.alert_service = get_alert_service()
+        self.status_service = get_status_service()
 
         # =================================================================
         # Case Log Service

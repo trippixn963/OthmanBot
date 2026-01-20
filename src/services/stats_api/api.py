@@ -424,7 +424,7 @@ class OthmanAPI:
 
         logger.info("User Profile API Request", [
             ("IP", client_ip),
-            ("User ID", str(user_id)),
+            ("ID", str(user_id)),
         ])
 
         cache_key = f"user_profile_{user_id}"
@@ -534,7 +534,7 @@ class OthmanAPI:
             await self._cache.set(cache_key, response_data)
 
             logger.info("User Profile API Response Built", [
-                ("User ID", str(user_id)),
+                ("ID", str(user_id)),
                 ("Response Time", f"{response_data['response_time_ms']}ms"),
             ])
 
