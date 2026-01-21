@@ -1,44 +1,28 @@
-# OthmanBot Requirements
-# ======================
-#
-# This file contains all Python dependencies required to run OthmanBot.
-# Install with: pip install -r requirements.txt
-#
-# Dependencies are organized by functionality for easy maintenance.
+# =============================================================================
+# OthmanBot - Python Dependencies
+# =============================================================================
+# Install: pip install -r requirements.txt
+# =============================================================================
 
-# Core Discord API Library
-# =========================
-# Discord.py for bot functionality and API interactions
-discord.py>=2.3.2
+# -----------------------------------------------------------------------------
+# Core
+# -----------------------------------------------------------------------------
+discord.py>=2.7.0               # Discord API
+python-dotenv>=1.0.0            # Environment variables
 
-# Environment Configuration
-# ==========================
-# Loads environment variables from .env file (DISCORD_TOKEN, etc.)
-python-dotenv>=1.0.0
+# -----------------------------------------------------------------------------
+# HTTP & APIs
+# -----------------------------------------------------------------------------
+aiohttp>=3.9.0                  # Async HTTP client
+openai>=1.0.0                   # GPT-4o-mini for summaries
 
-# HTTP Client for API Requests
-# =============================
-# Asynchronous HTTP client for web scraping and API calls
-# Used for fetching news, soccer scores, and gaming updates
-aiohttp>=3.9.1
+# -----------------------------------------------------------------------------
+# Web Scraping
+# -----------------------------------------------------------------------------
+beautifulsoup4>=4.12.0          # HTML parsing
+feedparser>=6.0.10              # RSS feed parsing
 
-# Web Scraping & Content Parsing
-# ===============================
-# BeautifulSoup for HTML parsing and content extraction
-# Used by news, soccer, and gaming scrapers
-beautifulsoup4>=4.12.2
-# FeedParser for RSS feed parsing
-# Used for consuming news and content feeds
-feedparser>=6.0.10
-
-# AI Integration
-# ===============
-# OpenAI API client for AI-powered features
-# Used for content summarization and intelligent responses
-openai>=1.0.0
-
-# System Monitoring
-# ==================
-# Process and system monitoring utilities
-# Used by webhook alerts for system health reporting
-psutil>=5.9.0
+# -----------------------------------------------------------------------------
+# Utilities
+# -----------------------------------------------------------------------------
+psutil>=5.9.0                   # Process management
