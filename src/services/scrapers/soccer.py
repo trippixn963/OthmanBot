@@ -1,6 +1,6 @@
 """
 OthmanBot - Soccer Scraper Service
-==========================================
+==================================
 
 Fetches soccer/football news from Kooora.com RSS feed.
 

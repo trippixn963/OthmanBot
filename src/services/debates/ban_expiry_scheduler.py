@@ -1,6 +1,6 @@
 """
 OthmanBot - Ban Expiry Scheduler
-==========================================
+================================
 
 Background task that checks for and removes expired debate bans.
 

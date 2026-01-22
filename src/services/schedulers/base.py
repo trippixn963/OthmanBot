@@ -1,6 +1,6 @@
 """
 OthmanBot - Base Scheduler Service
-============================================
+==================================
 
 Base class for all content schedulers (news, soccer).
 

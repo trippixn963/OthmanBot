@@ -1,6 +1,6 @@
 """
 OthmanBot - Open Discussion Service
-=============================================
+===================================
 
 Service for managing the Open Discussion thread - a casual conversation space
 in the debates forum where karma is not tracked.

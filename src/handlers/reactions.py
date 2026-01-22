@@ -1,6 +1,6 @@
 """
 OthmanBot - Reaction Handler
-======================================
+============================
 
 Block reactions on announcement embeds.
 

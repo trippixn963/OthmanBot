@@ -1,6 +1,6 @@
 """
 OthmanBot - Leaderboard Database Mixin
-================================================
+======================================
 
 Leaderboard and ranking operations.
 

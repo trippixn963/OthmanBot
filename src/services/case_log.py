@@ -1,6 +1,6 @@
 """
 OthmanBot - Case Log Service
-======================================
+============================
 
 Service for logging ban/unban actions to forum threads in the mods server.
 

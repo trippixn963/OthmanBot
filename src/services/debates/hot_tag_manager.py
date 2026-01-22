@@ -1,6 +1,6 @@
 """
 OthmanBot - Hot Tag Manager
-=====================================
+===========================
 
 Evaluates and assigns the "Hot" tag to debate threads.
 Called by the centralized MaintenanceScheduler at 00:00 EST.

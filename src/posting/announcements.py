@@ -1,6 +1,6 @@
 """
 OthmanBot - Announcements Module
-==========================================
+================================
 
 Shared announcement embed logic for all content types.
 

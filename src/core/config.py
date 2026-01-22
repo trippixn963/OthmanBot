@@ -1,6 +1,6 @@
 """
 OthmanBot - Configuration Module
-==========================================
+================================
 
 Central configuration from environment variables.
 Uses a frozen dataclass pattern for type-safe config access.

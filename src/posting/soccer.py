@@ -1,6 +1,6 @@
 """
 OthmanBot - Soccer Poster Module
-==========================================
+================================
 
 Soccer news article posting to forum channels.
 

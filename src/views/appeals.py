@@ -1,6 +1,6 @@
 """
 OthmanBot - Appeal Views and Modals
-=============================================
+===================================
 
 Discord UI components for the appeal system.
 

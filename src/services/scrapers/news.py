@@ -1,6 +1,6 @@
 """
 OthmanBot - News Scraper Service
-=========================================
+================================
 
 Fetches Syrian news from Enab Baladi RSS feed.
 

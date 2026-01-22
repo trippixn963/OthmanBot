@@ -1,6 +1,6 @@
 """
 OthmanBot - Debates Database (Redirect)
-=================================================
+=======================================
 
 This file redirects to the modular database package.
 Import from src.services.debates.db instead.

@@ -1,6 +1,6 @@
 """
 OthmanBot - Presence Handler
-===========================
+============================
 
 Wrapper around unified presence system with OthmanBot-specific stats.
 

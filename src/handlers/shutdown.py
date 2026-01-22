@@ -1,6 +1,6 @@
 """
 OthmanBot - Shutdown Handler
-======================================
+============================
 
 Graceful shutdown and cleanup logic.
 

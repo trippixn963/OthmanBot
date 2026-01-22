@@ -1,6 +1,6 @@
 """
 OthmanBot - Content Rotation Scheduler
-================================================
+======================================
 
 Unified scheduler that rotates between news and soccer content hourly.
 

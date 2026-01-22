@@ -1,6 +1,6 @@
 """
 OthmanBot - Ready Handler
-===================================
+=========================
 
 Service initialization and startup logic.
 

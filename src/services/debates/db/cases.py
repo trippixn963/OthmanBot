@@ -1,6 +1,6 @@
 """
 OthmanBot - Cases Database Mixin
-==========================================
+================================
 
 Case log management for moderation tracking.
 

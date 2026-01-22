@@ -1,6 +1,6 @@
 """
 OthmanBot - Views Package
-===================================
+=========================
 
 Discord UI Views and Modals used across the bot.
 

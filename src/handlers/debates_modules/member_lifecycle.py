@@ -1,6 +1,6 @@
 """
 OthmanBot - Debates Member Lifecycle Handlers
-==============================================
+=============================================
 
 Handles member join/leave events for debate participants.
 

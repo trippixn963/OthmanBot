@@ -1,6 +1,6 @@
 """
 OthmanBot - Karma Reconciliation Scheduler
-====================================================
+==========================================
 
 Nightly scheduled karma reconciliation at 00:00 EST (midnight).
 Performs a full scan of ALL threads for 100% karma accuracy.

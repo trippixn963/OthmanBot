@@ -1,6 +1,6 @@
 """
 OthmanBot - Debate Analytics
-======================================
+============================
 
 Live-updating analytics for debate threads.
 

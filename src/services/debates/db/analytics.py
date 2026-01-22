@@ -1,6 +1,6 @@
 """
 OthmanBot - Analytics Database Mixin
-==============================================
+====================================
 
 User analytics, streaks, and participation tracking.
 

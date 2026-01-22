@@ -1,6 +1,6 @@
 """
 OthmanBot - Karma Reconciliation
-==========================================
+================================
 
 Reconciles karma based on actual Discord reactions.
 Runs on startup and nightly to catch any missed votes.

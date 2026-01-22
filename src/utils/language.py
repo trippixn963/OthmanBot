@@ -1,6 +1,6 @@
 """
 OthmanBot - Language Detection Utilities
-==================================================
+========================================
 
 Utilities for detecting and validating text language.
 

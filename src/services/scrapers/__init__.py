@@ -1,6 +1,6 @@
 """
 OthmanBot - Scrapers Package
-======================================
+============================
 
 Content scraper modules for news and soccer.
 

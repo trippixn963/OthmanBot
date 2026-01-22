@@ -1,6 +1,6 @@
 """
 OthmanBot - Maintenance Scheduler Service
-==========================================
+=========================================
 
 Handles periodic maintenance tasks:
 - Engagement metrics checking

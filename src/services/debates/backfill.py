@@ -1,6 +1,6 @@
 """
 OthmanBot - Debate Stats Backfill & Reconciliation
-============================================================
+==================================================
 
 One-time backfill and nightly reconciliation for debate_participation
 and debate_creators tables.

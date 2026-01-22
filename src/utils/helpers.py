@@ -1,6 +1,6 @@
 """
 OthmanBot - Helper Utilities
-======================================
+============================
 
 Common helper functions used across the bot.
 

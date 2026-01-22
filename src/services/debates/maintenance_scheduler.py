@@ -1,6 +1,6 @@
 """
 OthmanBot - Centralized Maintenance Scheduler
-==============================================
+=============================================
 
 Single scheduler managing all nightly and hourly maintenance tasks.
 All schedule times defined in one place for easy visibility and modification.

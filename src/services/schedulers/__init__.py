@@ -1,6 +1,6 @@
 """
 OthmanBot - Schedulers Package
-========================================
+==============================
 
 Task scheduling modules for content posting.
 

@@ -1,6 +1,6 @@
 """
 OthmanBot - Debate Numbering Reconciliation Scheduler
-===============================================================
+=====================================================
 
 Nightly scheduled debate numbering reconciliation at 00:15 NY_TZ.
 Scans all non-deprecated debates and fixes any gaps in numbering.

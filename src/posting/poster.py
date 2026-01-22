@@ -1,6 +1,6 @@
 """
 OthmanBot - Base Poster Module
-========================================
+==============================
 
 Shared media download and forum formatting utilities.
 

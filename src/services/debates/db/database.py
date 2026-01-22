@@ -1,6 +1,6 @@
 """
 OthmanBot - Combined Debates Database
-===============================================
+=====================================
 
 SQLite database combining all mixins for debate management.
 

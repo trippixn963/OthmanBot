@@ -1,6 +1,6 @@
 """
 OthmanBot - News Poster Module
-========================================
+==============================
 
 News article posting to forum channels.
 

@@ -1,6 +1,6 @@
 """
 OthmanBot - Database Backup System
-===================================
+==================================
 
 Wrapper around unified backup system with OthmanBot-specific configuration.
 

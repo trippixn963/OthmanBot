@@ -1,6 +1,6 @@
 """
 OthmanBot - Base Scraper Service
-==========================================
+================================
 
 Base class with shared functionality for all scrapers (news, soccer).
 

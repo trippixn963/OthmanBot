@@ -1,6 +1,6 @@
 """
 OthmanBot - Debates Service Package
-=============================================
+===================================
 
 Karma tracking for the debates forum.
 

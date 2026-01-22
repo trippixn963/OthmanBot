@@ -1,6 +1,6 @@
 """
 OthmanBot - Debate Tags Configuration
-===============================================
+=====================================
 
 Debate forum tag definitions and AI-powered auto-tagging.
 

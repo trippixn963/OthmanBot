@@ -1,6 +1,6 @@
 """
 OthmanBot - Threads Database Mixin
-============================================
+==================================
 
 Thread data, analytics messages, and debate numbering.
 

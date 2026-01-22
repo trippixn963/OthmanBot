@@ -1,6 +1,6 @@
 """
 OthmanBot - Debates Scheduler
-=======================================
+=============================
 
 Scheduler for posting hot debates every 3 hours.
 

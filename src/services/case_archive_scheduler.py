@@ -1,6 +1,6 @@
 """
 OthmanBot - Case Archive Scheduler
-============================================
+==================================
 
 Background task that archives inactive case threads.
 

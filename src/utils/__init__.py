@@ -1,6 +1,6 @@
 """
 OthmanBot - Utilities Package
-======================================
+=============================
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria

@@ -1,6 +1,6 @@
 """
 OthmanBot - AI Cache Utility
-======================================
+============================
 
 SQLite-based cache for AI-generated responses to reduce API costs.
 

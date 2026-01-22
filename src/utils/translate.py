@@ -1,6 +1,6 @@
 """
 OthmanBot - Translation Utility
-=========================================
+===============================
 
 OpenAI-powered translation for non-English text.
 Includes retry logic and circuit breaker for reliability.

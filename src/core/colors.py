@@ -1,6 +1,6 @@
 """
 OthmanBot - Centralized Colors
-========================================
+==============================
 
 All colors used throughout the bot in one place.
 

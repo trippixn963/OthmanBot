@@ -1,6 +1,6 @@
 """
 OthmanBot - Services Package
-======================================
+============================
 
 Backend services for content scraping and scheduling.
 

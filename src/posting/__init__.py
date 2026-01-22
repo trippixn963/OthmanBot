@@ -1,6 +1,6 @@
 """
 OthmanBot - Posting Package
-=====================================
+===========================
 
 Content posting modules for news and soccer.
 

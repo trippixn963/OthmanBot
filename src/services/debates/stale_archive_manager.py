@@ -1,6 +1,6 @@
 """
 OthmanBot - Stale Debate Archive Manager
-=========================================
+========================================
 
 Archives debate threads inactive for 14+ days.
 Called by the centralized MaintenanceScheduler at 00:20 EST.

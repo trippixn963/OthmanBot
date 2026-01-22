@@ -1,6 +1,6 @@
 """
 OthmanBot - Handlers Package
-======================================
+============================
 
 Event handlers as Discord.py Cogs.
 Cogs are loaded in bot.py via load_extension().

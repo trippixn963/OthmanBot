@@ -1,6 +1,6 @@
 """
 OthmanBot - Bans Database Mixin
-=========================================
+===============================
 
 Debate ban management operations.
 
