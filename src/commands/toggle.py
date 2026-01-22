@@ -19,7 +19,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.core.logger import logger
-from src.core.config import DEVELOPER_ID, SYRIA_GUILD_ID, TOGGLE_CHANNEL_IDS, CONTENT_PREVIEW_LENGTH, EmbedColors
+from src.core.config import OWNER_ID, SYRIA_GUILD_ID, TOGGLE_CHANNEL_IDS, CONTENT_PREVIEW_LENGTH, EmbedColors
 from src.core.constants import TIMEOUT_SHORT, TIMEOUT_MEDIUM
 from src.core.backup import create_backup
 
@@ -39,13 +39,13 @@ class ToggleCog(commands.Cog):
 
         logger.tree("Toggle Cog Loaded", [
             ("Commands", "/toggle"),
-            ("Developer ID", str(DEVELOPER_ID) if DEVELOPER_ID else "Not set"),
+            ("Owner ID", str(OWNER_ID) if OWNER_ID else "Not set"),
             ("Channels to toggle", str(len(TOGGLE_CHANNEL_IDS))),
         ], emoji="🔧")
 
     def _is_developer(self, user_id: int) -> bool:
         """Check if user is the developer."""
-        return DEVELOPER_ID is not None and user_id == DEVELOPER_ID
+        return OWNER_ID is not None and user_id == OWNER_ID
 
     # =========================================================================
     # Toggle Command

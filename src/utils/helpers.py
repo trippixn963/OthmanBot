@@ -82,7 +82,7 @@ async def get_developer_avatar(bot: "OthmanBot") -> str:
 
     developer_avatar_url = bot.user.display_avatar.url
 
-    developer_id_str = os.getenv("DEVELOPER_ID")
+    developer_id_str = os.getenv("OWNER_ID")
     if developer_id_str and developer_id_str.isdigit():
         try:
             async with asyncio.timeout(TIMEOUT_SHORT):

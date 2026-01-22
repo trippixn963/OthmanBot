@@ -21,8 +21,8 @@ from src.core.emojis import UPVOTE_EMOJI, DOWNVOTE_EMOJI, PARTICIPATE_EMOJI
 from src.core.config import (
     NY_TZ,
     DEBATES_FORUM_ID,
-    MODERATOR_ROLE_ID,
-    DEVELOPER_ID,
+    MOD_ROLE_ID,
+    OWNER_ID,
     DISCORD_API_DELAY,
 )
 from src.caches import ban_evasion_cache
@@ -162,7 +162,7 @@ async def on_message_handler(bot: "OthmanBot", message: discord.Message) -> None
                 ("ID", str(message.author.id)),
                 ("Account Age", f"{account_age_days} days"),
                 ("Thread", message.channel.name),
-                ("Developer", f"<@{DEVELOPER_ID}>"),
+                ("Developer", f"<@{OWNER_ID}>"),
             ])
 
     # Check if user is banned
@@ -285,7 +285,7 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                 await edit_thread_with_retry(thread, locked=True, archived=True)
 
                 moderation_message = (
-                    f"<@&{MODERATOR_ROLE_ID}>\n\n"
+                    f"<@&{MOD_ROLE_ID}>\n\n"
                     f"⚠️ **Non-English Title Detected**\n\n"
                     f"**Original Title:** {original_title}\n"
                     f"**Suggested Title:** {suggested_title}\n\n"

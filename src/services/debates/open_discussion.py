@@ -23,13 +23,17 @@ import discord
 from src.core.logger import logger
 from src.core.config import (
     DEBATES_FORUM_ID,
-    DEVELOPER_ID,
+    OWNER_ID,
     EmbedColors,
     EmbedIcons,
     OPEN_DISCUSSION_ACKNOWLEDGMENT_EMOJI,
 )
 from src.services.debates.database import DebatesDatabase
 from src.utils.footer import set_footer
+from src.handlers.debates_modules.access_control import (
+    should_skip_access_control,
+    check_user_ban,
+)
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -41,6 +45,9 @@ if TYPE_CHECKING:
 
 # Thread title with emoji
 OPEN_DISCUSSION_TITLE = "💬 | Open Discussion"
+
+# Allowed message types (default text and replies, not system messages)
+ALLOWED_MESSAGE_TYPES = (discord.MessageType.default, discord.MessageType.reply)
 
 # Rules embed description - explains the purpose and rules of Open Discussion
 RULES_DESCRIPTION = """
@@ -406,8 +413,8 @@ class OpenDiscussionService:
                 if message.id == thread.id:
                     continue
 
-                # Delete non-default message types (system messages)
-                if message.type != discord.MessageType.default:
+                # Delete system message types (allow default and replies)
+                if message.type not in ALLOWED_MESSAGE_TYPES:
                     try:
                         await message.delete()
                         deleted_count += 1
@@ -456,8 +463,8 @@ class OpenDiscussionService:
         """
         Handle a message in the Open Discussion thread.
 
-        Called for every message in the thread. No verification needed -
-        anyone can post freely. Only cleans up system messages.
+        Called for every message in the thread. Checks for bans but no
+        verification needed - anyone can post freely. Cleans up system messages.
 
         Args:
             message: The message that was sent
@@ -474,7 +481,7 @@ class OpenDiscussionService:
             return False
 
         # Delete system messages (e.g., "changed the post title")
-        if message.type != discord.MessageType.default:
+        if message.type not in ALLOWED_MESSAGE_TYPES:
             try:
                 await message.delete()
                 logger.debug("Open Discussion System Message Deleted", [
@@ -482,6 +489,14 @@ class OpenDiscussionService:
                 ])
             except discord.HTTPException:
                 pass
+            return True
+
+        # Skip ban check for privileged users (mods/developers)
+        if isinstance(message.author, discord.Member) and should_skip_access_control(message.author):
+            return True
+
+        # Check if user is banned (uses centralized function with proper logging)
+        if not await check_user_ban(self._bot, message):
             return True
 
         # No verification needed - everyone can post freely

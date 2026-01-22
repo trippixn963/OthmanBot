@@ -164,8 +164,8 @@ class CloseCog(commands.Cog):
             ])
 
         # Protect Debates Management role members (only developer can close their threads)
-        from src.core.config import DEVELOPER_ID, DEBATES_MANAGEMENT_ROLE_ID
-        if owner and DEBATES_MANAGEMENT_ROLE_ID and interaction.user.id != DEVELOPER_ID:
+        from src.core.config import OWNER_ID, DEBATES_MANAGEMENT_ROLE_ID
+        if owner and DEBATES_MANAGEMENT_ROLE_ID and interaction.user.id != OWNER_ID:
             # Check if owner is a member with Debates Management role
             owner_member = interaction.guild.get_member(owner.id) if interaction.guild else None
             if owner_member and any(role.id == DEBATES_MANAGEMENT_ROLE_ID for role in owner_member.roles):

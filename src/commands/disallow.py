@@ -28,7 +28,7 @@ from src.core.colors import EmbedIcons
 from src.utils.discord_rate_limit import log_http_error
 from src.utils import remove_reaction_safe
 from src.utils.footer import set_footer
-from src.utils.duration import parse_duration, format_duration
+from src.utils.duration import parse_duration_timedelta as parse_duration, format_duration_timedelta as format_duration
 from src.utils.autocomplete import thread_id_autocomplete, duration_autocomplete
 from src.views.appeals import AppealButtonView
 
@@ -114,8 +114,8 @@ class DisallowCog(commands.Cog):
             return
 
         # Protect Debates Management role members (only developer can ban them)
-        from src.core.config import DEVELOPER_ID, DEBATES_MANAGEMENT_ROLE_ID
-        if DEBATES_MANAGEMENT_ROLE_ID and interaction.user.id != DEVELOPER_ID:
+        from src.core.config import OWNER_ID, DEBATES_MANAGEMENT_ROLE_ID
+        if DEBATES_MANAGEMENT_ROLE_ID and interaction.user.id != OWNER_ID:
             if any(role.id == DEBATES_MANAGEMENT_ROLE_ID for role in user.roles):
                 logger.warning("/disallow Command Rejected - Protected User", [
                     ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),

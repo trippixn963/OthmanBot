@@ -2,21 +2,20 @@
 OthmanBot - Presence Handler
 ===========================
 
-Manages rotating Discord presence with all-time stats and hourly promo.
-Modeled after SyriaBot's presence system.
+Wrapper around unified presence system with OthmanBot-specific stats.
 
 Author: حَـــــنَّـــــا
 Server: discord.gg/syria
 """
 
 import asyncio
-from datetime import datetime
 from typing import Optional, List, TYPE_CHECKING
-
-import discord
 
 from src.core.logger import logger
 from src.core.config import PRESENCE_UPDATE_INTERVAL, NY_TZ
+
+# Import from shared unified presence system
+from shared.services.presence import BasePresenceHandler
 
 if TYPE_CHECKING:
     from src.bot import OthmanBot
@@ -34,64 +33,31 @@ PROMO_TEXT = "🌐 trippixn.com/othman"
 
 
 # =============================================================================
-# Presence Handler Class
+# OthmanBot Presence Handler
 # =============================================================================
 
-class PresenceHandler:
-    """Handles rotating presence and hourly promo messages."""
+class PresenceHandler(BasePresenceHandler):
+    """Presence handler configured for OthmanBot with debate stats."""
 
     def __init__(self, bot: "OthmanBot") -> None:
-        """
-        Initialize the presence handler.
-
-        Args:
-            bot: The Discord bot instance.
-        """
-        self.bot = bot
-        self._rotation_task: Optional[asyncio.Task] = None
-        self._promo_task: Optional[asyncio.Task] = None
-        self._current_index = 0
-        self._is_promo_active = False
-        self._running = False
+        super().__init__(
+            bot,
+            update_interval=PRESENCE_UPDATE_INTERVAL,
+            promo_duration_minutes=PROMO_DURATION_MINUTES,
+        )
 
     # -------------------------------------------------------------------------
-    # Number Formatting
+    # Required Implementations
     # -------------------------------------------------------------------------
 
-    @staticmethod
-    def _format_number(n: int) -> str:
-        """
-        Format a number with K/M abbreviations.
-
-        Args:
-            n: The number to format
-
-        Returns:
-            Formatted string (e.g., "1.5M", "12.3K", "500")
-        """
-        if n >= 1_000_000:
-            return f"{n / 1_000_000:.1f}M"
-        elif n >= 1_000:
-            return f"{n / 1_000:.1f}K"
-        return str(n)
-
-    # -------------------------------------------------------------------------
-    # Status Messages
-    # -------------------------------------------------------------------------
-
-    async def _get_status_messages(self) -> List[str]:
-        """
-        Get list of status messages with all-time stats.
-
-        Returns:
-            List of formatted status messages.
-        """
+    def get_status_messages(self) -> List[str]:
+        """Get debate-related stats for presence rotation."""
         messages = []
 
         try:
-            # Get all-time stats from database
+            # Get all-time stats from database (sync call wrapped)
             if self.bot.debates_service and self.bot.debates_service.db:
-                stats = await asyncio.to_thread(self.bot.debates_service.db.get_all_time_stats)
+                stats = self.bot.debates_service.db.get_all_time_stats()
 
                 total_debates = stats.get("total_debates", 0)
                 total_votes = stats.get("total_votes", 0)
@@ -99,7 +65,6 @@ class PresenceHandler:
                 total_participants = stats.get("total_participants", 0)
                 total_messages = stats.get("total_messages", 0)
 
-                # Build status messages with all-time stats only
                 if total_debates > 0:
                     messages.append(f"⚔️ {self._format_number(total_debates)} debates created")
 
@@ -126,200 +91,82 @@ class PresenceHandler:
 
         return messages
 
+    def get_promo_text(self) -> str:
+        """Return OthmanBot promo text."""
+        return PROMO_TEXT
+
+    def get_timezone(self):
+        """Return NY timezone for promo scheduling."""
+        return NY_TZ
+
     # -------------------------------------------------------------------------
-    # Rotation Loop
+    # Logging Hooks
     # -------------------------------------------------------------------------
 
-    async def _rotation_loop(self) -> None:
-        """Background task that rotates presence every interval."""
-        await self.bot.wait_until_ready()
-
+    def on_rotation_start(self) -> None:
         logger.info("🔄 Presence Rotation Started", [
-            ("Interval", f"{PRESENCE_UPDATE_INTERVAL}s"),
+            ("Interval", f"{self.update_interval}s"),
         ])
 
-        while self._running:
-            try:
-                # Wait first, then check promo status
-                await asyncio.sleep(PRESENCE_UPDATE_INTERVAL)
-
-                # Skip if promo is active
-                if self._is_promo_active:
-                    continue
-
-                # Get status messages and rotate
-                messages = await self._get_status_messages()
-                if messages:
-                    self._current_index = self._current_index % len(messages)
-                    status_text = messages[self._current_index]
-
-                    # Double-check promo isn't active right before changing
-                    if self._is_promo_active:
-                        continue
-
-                    await self.bot.change_presence(
-                        activity=discord.Activity(
-                            type=discord.ActivityType.watching,
-                            name=status_text,
-                        )
-                    )
-
-                    self._current_index += 1
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                # Ignore connection errors during shutdown/reconnection
-                error_msg = str(e).lower()
-                if "transport" in error_msg or "not connected" in error_msg or "closed" in error_msg:
-                    logger.debug("Presence Update Skipped (Connection Issue)", [
-                        ("Error", str(e)[:50]),
-                    ])
-                else:
-                    logger.warning("Presence Rotation Error", [
-                        ("Error", str(e)[:50]),
-                    ])
-                await asyncio.sleep(PRESENCE_UPDATE_INTERVAL)
-
-    # -------------------------------------------------------------------------
-    # Promo Loop
-    # -------------------------------------------------------------------------
-
-    async def _promo_loop(self) -> None:
-        """Background task that shows promo at the top of each hour."""
-        await self.bot.wait_until_ready()
-
+    def on_promo_start(self) -> None:
         logger.info("📢 Promo Loop Started", [
-            ("Duration", f"{PROMO_DURATION_MINUTES} min/hour"),
+            ("Duration", f"{self.promo_duration_minutes} min/hour"),
             ("Text", PROMO_TEXT),
         ])
 
-        while self._running:
-            try:
-                # Calculate time until next hour
-                now = datetime.now(NY_TZ)
-                minutes_until_hour = 60 - now.minute
-                seconds_until_hour = (minutes_until_hour * 60) - now.second
-
-                if seconds_until_hour > 0:
-                    logger.debug("Promo Waiting", [
-                        ("Next Promo", f"{minutes_until_hour} min"),
-                    ])
-                    await asyncio.sleep(seconds_until_hour)
-
-                # Show promo
-                self._is_promo_active = True
-
-                await self.bot.change_presence(
-                    activity=discord.Activity(
-                        type=discord.ActivityType.playing,
-                        name=PROMO_TEXT,
-                    )
-                )
-
-                logger.info("📢 Promo Active", [
-                    ("Text", PROMO_TEXT),
-                    ("Duration", f"{PROMO_DURATION_MINUTES} min"),
-                ])
-
-                # Wait for promo duration
-                await asyncio.sleep(PROMO_DURATION_MINUTES * 60)
-
-                # End promo
-                self._is_promo_active = False
-
-                logger.info("📢 Promo Ended", [
-                    ("Action", "Resuming normal rotation"),
-                ])
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self._is_promo_active = False
-                # Ignore connection errors during shutdown/reconnection
-                error_msg = str(e).lower()
-                if "transport" in error_msg or "not connected" in error_msg or "closed" in error_msg:
-                    logger.debug("Promo Update Skipped (Connection Issue)", [
-                        ("Error", str(e)[:50]),
-                    ])
-                else:
-                    logger.warning("Promo Loop Error", [
-                        ("Error", str(e)[:50]),
-                    ])
-                await asyncio.sleep(60)
-
-    # -------------------------------------------------------------------------
-    # Task Exception Handler
-    # -------------------------------------------------------------------------
-
-    def _handle_task_exception(self, task: asyncio.Task) -> None:
-        """Handle exceptions from presence tasks."""
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc:
-            logger.tree("Presence Task Exception", [
-                ("Task", task.get_name()),
-                ("Error Type", type(exc).__name__),
-                ("Error", str(exc)[:100]),
-            ], emoji="❌")
-
-    # -------------------------------------------------------------------------
-    # Setup / Stop
-    # -------------------------------------------------------------------------
-
-    async def setup(self) -> None:
-        """Initialize and start the presence handler tasks."""
-        if self._running:
-            logger.warning("Presence Handler Already Running", [
-                ("Action", "Skipping setup"),
-            ])
-            return
-
-        self._running = True
-
-        # Start rotation task
-        self._rotation_task = asyncio.create_task(
-            self._rotation_loop(),
-            name="presence_rotation"
-        )
-        self._rotation_task.add_done_callback(self._handle_task_exception)
-
-        # Start promo task
-        self._promo_task = asyncio.create_task(
-            self._promo_loop(),
-            name="presence_promo"
-        )
-        self._promo_task.add_done_callback(self._handle_task_exception)
-
-        logger.success("✅ Presence Handler Ready", [
-            ("Rotation", f"Every {PRESENCE_UPDATE_INTERVAL}s"),
-            ("Promo", f"{PROMO_DURATION_MINUTES} min/hour"),
+    def on_promo_activated(self) -> None:
+        logger.info("📢 Promo Active", [
+            ("Text", PROMO_TEXT),
+            ("Duration", f"{self.promo_duration_minutes} min"),
         ])
 
-    async def stop(self) -> None:
-        """Stop the presence handler tasks."""
-        self._running = False
+    def on_promo_ended(self) -> None:
+        logger.info("📢 Promo Ended", [
+            ("Action", "Resuming normal rotation"),
+        ])
 
-        if self._rotation_task:
-            self._rotation_task.cancel()
-            try:
-                await self._rotation_task
-            except asyncio.CancelledError:
-                pass
-            self._rotation_task = None
+    def on_handler_ready(self) -> None:
+        logger.success("✅ Presence Handler Ready", [
+            ("Rotation", f"Every {self.update_interval}s"),
+            ("Promo", f"{self.promo_duration_minutes} min/hour"),
+        ])
 
-        if self._promo_task:
-            self._promo_task.cancel()
-            try:
-                await self._promo_task
-            except asyncio.CancelledError:
-                pass
-            self._promo_task = None
-
+    def on_handler_stopped(self) -> None:
         logger.info("🛑 Presence Handler Stopped", [
             ("Status", "Tasks cancelled"),
         ])
+
+    def on_error(self, context: str, error: Exception) -> None:
+        error_msg = str(error).lower()
+        if "transport" in error_msg or "not connected" in error_msg or "closed" in error_msg:
+            logger.debug(f"{context} Skipped (Connection Issue)", [
+                ("Error", str(error)[:50]),
+            ])
+        else:
+            logger.warning(f"{context} Error", [
+                ("Error", str(error)[:50]),
+            ])
+
+    # -------------------------------------------------------------------------
+    # Helpers
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _format_number(n: int) -> str:
+        """Format a number with K/M abbreviations."""
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        elif n >= 1_000:
+            return f"{n / 1_000:.1f}K"
+        return str(n)
+
+    # -------------------------------------------------------------------------
+    # Setup Alias (for compatibility)
+    # -------------------------------------------------------------------------
+
+    async def setup(self) -> None:
+        """Alias for start() for backwards compatibility."""
+        await self.start()
 
 
 # =============================================================================

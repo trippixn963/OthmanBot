@@ -125,14 +125,14 @@ class Config:
     # Core
     # =========================================================================
     TOKEN: str = _env("DISCORD_TOKEN")
-    GUILD_ID: int = _env_int("SYRIA_GUILD_ID")
+    GUILD_ID: int = _env_int("GUILD_ID")
     MODS_GUILD_ID: int = _env_int("MODS_GUILD_ID")
-    DEVELOPER_ID: int = _env_int("DEVELOPER_ID")
+    OWNER_ID: int = _env_int("OWNER_ID")
 
     # =========================================================================
     # Roles
     # =========================================================================
-    MODERATOR_ROLE_ID: int = _env_int("MODERATOR_ROLE_ID")
+    MOD_ROLE_ID: int = _env_int("MOD_ROLE_ID")
     DEBATES_MANAGEMENT_ROLE_ID: int = _env_int("DEBATES_MANAGEMENT_ROLE_ID")
 
     # =========================================================================
@@ -197,8 +197,8 @@ if config.MODS_GUILD_ID:
 
 SYRIA_GUILD_ID = config.GUILD_ID
 MODS_GUILD_ID = config.MODS_GUILD_ID
-DEVELOPER_ID = config.DEVELOPER_ID
-MODERATOR_ROLE_ID = config.MODERATOR_ROLE_ID
+OWNER_ID = config.OWNER_ID
+MOD_ROLE_ID = config.MOD_ROLE_ID
 DEBATES_MANAGEMENT_ROLE_ID = config.DEBATES_MANAGEMENT_ROLE_ID
 DEBATES_FORUM_ID = config.DEBATES_FORUM_ID
 CASE_LOG_FORUM_ID = config.CASE_LOG_FORUM_ID
@@ -368,8 +368,8 @@ def has_debates_management_role(member) -> bool:
     """
     import discord
 
-    # Developer bypass
-    if member.id == config.DEVELOPER_ID:
+    # Owner bypass
+    if member.id == config.OWNER_ID:
         return True
 
     # For non-Member objects (e.g., User in DMs), only developer has access
@@ -394,8 +394,8 @@ def can_review_appeals(user) -> bool:
     Returns:
         True if user is allowed to review appeals
     """
-    # Developer always has access
-    if user.id == config.DEVELOPER_ID:
+    # Owner always has access
+    if user.id == config.OWNER_ID:
         return True
 
     # Check if user is in the allowed reviewers list
@@ -435,12 +435,12 @@ def validate_config() -> bool:
 
     # Critical: Guild ID should be set
     if not config.GUILD_ID:
-        errors.append(("SYRIA_GUILD_ID", "Main guild ID is required"))
+        errors.append(("GUILD_ID", "Main guild ID is required"))
         is_valid = False
 
     # Important but not critical
-    if not config.MODERATOR_ROLE_ID:
-        warnings.append(("MODERATOR_ROLE_ID", "Moderation features limited"))
+    if not config.MOD_ROLE_ID:
+        warnings.append(("MOD_ROLE_ID", "Moderation features limited"))
     if not config.DEBATES_FORUM_ID:
         warnings.append(("DEBATES_FORUM_ID", "Debates system disabled"))
 
@@ -570,8 +570,8 @@ __all__ = [
     "SYRIA_GUILD_ID",
     "MODS_GUILD_ID",
     "ALLOWED_GUILD_IDS",
-    "MODERATOR_ROLE_ID",
-    "DEVELOPER_ID",
+    "MOD_ROLE_ID",
+    "OWNER_ID",
     "DEBATES_FORUM_ID",
     "CASE_LOG_FORUM_ID",
     "NEWS_FORUM_TAGS",

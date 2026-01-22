@@ -168,7 +168,7 @@ class OthmanBot(commands.Bot):
         # Status Webhook Service
         # DESIGN: Singleton service for Discord webhook notifications
         # =================================================================
-        self.status_service = get_status_service()
+        self.status_service = get_status_service(bot_name="OthmanBot")
 
         # =================================================================
         # Case Log Service

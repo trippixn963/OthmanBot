@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import discord
 
 from src.core.logger import logger
-from src.core.config import MODERATOR_ROLE_ID, DEVELOPER_ID
+from src.core.config import MOD_ROLE_ID, OWNER_ID
 from src.core.emojis import PARTICIPATE_EMOJI
 from src.utils import send_message_with_retry
 from src.utils.discord_rate_limit import log_http_error
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 # Constants
 # =============================================================================
 
-DEBATE_MANAGEMENT_ROLE_ID = MODERATOR_ROLE_ID
+DEBATE_MANAGEMENT_ROLE_ID = MOD_ROLE_ID
 
 
 # =============================================================================
@@ -51,9 +51,9 @@ def should_skip_access_control(member: discord.Member) -> bool:
     """
     is_debate_manager = has_debate_management_role(member)
     is_moderator = hasattr(member, 'roles') and any(
-        role.id == MODERATOR_ROLE_ID for role in member.roles
+        role.id == MOD_ROLE_ID for role in member.roles
     )
-    is_developer = member.id == DEVELOPER_ID
+    is_developer = member.id == OWNER_ID
 
     return is_debate_manager or is_moderator or is_developer
 

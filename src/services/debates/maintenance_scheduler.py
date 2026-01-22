@@ -75,6 +75,12 @@ DAILY_SCHEDULE: list[ScheduledTask] = [
         callback_name="_run_stats_reconciliation",
         description="Reconcile debate participation stats",
     ),
+    ScheduledTask(
+        name="guild_protection",
+        hour=1, minute=0,
+        callback_name="_run_guild_protection",
+        description="Leave unauthorized guilds",
+    ),
 ]
 
 # Hourly tasks - run at the top of every hour
@@ -366,11 +372,10 @@ class DebateMaintenanceScheduler:
                 ("Error", str(e)[:50]),
             ])
 
-        # Refresh avatar/banner at midnight
+        # Refresh avatar at midnight
         try:
             if hasattr(self.bot, 'debates_service') and self.bot.debates_service:
                 self.bot.debates_service.refresh_avatar()
-                self.bot.debates_service.refresh_banner()
         except Exception:
             pass
 
@@ -390,6 +395,29 @@ class DebateMaintenanceScheduler:
         """Run debate stats reconciliation."""
         from src.services.debates.backfill import reconcile_debate_stats
         return await reconcile_debate_stats(self.bot)
+
+    async def _run_guild_protection(self) -> dict:
+        """Run guild protection check - leave unauthorized guilds."""
+        from src.core.config import ALLOWED_GUILD_IDS
+
+        unauthorized = [g for g in self.bot.guilds if g.id not in ALLOWED_GUILD_IDS]
+        left_count = 0
+
+        for guild in unauthorized:
+            try:
+                logger.warning("Leaving Unauthorized Guild (Nightly Check)", [
+                    ("Guild", guild.name),
+                    ("ID", str(guild.id)),
+                ])
+                await guild.leave()
+                left_count += 1
+            except Exception as e:
+                logger.error("Failed To Leave Guild", [
+                    ("Guild", guild.name),
+                    ("Error", str(e)[:50]),
+                ])
+
+        return {"guilds_left": left_count}
 
     async def _run_unnumbered_check(self) -> dict:
         """Check for and number any unnumbered threads."""

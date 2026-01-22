@@ -21,7 +21,6 @@ from src.core.health import HealthCheckServer
 from src.core.presence import setup_presence
 from src.core.backup import BackupScheduler
 from src.utils.footer import init_footer
-from src.utils.banner import init_banner
 from src.posting.poster import cleanup_old_temp_files
 from src.services import (
     NewsScraper,
@@ -80,6 +79,25 @@ class ReadyHandler(commands.Cog):
             ("Status", "Reconnected to Discord"),
         ])
 
+    @commands.Cog.listener()
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """Leave immediately if guild is not authorized."""
+        # Safety: Don't leave if authorized set is empty (misconfigured env)
+        if not ALLOWED_GUILD_IDS:
+            return
+        if guild.id not in ALLOWED_GUILD_IDS:
+            logger.warning("Added To Unauthorized Guild - Leaving", [
+                ("Guild", guild.name),
+                ("ID", str(guild.id)),
+            ])
+            try:
+                await guild.leave()
+            except Exception as e:
+                logger.error("Failed To Leave Unauthorized Guild", [
+                    ("Guild", guild.name),
+                    ("Error", str(e)),
+                ])
+
     async def _initialize_services(self) -> None:
         """Initialize all services with error recovery."""
         bot = self.bot
@@ -123,11 +141,6 @@ class ReadyHandler(commands.Cog):
         except Exception as e:
             logger.warning("Failed to initialize footer", [("Error", str(e))])
 
-        try:
-            await init_banner(bot)
-        except Exception as e:
-            logger.warning("Failed to initialize banner", [("Error", str(e))])
-
         # Initialize all services
         init_results.append(("Content Rotation", await self._safe_init("Content Rotation", self._init_content_rotation)))
         init_results.append(("Maintenance Scheduler", await self._safe_init("Maintenance Scheduler", self._init_maintenance_scheduler)))
@@ -153,9 +166,43 @@ class ReadyHandler(commands.Cog):
             ("Action", "Removed expired temp files"),
         ])
 
-        # Start health check HTTP server
+        # Start health check HTTP server with database health callback
         try:
             bot.health_server = HealthCheckServer(bot)
+
+            async def db_health() -> dict:
+                db_healthy = False
+                db_error = None
+                try:
+                    if bot.debates_service and bot.debates_service.db:
+                        db_healthy = bot.debates_service.db.health_check()
+                except Exception as e:
+                    db_error = str(e)
+                return {"connected": db_healthy, "error": db_error}
+
+            bot.health_server.register_db_health(db_health)
+
+            # Register system health callback
+            import psutil
+            _psutil_process = psutil.Process()
+
+            async def system_health() -> dict:
+                cpu_percent = psutil.cpu_percent(interval=None)
+                memory = psutil.virtual_memory()
+                disk = psutil.disk_usage("/")
+                bot_memory_mb = _psutil_process.memory_info().rss / (1024 * 1024)
+                return {
+                    "cpu_percent": cpu_percent,
+                    "memory_percent": memory.percent,
+                    "disk_percent": disk.percent,
+                    "disk_total_gb": round(disk.total / (1024 ** 3), 1),
+                    "disk_used_gb": round(disk.used / (1024 ** 3), 1),
+                    "bot_memory_mb": round(bot_memory_mb, 1),
+                    "threads": _psutil_process.num_threads(),
+                    "open_files": len(_psutil_process.open_files()),
+                }
+
+            bot.health_server.register_system(system_health)
             await bot.health_server.start()
             init_results.append(("Health Server", True))
         except Exception as e:
@@ -430,6 +477,13 @@ class ReadyHandler(commands.Cog):
 
     async def _leave_unauthorized_guilds(self) -> None:
         """Leave guilds not in ALLOWED_GUILD_IDS."""
+        # Safety: Don't leave any guilds if authorized set is empty (misconfigured env)
+        if not ALLOWED_GUILD_IDS:
+            logger.warning("Guild Protection Skipped", [
+                ("Reason", "ALLOWED_GUILD_IDS is empty"),
+                ("Action", "Check GUILD_ID and MODS_GUILD_ID in .env"),
+            ])
+            return
         unauthorized = [g for g in self.bot.guilds if g.id not in ALLOWED_GUILD_IDS]
 
         for guild in unauthorized:

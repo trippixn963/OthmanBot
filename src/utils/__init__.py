@@ -55,8 +55,8 @@ from .embed_factory import (
     format_discord_timestamp,
 )
 from .duration import (
-    parse_duration,
-    format_duration,
+    parse_duration_timedelta as parse_duration,
+    format_duration_timedelta as format_duration,
     get_remaining_duration,
     DURATION_SUGGESTIONS,
 )

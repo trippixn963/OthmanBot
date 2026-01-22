@@ -107,8 +107,8 @@ class AllowCog(commands.Cog):
         display_name = member.display_name if member else f"User {user_id}"
 
         # Protect Debates Management role members (only developer can unban them)
-        from src.core.config import DEVELOPER_ID, DEBATES_MANAGEMENT_ROLE_ID
-        if member and DEBATES_MANAGEMENT_ROLE_ID and interaction.user.id != DEVELOPER_ID:
+        from src.core.config import OWNER_ID, DEBATES_MANAGEMENT_ROLE_ID
+        if member and DEBATES_MANAGEMENT_ROLE_ID and interaction.user.id != OWNER_ID:
             if any(role.id == DEBATES_MANAGEMENT_ROLE_ID for role in member.roles):
                 logger.warning("/allow Command Rejected - Protected User", [
                     ("Invoked By", f"{interaction.user.name} ({interaction.user.display_name})"),
