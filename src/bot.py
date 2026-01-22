@@ -1,6 +1,6 @@
 """
-OthmanBot - Main Bot Class
-====================================
+OthmanBot - Main Bot
+====================
 
 Core Discord client for the Syria Discord server combining automated
 news posting with a debates forum featuring karma tracking.
