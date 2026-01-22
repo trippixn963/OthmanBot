@@ -18,7 +18,7 @@ from src.core.logger import logger
 from src.core.config import SYRIA_GUILD_ID, ALLOWED_GUILD_IDS, BOT_STARTUP_DELAY
 from src.core.constants import TIMEOUT_LONG, TIMEOUT_MEDIUM, TIMEOUT_EXTENDED, SLEEP_STARTUP_DELAY
 from src.core.health import HealthCheckServer
-from src.core.presence import setup_presence
+from src.services.presence import setup_presence
 from src.core.backup import BackupScheduler
 from src.utils.footer import init_footer
 from src.posting.poster import cleanup_old_temp_files

@@ -12,7 +12,7 @@ import asyncio
 from typing import TYPE_CHECKING, List, Tuple, Any
 
 from src.core.logger import logger
-from src.core.presence import stop_presence
+from src.services.presence import stop_presence
 from src.services.status_webhook import get_status_service
 from src.services import playwright_pool
 
