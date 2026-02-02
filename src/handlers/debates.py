@@ -41,7 +41,7 @@ from src.services.debates.analytics import (
     calculate_debate_analytics,
     generate_analytics_embed,
 )
-from src.services.debates.tags import detect_debate_tags
+from src.services.debates.tags import detect_debate_tags, is_religion_debate
 
 # Import from sub-modules
 from src.handlers.debates_modules.analytics import (
@@ -301,6 +301,37 @@ async def on_thread_create_handler(bot: "OthmanBot", thread: discord.Thread) -> 
                 ])
             except Exception as e:
                 logger.error("🌐 Failed To Handle Non-English Title", [("Error", str(e))])
+
+            return
+
+        # Check if debate is religion-related (not allowed)
+        thread_description = starter_message.content if starter_message.content else ""
+        if await is_religion_debate(original_title, thread_description):
+            logger.warning("Religion Debate Detected", [
+                ("User", f"{starter_message.author.name} ({starter_message.author.display_name})"),
+                ("ID", str(starter_message.author.id)),
+                ("Title", original_title),
+            ])
+
+            try:
+                await edit_thread_with_retry(thread, locked=True, archived=True)
+
+                moderation_message = (
+                    f"<@&{MOD_ROLE_ID}>\n\n"
+                    f"⚠️ **Religion Debate Not Allowed**\n\n"
+                    f"**Title:** {original_title}\n\n"
+                    f"Religion-related debates are not permitted in this forum.\n\n"
+                    f"**📌 Moderators:** If this was flagged incorrectly, use `/open` to unlock this thread."
+                )
+                await send_message_with_retry(thread, content=moderation_message)
+
+                logger.warning("🚫 Religion Debate Blocked", [
+                    ("User", f"{starter_message.author.name} ({starter_message.author.display_name})"),
+                    ("ID", str(starter_message.author.id)),
+                    ("Title", original_title),
+                ])
+            except Exception as e:
+                logger.error("🚫 Failed To Handle Religion Debate", [("Error", str(e))])
 
             return
 
