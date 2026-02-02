@@ -179,7 +179,8 @@ class ThreadsMixin:
         thread_name: str,
         closed_by: int,
         reason: Optional[str] = None,
-        user_id: Optional[int] = None
+        user_id: Optional[int] = None,
+        scheduled_deletion_at: Optional[str] = None
     ) -> None:
         """Add a thread closure to history.
 
@@ -189,13 +190,14 @@ class ThreadsMixin:
             closed_by: The moderator who closed it
             reason: The reason for closing
             user_id: The debate owner's user ID (whose debate was closed)
+            scheduled_deletion_at: ISO format timestamp when debate will be deleted
         """
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO closure_history (thread_id, thread_name, closed_by, reason, user_id) VALUES (?, ?, ?, ?, ?)",
-                (thread_id, thread_name, closed_by, reason, user_id)
+                "INSERT INTO closure_history (thread_id, thread_name, closed_by, reason, user_id, scheduled_deletion_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (thread_id, thread_name, closed_by, reason, user_id, scheduled_deletion_at)
             )
             conn.commit()
 
@@ -273,3 +275,76 @@ class ThreadsMixin:
                 (thread_id, thread_id)
             )
             conn.commit()
+
+    # =========================================================================
+    # Closed Debate Auto-Deletion
+    # =========================================================================
+
+    def get_debates_scheduled_for_deletion(self) -> list[dict]:
+        """Get all debates that are due for deletion.
+
+        Returns debates where:
+        - scheduled_deletion_at <= now
+        - reopened_at IS NULL (not reopened via appeal)
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, thread_id, thread_name, closed_by, reason, user_id,
+                          created_at, scheduled_deletion_at
+                   FROM closure_history
+                   WHERE scheduled_deletion_at IS NOT NULL
+                   AND scheduled_deletion_at <= CURRENT_TIMESTAMP
+                   AND reopened_at IS NULL"""
+            )
+            return [
+                {
+                    "id": r[0],
+                    "thread_id": r[1],
+                    "thread_name": r[2],
+                    "closed_by": r[3],
+                    "reason": r[4],
+                    "user_id": r[5],
+                    "created_at": r[6],
+                    "scheduled_deletion_at": r[7],
+                }
+                for r in cursor.fetchall()
+            ]
+
+    def cancel_scheduled_deletion(self, thread_id: int) -> bool:
+        """Cancel scheduled deletion by setting scheduled_deletion_at to NULL.
+
+        Called when an appeal is approved.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE closure_history
+                   SET scheduled_deletion_at = NULL
+                   WHERE thread_id = ? AND reopened_at IS NULL
+                   ORDER BY created_at DESC LIMIT 1""",
+                (thread_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def mark_closure_deleted(self, closure_id: int) -> bool:
+        """Mark a closure record as having been deleted.
+
+        We use reopened_at with a special marker to indicate deletion.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            # Set reopened_at to indicate it was processed (deleted)
+            # Use reopened_by = 0 to indicate system deletion vs user reopening
+            cursor.execute(
+                """UPDATE closure_history
+                   SET reopened_at = CURRENT_TIMESTAMP, reopened_by = 0
+                   WHERE id = ?""",
+                (closure_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0

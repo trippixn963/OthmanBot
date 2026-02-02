@@ -34,6 +34,7 @@ from src.services.debates.maintenance_scheduler import DebateMaintenanceSchedule
 from src.services.debates.reconciliation import reconcile_karma
 from src.services.debates.numbering_scheduler import reconcile_debate_numbering
 from src.services.debates.ban_expiry_scheduler import BanExpiryScheduler
+from src.services.debates.closed_debate_delete_scheduler import ClosedDebateDeleteScheduler
 from src.services.case_archive_scheduler import CaseArchiveScheduler
 from src.posting.news import post_news
 from src.posting.soccer import post_soccer_news
@@ -149,6 +150,7 @@ class ReadyHandler(commands.Cog):
         init_results.append(("Open Discussion", await self._safe_init("Open Discussion", self._init_open_discussion)))
         init_results.append(("Startup Reconciliation", await self._safe_init("Startup Reconciliation", self._init_startup_reconciliation)))
         init_results.append(("Ban Expiry Scheduler", await self._safe_init("Ban Expiry Scheduler", self._init_ban_expiry_scheduler)))
+        init_results.append(("Closed Debate Delete Scheduler", await self._safe_init("Closed Debate Delete Scheduler", self._init_closed_debate_delete_scheduler)))
         init_results.append(("Case Archive Scheduler", await self._safe_init("Case Archive Scheduler", self._init_case_archive_scheduler)))
         init_results.append(("Backup Scheduler", await self._safe_init("Backup Scheduler", self._init_backup_scheduler)))
 
@@ -452,6 +454,22 @@ class ReadyHandler(commands.Cog):
         bot.ban_expiry_scheduler = BanExpiryScheduler(bot)
         await bot.ban_expiry_scheduler.start()
         logger.tree("Ban Expiry Scheduler Started", [("Check Interval", "every 1 minute")], emoji="⏰")
+
+    async def _init_closed_debate_delete_scheduler(self) -> None:
+        """Initialize closed debate auto-delete scheduler."""
+        bot = self.bot
+        if not hasattr(bot, 'debates_service') or not bot.debates_service:
+            logger.info("Skipping Closed Debate Delete Scheduler", [
+                ("Reason", "Debates service not initialized"),
+            ])
+            return
+
+        bot.closed_debate_delete_scheduler = ClosedDebateDeleteScheduler(bot)
+        await bot.closed_debate_delete_scheduler.start()
+        logger.tree("Closed Debate Delete Scheduler Started", [
+            ("Check Interval", "every 30 minutes"),
+            ("Delete After", "24 hours"),
+        ], emoji="🗑️")
 
     async def _init_case_archive_scheduler(self) -> None:
         """Initialize case archive scheduler."""

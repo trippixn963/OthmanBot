@@ -35,7 +35,7 @@ class DatabaseCore:
     """
 
     # Current schema version - increment when adding migrations
-    SCHEMA_VERSION = 16
+    SCHEMA_VERSION = 17
 
     # Valid table names for SQL injection prevention
     VALID_TABLES = frozenset({
@@ -366,6 +366,12 @@ class DatabaseCore:
             if not self._column_exists(cursor, "closure_history", "user_id"):
                 cursor.execute("ALTER TABLE closure_history ADD COLUMN user_id INTEGER")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_closure_history_owner ON closure_history(user_id)")
+
+        # Migration 17: Add scheduled_deletion_at column to closure_history for auto-deletion
+        if current_version < 17:
+            if not self._column_exists(cursor, "closure_history", "scheduled_deletion_at"):
+                cursor.execute("ALTER TABLE closure_history ADD COLUMN scheduled_deletion_at TIMESTAMP")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_closure_history_deletion ON closure_history(scheduled_deletion_at)")
 
         if current_version < self.SCHEMA_VERSION:
             # Update schema version

@@ -13,7 +13,7 @@ Server: discord.gg/syria
 
 import asyncio
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Optional
 
 import discord
@@ -134,6 +134,7 @@ class CloseCog(commands.Cog):
 
         # Build the public embed FIRST (before any slow operations)
         now = datetime.now(NY_TZ)
+        deletion_time = now + timedelta(hours=24)
         embed = discord.Embed(
             title=f"{EmbedIcons.CLOSE} Debate Closed",
             color=EmbedColors.CLOSE
@@ -147,6 +148,11 @@ class CloseCog(commands.Cog):
         embed.add_field(name="Closed By", value=interaction.user.mention, inline=True)
         embed.add_field(name="Time", value=f"<t:{int(now.timestamp())}:f>", inline=True)
         embed.add_field(name="Reason", value=reason_display, inline=False)
+        embed.add_field(
+            name="🗑️ Auto-Delete",
+            value=f"<t:{int(deletion_time.timestamp())}:R> unless appealed",
+            inline=False
+        )
 
         set_footer(embed)
 
@@ -207,6 +213,7 @@ class CloseCog(commands.Cog):
             reason=reason,
             closed_by=interaction.user,
             owner=owner,
+            deletion_time=deletion_time,
         ))
 
     async def _close_thread_background(
@@ -217,6 +224,7 @@ class CloseCog(commands.Cog):
         reason: str,
         closed_by: discord.User,
         owner: Optional[discord.User] = None,
+        deletion_time: Optional[datetime] = None,
     ) -> None:
         """Handle all slow close operations in background."""
         try:
@@ -293,16 +301,19 @@ class CloseCog(commands.Cog):
             # Record to closure history and send DM notification
             past_closure_count = 0
             if owner:
-                # Add to closure history
+                # Add to closure history with scheduled deletion time
                 if self.bot.debates_service and self.bot.debates_service.db:
                     try:
+                        # Convert deletion_time to ISO format for database
+                        deletion_time_str = deletion_time.isoformat() if deletion_time else None
                         await asyncio.to_thread(
                             self.bot.debates_service.db.add_to_closure_history,
                             thread.id,
                             original_name,
                             closed_by.id,
                             reason,
-                            owner.id
+                            owner.id,
+                            deletion_time_str
                         )
                         # Get count (subtract 1 since we just added this one)
                         closure_count = await asyncio.to_thread(self.bot.debates_service.db.get_user_closure_count, owner.id)
@@ -334,6 +345,7 @@ class CloseCog(commands.Cog):
                         original_name=original_name,
                         reason=reason,
                         past_closure_count=past_closure_count,
+                        deletion_time=deletion_time,
                     )
                 except Exception as e:
                     logger.warning("Failed to send close notification DM", [
@@ -357,6 +369,7 @@ class CloseCog(commands.Cog):
         original_name: str,
         reason: str,
         past_closure_count: int = 0,
+        deletion_time: Optional[datetime] = None,
     ) -> bool:
         """
         Send DM notification to thread owner when their debate is closed.
@@ -368,6 +381,7 @@ class CloseCog(commands.Cog):
             original_name: Original thread name before [CLOSED] prefix
             reason: Reason for closing
             past_closure_count: Number of previous closures for this user
+            deletion_time: When the debate will be auto-deleted
 
         Returns:
             True if DM sent successfully, False otherwise
@@ -470,6 +484,14 @@ class CloseCog(commands.Cog):
                     ("Error Type", type(e).__name__),
                     ("Error", str(e)[:50]),
                 ])
+
+            # Auto-deletion warning
+            if deletion_time:
+                embed.add_field(
+                    name="🗑️ Auto-Delete",
+                    value=f"This debate will be **permanently deleted** <t:{int(deletion_time.timestamp())}:R> unless you appeal.",
+                    inline=False,
+                )
 
             # What's Next guidance
             embed.add_field(

@@ -208,6 +208,14 @@ async def undo_close(
                     thread_id,
                     reviewed_by.id
                 )
+                # Also explicitly cancel the scheduled deletion
+                await asyncio.to_thread(
+                    db.cancel_scheduled_deletion,
+                    thread_id
+                )
+                logger.info("Appeal: Scheduled Deletion Cancelled", [
+                    ("Thread ID", str(thread_id)),
+                ])
             except Exception as e:
                 logger.warning("Failed to update closure history for appeal", [
                     ("Thread ID", str(thread_id)),
