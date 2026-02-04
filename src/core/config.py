@@ -122,9 +122,9 @@ class Config:
     """Bot configuration from environment variables."""
 
     # =========================================================================
-    # Core
+    # Core (bot-specific uses prefix)
     # =========================================================================
-    TOKEN: str = _env("DISCORD_TOKEN")
+    TOKEN: str = _env("OTHMAN_TOKEN")
     GUILD_ID: int = _env_int("GUILD_ID")
     MODS_GUILD_ID: int = _env_int("MODS_GUILD_ID")
     OWNER_ID: int = _env_int("OWNER_ID")
